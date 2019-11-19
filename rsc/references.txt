@@ -1,0 +1,4 @@
+https://security.web.cern.ch/security/recommendations/en/codetools/c.shtml
+https://github.com/intel/safestringlib/wiki/SDL-List-of-Banned-Functions
+https://docs.microsoft.com/en-us/previous-versions/bb288454(v=msdn.10)?redirectedfrom=MSDN
+https://github.com/microsoft/ChakraCore/blob/master/lib/Common/Banned.h
