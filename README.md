@@ -1,5 +1,5 @@
-# BinInspector
-This script is designed to inspect binaries for banned C functions. Additionally, it performs fuzzing of the binary.
+# Binspector
+This script inspects an executable binary for close to two-hundred (200) banned C functions. Then, it performs fuzzing of the binary.
 
 ## Install
 ```
@@ -22,5 +22,7 @@ Do not worry all the prompts will be asked as the tool runs
 - [ ] Checking hashes against VT [ ]
 
 ## References
-https://security.web.cern.ch/security/recommendations/en/codetools/c.shtml
+https://docs.microsoft.com/en-us/previous-versions/bb288454(v=msdn.10)?redirectedfrom=MSDN
 https://github.com/intel/safestringlib/wiki/SDL-List-of-Banned-Functions
+https://github.com/microsoft/ChakraCore/blob/master/lib/Common/Banned.h
+https://security.web.cern.ch/security/recommendations/en/codetools/c.shtml
