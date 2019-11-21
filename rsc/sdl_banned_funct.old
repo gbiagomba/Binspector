@@ -55,6 +55,7 @@ _mbstok
 _mbstrlen
 memcmp
 ​​memcpy
+memcpy
 memmove
 me​mset
 nsprintf
@@ -83,6 +84,7 @@ printf
 ​realpath
 RtlCopyMemory
 ​scanf
+scanf
 _snprintf
 snprintf
 snscanf
@@ -101,7 +103,10 @@ sscanf
 stpncpy
 _stprintf
 ​strcat
+strcat
+StrCat
 strcatA
+StrCatA
 StrCatBuff
 StrCatBuffA
 StrCatBuffW
@@ -110,17 +115,26 @@ StrCatN
 StrCatNA
 StrCatNW
 strcatW
+StrCatW
 ​strcpy
+strcpy
+StrCpy
 strcpyA
+StrCpyA
 StrCpyN
 strcpynA
+StrCpyNA
 StrCpyNW
 strcpyW
+StrCpyW
 strlen
+StrLen
 strncat
+StrNCat
 StrNCatA
 StrNCatW
 strncpy
+StrNCpy
 StrNCpyA
 StrNCpyW
 strtok
@@ -135,6 +149,7 @@ _tcscpy
 _tcsncat
 _tcsncpy
 _tcstok
+// the buffer size have been deprecated. Include <PathCch.h> and use the PathCch
 _tmakepath
 _tscanf
 _tsplitpath
