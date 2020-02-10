@@ -1,5 +1,6 @@
 _alloca
 alloca
+atoi
 ChangeWindowMessageFilter
 CharToOem
 CharToOemA
