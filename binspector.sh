@@ -140,5 +140,5 @@ echo "Cleaning house"
 echo "--------------------------------------------------"
 rm -rf $wrktmp/
 find $wrkpth -type d,f -empty | xargs rm -rf
-zip -ru9 $pth/$prj_name-binspector-$current_time.zip $wrkpth/*
+tar --ignore-failed-read --remove-files -czvf $pth/$prj_name-binspector-$current_time.zip $wrkpth/*
 echo "All done!"
