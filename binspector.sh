@@ -16,13 +16,28 @@ fi
 
 # Declaring variables
 current_time=$(date "+%Y.%m.%d-%H.%M.%S")
+diskMax=90
+diskSize=$(df -kh $PWD | grep -iv filesystem | grep -o '[1-9]\+'%)
 pth=$PWD
 wrkpth="$PWD/Binspector"
 wrktmp=$(mktemp -d)
 bin=$1
 
+# Checking system resources (HDD space)
+if [[ "$diskSize" -ge "$diskMax" ]]; then
+	clear
+	echo 
+	echo "You are using $diskSize% and I am concerned you might run out of space"
+	echo "Remove some files and try again, you will thank me later, trust me :)"
+	exit
+fi
+
 # Setting Envrionment
-mkdir -p  $wrkpth/PEFrame/ $wrkpth/Zzuf/ $wrkpth/Valgrind/ $wrkpth/Binwalk/ $wrkpth/cve-bin-tool/
+for i in PEFrame Zzuf Valgrind Binwalk cve-bin-tool; do
+    if [ ! -e $wrkpth/$i ]; then
+        mkdir -p $wrkpth/$i
+    fi
+done
 
 # Moving back to original workspace & loading logo
 cd $pth
@@ -54,6 +69,7 @@ echo "What is the name of the project?"
 read prj_name
 echo
 
+{
 # Checking for banned strings
 echo "--------------------------------------------------"
 echo "Checking for banned strings"
@@ -111,5 +127,15 @@ echo "--------------------------------------------------"
 echo "Fuzzing executable binary"
 echo "--------------------------------------------------"
 valgrind --tool=memcheck --leak-check=yes --show-reachable=yes --num-callers=20 --track-fds=yes --log-file=$wrkpth/Valgrind/$prj_name-valgrind_output-$current_time.log --verbose ./$bin 2> /dev/null | tee -a $wrkpth/Valgrind/$prj_name-valgrind_output-$current_time.txt
-zzuf -s 0:1000000 -c -C 0 -q -T 3 objdump -x $bin | tee -a $wrkpth/Zzuf/$prj_name-zzuf_output-$current_time.log 
+zzuf -s 0:1000000 -c -C 0 -q -T 3 objdump -x $bin | tee -a $wrkpth/Zzuf/$prj_name-zzuf_output-$current_time.log  # https://fuzzing-project.org/tutorial1.html
 echo
+} 2> /dev/null | tee -a $wrkpth/$prj_name-binspector_output-$current_time.txt
+
+# Cleaning up
+echo "--------------------------------------------------"
+echo "Cleaning house"
+echo "--------------------------------------------------"
+rm -rf $wrktmp/
+find $wrkpth -type d,f -empty | xargs rm -rf
+zip -ru9 $pth/$prj_name-binspector-$current_time.zip $wrkpth/*
+echo "All done!"
