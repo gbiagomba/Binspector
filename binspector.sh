@@ -22,6 +22,7 @@ pth=$PWD
 wrkpth="$PWD/Binspector"
 wrktmp=$(mktemp -d)
 bin=$1
+prj_name=$2
 
 # Checking system resources (HDD space)
 if [[ "$diskSize" -ge "$diskMax" ]]; then
@@ -65,9 +66,11 @@ elif [ ! -e $bin ]; then
     exit
 fi
 
-echo "What is the name of the project?"
-read prj_name
-echo
+if [ -z $prj_name ]; then
+    echo "What is the name of the project?"
+    read prj_name
+    echo
+fi
 
 {
 # Checking for banned strings
