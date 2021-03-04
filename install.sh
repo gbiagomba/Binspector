@@ -17,14 +17,14 @@ if [ "$OS_CHK" != "debian" ]; then
 fi
 
 # Installing cve-bin-tool
-if [ ! hash cve-bin-tool ]; then
+if [ ! cve-bin-tool ]; then
     pip3 install cve-bin-tool
 fi
 
 # Installing peframe
-if [ ! hash peframe ]; then
+if [ ! peframe ]; then
     apt install peframe -y
-    if [ ! hash peframe ]; then
+    if [ ! peframe ]; then
         cd /opt/
         git clone https://github.com/guelfoweb/peframe
         cd peframe/
@@ -35,9 +35,9 @@ if [ ! hash peframe ]; then
 fi
 
 # Installing binwalk
-if [ ! hash binwalk ]; then
+if [ ! binwalk ]; then
     apt install binwalk -y
-    if [ ! hash binwalk ]; then
+    if [ ! binwalk ]; then
         git clone https://github.com/ReFirmLabs/binwalk
         cd binwalk
         python3 setup.py install
@@ -45,14 +45,14 @@ if [ ! hash binwalk ]; then
 fi
 
 # Installing zzuf
-if [ ! hash /usr/bin/zzuf ]; then
+if [ ! /usr/bin/zzuf ]; then
     apt install zzuf -y
 fi
 
 # Installing valgrind
-if [ ! hash /usr/bin/valgrind ]; then
+if [ ! /usr/bin/valgrind ]; then
     apt install valgrind -y
-    if [ ! hash /usr/bin/valgrind ]; then
+    if [ ! /usr/bin/valgrind ]; then
         wget -q https://sourceware.org/pub/valgrind/valgrind-3.16.1.tar.bz2
         cd valgrind-3.16.1
         ./configure
