@@ -17,7 +17,7 @@ if [ "$OS_CHK" != "debian" ]; then
 fi
 
 # Installing cve-bin-tool
-if [ ! hash cve-bin-tool ];
+if [ ! hash cve-bin-tool ]; then
     pip3 install cve-bin-tool
 fi
 
@@ -35,9 +35,9 @@ if [ ! hash peframe ]; then
 fi
 
 # Installing binwalk
-if [ ! hash binwalk ]
+if [ ! hash binwalk ]; then
     apt install binwalk -y
-    if [ ! hash binwalk ]
+    if [ ! hash binwalk ]; then
         git clone https://github.com/ReFirmLabs/binwalk
         cd binwalk
         python3 setup.py install
