@@ -5,26 +5,26 @@
 OS_CHK=$(cat /etc/os-release | grep -o debian)
 
 # Checking user is root
-if [ "$EUID" -ne 0 ]
+if "$EUID" -ne 0
   then echo "Please run as root"
   exit
 fi
 
 # Ensuring system is debian based
-if [ "$OS_CHK" != "debian" ]; then
+if "$OS_CHK" != "debian"; then
     echo "Unfortunately this install script was written for debian based distributions only, sorry!"
     exit
 fi
 
 # Installing cve-bin-tool
-if [ ! cve-bin-tool ]; then
+if ! hash cve-bin-tool; then
     pip3 install cve-bin-tool
 fi
 
 # Installing peframe
-if [ ! peframe ]; then
+if ! hash peframe; then
     apt install peframe -y
-    if [ ! peframe ]; then
+    if ! hash peframe; then
         cd /opt/
         git clone https://github.com/guelfoweb/peframe
         cd peframe/
@@ -35,9 +35,9 @@ if [ ! peframe ]; then
 fi
 
 # Installing binwalk
-if [ ! binwalk ]; then
+if ! hash binwalk; then
     apt install binwalk -y
-    if [ ! binwalk ]; then
+    if ! hash binwalk; then
         git clone https://github.com/ReFirmLabs/binwalk
         cd binwalk
         python3 setup.py install
@@ -45,14 +45,14 @@ if [ ! binwalk ]; then
 fi
 
 # Installing zzuf
-if [ ! /usr/bin/zzuf ]; then
+if ! hash /usr/bin/zzuf; then
     apt install zzuf -y
 fi
 
 # Installing valgrind
-if [ ! /usr/bin/valgrind ]; then
+if ! hash /usr/bin/valgrind; then
     apt install valgrind -y
-    if [ ! /usr/bin/valgrind ]; then
+    if ! hash /usr/bin/valgrind; then
         wget -q https://sourceware.org/pub/valgrind/valgrind-3.16.1.tar.bz2
         cd valgrind-3.16.1
         ./configure
