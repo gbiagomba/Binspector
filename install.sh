@@ -28,7 +28,10 @@ if ! hash peframe; then
         cd /opt/
         git clone https://github.com/guelfoweb/peframe
         cd peframe/
+        chmod +x install.sh setup.py
+        bash install.sh
         pip3 install -r requirements.txt
+        python3 setup.py bdist_wheel
         python3 setup.py install
         bash.install
     fi
