@@ -94,7 +94,7 @@ echo "--------------------------------------------------"
 echo "Running binwalk"
 echo "--------------------------------------------------"
 cd $wrkpth/Binwalk/
-binwalk -e $bin | tee $wrkpth/Binwalk/$prj_name-binwalk_output-$current_time.txt 2> /dev/null
+binwalk -e $pth/$bin | tee $wrkpth/Binwalk/$prj_name-binwalk_output-$current_time.txt 2> /dev/null
 cd $pth
 echo 
 
@@ -102,12 +102,14 @@ echo
 echo "--------------------------------------------------"
 echo "Running cve-bin-tool"
 cd $wrkpth/cve-bin-tool/
-cve-bin-tool -i $bin -o $wrkpth/cve-bin-tool/$prj_name-cve-bin-tool_output-$current_time.txt -c 4 2> /dev/null
+cve-bin-tool -i $pth/$bin -o $wrkpth/cve-bin-tool/$prj_name-cve-bin-tool_output-$current_time.log -c 4 2> /dev/null
+cd $pth
 echo 
 
 # Fuzzing executable binary
 echo "--------------------------------------------------"
 echo "Fuzzing executable binary"
 echo "--------------------------------------------------"
-# Command will go here
+valgrind --tool=memcheck --leak-check=yes --show-reachable=yes --num-callers=20 --track-fds=yes --log-file=$wrkpth/Valgrind/$prj_name-valgrind_output-$current_time.log --verbose ./$bin 2> /dev/null | tee -a $wrkpth/Valgrind/$prj_name-valgrind_output-$current_time.txt
+zzuf -s 0:1000000 -c -C 0 -q -T 3 objdump -x $bin | tee -a $wrkpth/Zzuf/$prj_name-zzuf_output-$current_time.log 
 echo
