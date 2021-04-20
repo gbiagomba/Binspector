@@ -4,8 +4,8 @@ This script inspects an executable binary for close to two-hundred (200) banned 
 ## Install
 ```
 cd /opt/
-git pull https://github.com/gbiagomba/Sherlock
-cd Sherlock
+git clone https://github.com/gbiagomba/Binspector
+cd Binspector
 ./install.sh
 ```
 
@@ -22,7 +22,7 @@ Do not worry all the prompts will be asked as the tool runs
 - [ ] Checking hashes against VT [ ]
 
 ## References
-https://docs.microsoft.com/en-us/previous-versions/bb288454(v=msdn.10)?redirectedfrom=MSDN
-https://github.com/intel/safestringlib/wiki/SDL-List-of-Banned-Functions
-https://github.com/microsoft/ChakraCore/blob/master/lib/Common/Banned.h
-https://security.web.cern.ch/security/recommendations/en/codetools/c.shtml
+1. https://docs.microsoft.com/en-us/previous-versions/bb288454(v=msdn.10)?redirectedfrom=MSDN
+2. https://github.com/intel/safestringlib/wiki/SDL-List-of-Banned-Functions
+3. https://github.com/microsoft/ChakraCore/blob/master/lib/Common/Banned.h
+4. https://security.web.cern.ch/security/recommendations/en/codetools/c.shtml
