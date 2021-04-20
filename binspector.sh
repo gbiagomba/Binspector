@@ -122,7 +122,7 @@ echo "--------------------------------------------------"
 echo "Running cve-bin-tool"
 echo "--------------------------------------------------"
 cd $wrkpth/cve-bin-tool/
-cve-bin-tool -i $pth/$bin -o $wrkpth/cve-bin-tool/$prj_name-cve-bin-tool_output-$current_time.log -c 4 2> /dev/null
+timeout 900 cve-bin-tool -i $pth/$bin -o $wrkpth/cve-bin-tool/$prj_name-cve-bin-tool_output-$current_time.log -c 4 2> /dev/null
 cd $pth
 echo 
 
