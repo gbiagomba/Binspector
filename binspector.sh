@@ -108,7 +108,7 @@ if [ -z $wrkpth/PEFrame/$prj_name-sdl_banned_funct-$current_time.txt ]; then
 fi
 echo 
 
-# Placeholder
+# Binwalk
 echo "--------------------------------------------------"
 echo "Running binwalk"
 echo "--------------------------------------------------"
@@ -117,9 +117,10 @@ binwalk -e $pth/$bin | tee $wrkpth/Binwalk/$prj_name-binwalk_output-$current_tim
 cd $pth
 echo 
 
-# Placeholder
+# Intel's cve-bin
 echo "--------------------------------------------------"
 echo "Running cve-bin-tool"
+echo "--------------------------------------------------"
 cd $wrkpth/cve-bin-tool/
 cve-bin-tool -i $pth/$bin -o $wrkpth/cve-bin-tool/$prj_name-cve-bin-tool_output-$current_time.log -c 4 2> /dev/null
 cd $pth
