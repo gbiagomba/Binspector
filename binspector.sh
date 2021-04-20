@@ -17,7 +17,7 @@ fi
 # Declaring variables
 current_time=$(date "+%Y.%m.%d-%H.%M.%S")
 diskMax=90
-diskSize=$(df -kh $PWD | grep -iv filesystem | grep -o '[1-9]\+'%)
+diskSize=$(df -kh $PWD | grep -iv filesystem | grep -o '[1-9]\+'% | cut -d "%" -f 1)
 pth=$PWD
 wrkpth="$PWD/Binspector"
 wrktmp=$(mktemp -d)
@@ -58,7 +58,7 @@ echo
 
 # Requesting target file name or checking the target file exists & requesting the project name
 if [ -z $bin ]; then
-    echo "What is the name of the targets file? The file with all the IP addresses or sites"
+    echo "What is the name of the binary file?"
     read bin
     echo
 elif [ ! -e $bin ]; then
