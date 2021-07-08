@@ -77,17 +77,21 @@ fi
 echo "--------------------------------------------------"
 echo "Checking for banned strings"
 echo "--------------------------------------------------"
-peframe $bin | tee $wrkpth/PEFrame/$prj_name-peframe_output-$current_time.txt 2> /dev/null
+peframe $bin 2> /dev/null | tee $wrkpth/PEFrame/$prj_name-peframe_output-$current_time.txt
 echo | tee -a $wrkpth/PEFrame/$prj_name-peframe_output-$current_time.txt
 echo | tee -a $wrkpth/PEFrame/$prj_name-peframe_output-$current_time.txt
 echo "--------------------------------------------------------------------------------" | tee -a $wrkpth/PEFrame/$prj_name-peframe_output-$current_time.txt
 echo "Strings" | tee -a $wrkpth/PEFrame/$prj_name-peframe_output-$current_time.txt
 echo "--------------------------------------------------------------------------------" | tee -a $wrkpth/PEFrame/$prj_name-peframe_output-$current_time.txt
-peframe -s $bin | tee -a $wrkpth/PEFrame/$prj_name-peframe_output-$current_time.txt 2> /dev/null
-peframe -j $bin | tee $wrkpth/PEFrame/$prj_name-peframe_output-$current_time.json 2> /dev/null
+if peframe; then
+        peframe -s $bin 2> /dev/null | tee -a $wrkpth/PEFrame/$prj_name-peframe_output-$current_time.txt
+        peframe -j $bin 2> /dev/null | tee $wrkpth/PEFrame/$prj_name-peframe_output-$current_time.json
+    elif strings; then
+        strings -a $bin 2> /dev/null | tee -a $wrkpth/PEFrame/$prj_name-strings_output-$current_time.txt
+fi
 
 for str in $(cat /opt/Binspector/sdl_banned_funct.list); do
-    if [ "`cat $wrkpth/PEFrame/$prj_name-peframe_output-$current_time.txt | grep -o $str`" == "$str" ]; then
+    if [ "`cat $wrkpth/PEFrame/$prj_name-peframe_output-$current_time.txt $wrkpth/PEFrame/$prj_name-strings_output-$current_time.txt | grep -o $str`" == "$str" ]; then
         echo "--------------------------------------------------" | tee -a $wrkpth/PEFrame/$prj_name-sdl_banned_funct-$current_time.txt
         echo "Checking for $str" | tee -a $wrkpth/PEFrame/$prj_name-sdl_banned_funct-$current_time.txt
         echo "--------------------------------------------------" | tee -a $wrkpth/PEFrame/$prj_name-sdl_banned_funct-$current_time.txt
@@ -98,7 +102,7 @@ for str in $(cat /opt/Binspector/sdl_banned_funct.list); do
 done
 
 # Troubleshoot if statement below
-if [ -z $wrkpth/PEFrame/$prj_name-sdl_banned_funct-$current_time.txt ]; then
+if [ -f $wrkpth/PEFrame/$prj_name-sdl_banned_funct-$current_time.txt ]; then
     echo | tee -a $wrkpth/PEFrame/$prj_name-sdl_banned_funct-$current_time.txt
     echo "For more information on why you shouldn't use the aforementioned functions, see links below:
     https://security.web.cern.ch/security/recommendations/en/codetools/c.shtml
@@ -122,7 +126,7 @@ echo "--------------------------------------------------"
 echo "Running cve-bin-tool"
 echo "--------------------------------------------------"
 cd $wrkpth/cve-bin-tool/
-timeout 900 cve-bin-tool -i $pth/$bin -o $wrkpth/cve-bin-tool/$prj_name-cve-bin-tool_output-$current_time.log -c 4 2> /dev/null
+timeout 900 cve-bin-tool -i $pth/$bin -o $wrkpth/cve-bin-tool/$prj_name-cve-bin-tool_output-$current_time.log -c 4 -u 2> /dev/null
 cd $pth
 echo 
 
