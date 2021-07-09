@@ -81,15 +81,20 @@ peframe $bin 2> /dev/null | tee $wrkpth/PEFrame/$prj_name-peframe_output-$curren
 echo | tee -a $wrkpth/PEFrame/$prj_name-peframe_output-$current_time.txt
 echo | tee -a $wrkpth/PEFrame/$prj_name-peframe_output-$current_time.txt
 echo "--------------------------------------------------------------------------------" | tee -a $wrkpth/PEFrame/$prj_name-peframe_output-$current_time.txt
-echo "Strings" | tee -a $wrkpth/PEFrame/$prj_name-peframe_output-$current_time.txt
+echo "Dumping strings" | tee -a $wrkpth/PEFrame/$prj_name-peframe_output-$current_time.txt
 echo "--------------------------------------------------------------------------------" | tee -a $wrkpth/PEFrame/$prj_name-peframe_output-$current_time.txt
-if peframe; then
-        peframe -s $bin 2> /dev/null | tee -a $wrkpth/PEFrame/$prj_name-peframe_output-$current_time.txt
-        peframe -j $bin 2> /dev/null | tee $wrkpth/PEFrame/$prj_name-peframe_output-$current_time.json
-    elif strings; then
-        strings -a $bin 2> /dev/null | tee -a $wrkpth/PEFrame/$prj_name-strings_output-$current_time.txt
+if hash peframe 2> /dev/null; then
+    echo "Running PEFrame"
+    peframe -s $bin 2> /dev/null | tee -a $wrkpth/PEFrame/$prj_name-peframe_output-$current_time.txt
+    peframe -j $bin 2> /dev/null | tee $wrkpth/PEFrame/$prj_name-peframe_output-$current_time.json
+elif hash strings 2> /dev/null; then
+    echo "Running strings"
+    strings -a $bin 2> /dev/null | tee -a $wrkpth/PEFrame/$prj_name-strings_output-$current_time.txt
 fi
 
+echo "--------------------------------------------------------------------------------"
+echo "Checking for dangerous C lang functions"
+echo "--------------------------------------------------------------------------------"
 for str in $(cat /opt/Binspector/sdl_banned_funct.list); do
     if [ "`cat $wrkpth/PEFrame/$prj_name-peframe_output-$current_time.txt $wrkpth/PEFrame/$prj_name-strings_output-$current_time.txt | grep -o $str`" == "$str" ]; then
         echo "--------------------------------------------------" | tee -a $wrkpth/PEFrame/$prj_name-sdl_banned_funct-$current_time.txt
