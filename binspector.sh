@@ -76,13 +76,13 @@ fi
     {
         # Checking for banned strings
         echo "--------------------------------------------------"
-        echo "Checking for banned strings"
+        echo "Checking for banned strings against $bin"
         echo "--------------------------------------------------"
         peframe $bin
         echo
         echo
         echo "--------------------------------------------------------------------------------"
-        echo "Dumping strings"
+        echo "Dumping strings of $bin"
         echo "--------------------------------------------------------------------------------"
         if hash peframe; then
             echo "Running PEFrame"
@@ -94,7 +94,7 @@ fi
         fi
 
         echo "--------------------------------------------------------------------------------"
-        echo "Checking for dangerous C lang functions"
+        echo "Checking for dangerous C lang functions against $bin"
         echo "--------------------------------------------------------------------------------"
         for str in $(cat /opt/Binspector/sdl_banned_funct.list); do
             if [ "`cat $wrkpth/PEFrame/$prj_name-peframe_output-$current_time.txt $wrkpth/PEFrame/$prj_name-strings_output-$current_time.txt | grep -o $str`" == "$str" ]; then
@@ -120,7 +120,7 @@ fi
     } 2> /dev/null | tee -a $wrkpth/PEFrame/$prj_name-peframe_output-$current_time.txt
     # Binwalk
     echo "--------------------------------------------------"
-    echo "Running binwalk"
+    echo "Running binwalk against $bin"
     echo "--------------------------------------------------"
     cd $wrkpth/Binwalk/
     binwalk -e $pth/$bin | tee $wrkpth/Binwalk/$prj_name-binwalk_output-$current_time.txt
@@ -129,7 +129,7 @@ fi
 
     # Intel's cve-bin
     echo "--------------------------------------------------"
-    echo "Running cve-bin-tool"
+    echo "Running cve-bin-tool against $bin"
     echo "--------------------------------------------------"
     cd $wrkpth/cve-bin-tool/
     cve-bin-tool -x -f csv -o $wrkpth/cve-bin-tool/$prj_name-cve-bin-tool_output-$current_time.csv -c 4 -u now $pth/$bin | tee -a  $wrkpth/cve-bin-tool/$prj_name-cve-bin-tool_output-$current_time.log
@@ -138,7 +138,7 @@ fi
 
     # Fuzzing executable binary
     echo "--------------------------------------------------"
-    echo "Fuzzing executable binary"
+    echo "Fuzzing executable $bin"
     echo "--------------------------------------------------"
     valgrind --tool=memcheck --leak-check=yes --show-reachable=yes --num-callers=20 --track-fds=yes --log-file=$wrkpth/Valgrind/$prj_name-valgrind_output-$current_time.log --verbose ./$bin | tee -a $wrkpth/Valgrind/$prj_name-valgrind_output-$current_time.txt
     zzuf -s 0:1000000 -c -C 0 -q -T 3 objdump -x $bin | tee -a $wrkpth/Zzuf/$prj_name-zzuf_output-$current_time.log  # https://fuzzing-project.org/tutorial1.html
