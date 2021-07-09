@@ -151,7 +151,7 @@ echo "--------------------------------------------------"
 echo "Cleaning house"
 echo "--------------------------------------------------"
 rm -rf $wrktmp/
-find $wrkpth -type d,f -empty | xargs rm -rf
+find $wrkpth -type d,f -empty -delete
 tar --ignore-failed-read -czvf $pth/$prj_name-binspector-$current_time.tar.gz $wrkpth/*
 # --remove-files 
 echo "All done!"
