@@ -19,7 +19,7 @@ fi
 # Updating dependencies
 if hash apt 2> /dev/null; then
     apt update
-    for i in tar wget git python3 python3-pip peframe binwalk zzuf valgrind go; apt install -y $i; done
+    for i in tar wget git python3 python3-pip peframe binwalk zzuf valgrind go; do apt install -y $i; done
 fi
 
 # Installing virustotal
