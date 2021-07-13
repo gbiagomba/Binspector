@@ -34,7 +34,7 @@ if [[ "$diskSize" -ge "$diskMax" ]]; then
 fi
 
 # Setting Envrionment
-for i in PEFrame Zzuf Valgrind Binwalk cve-bin-tool; do
+for i in PEFrame Zzuf Valgrind Binwalk cve-bin-tool VirusTotal mdcloud; do
     if [ ! -e $wrkpth/$i ]; then
         mkdir -p $wrkpth/$i
     fi
@@ -119,6 +119,26 @@ fi
         fi
         echo 
     } 2> /dev/null | tee -a $wrkpth/PEFrame/$prj_name-peframe_output-$current_time.txt
+
+    # virustotal
+    echo "--------------------------------------------------"
+    echo "Checking $bin against VirusTotal"
+    echo "--------------------------------------------------"
+    cd $wrkpth/VirusTotal/
+    for i in md5sum sh1sum sh256sum; do $i $pth/$bin | cut -d " " -f 1; done | tee -a $wrkpth/VirusTotal/$prj_name-$bin-$current_time.hash
+    cat $wrkpth/VirusTotal/$prj_name-$bin-$current_time.hash | vt file - | tee $wrkpth/VirusTotal/$prj_name-VirusTotal_output-$current_time.yaml
+    cd $pth
+    echo 
+
+    # OPSWAT MetaDefender
+    echo "--------------------------------------------------"
+    echo "Checking $bin against OPSWAT MetaDefender"
+    echo "--------------------------------------------------"
+    cd $wrkpth/mdcloud/
+    mdcloud-go scan -l -s -f json $pth/$bin | jq | tee -a $wrkpth/mdcloud/mdcloud_output.json
+    cd $pth
+    echo 
+
     # Binwalk
     echo "--------------------------------------------------"
     echo "Running binwalk against $bin"

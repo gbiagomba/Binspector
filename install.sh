@@ -19,7 +19,27 @@ fi
 # Updating dependencies
 if hash apt 2> /dev/null; then
     apt update
-    for i in tar wget git python3 python3-pip peframe binwalk zzuf valgrind; apt install -y $i; done
+    for i in tar wget git python3 python3-pip peframe binwalk zzuf valgrind go; apt install -y $i; done
+fi
+
+# Installing virustotal
+if ! hash vt 2> /dev/null; then
+    cd /opt/
+    git clone https://github.com/VirusTotal/vt-cli
+    make install
+    vt completion bash > /etc/bash_completion.d/vt
+    vt init
+fi
+
+# Installing metadefender.com
+if ! hash vt 2> /dev/null; then
+    go get -u -v github.com/OPSWAT/mdcloud-go
+    echo "Register an account with metadefender.com, if you dont already own one"
+    for i in firefox chrome; do if hash $i; then $i https://id.opswat.com/register; fi; done
+    sleep 180
+    echo "What is your OPSWAT API key?"; read OPSWAT_APIKEY
+    echo "# OPSWAT API Key
+    export MDCLOUD_APIKEY=$OPSWAT_APIKEY" >> ~/.bashrc
 fi
 
 # Installing cve-bin-tool
