@@ -32,7 +32,7 @@ if ! hash vt 2> /dev/null; then
 fi
 
 # Installing metadefender.com
-if ! hash vt 2> /dev/null; then
+if ! hash mdcloud-go 2> /dev/null; then
     go get -u -v github.com/OPSWAT/mdcloud-go
     echo "Register an account with metadefender.com, if you dont already own one"
     for i in firefox chrome; do if hash $i; then $i https://id.opswat.com/register; fi; done
