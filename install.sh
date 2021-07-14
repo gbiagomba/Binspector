@@ -19,7 +19,7 @@ fi
 # Updating dependencies
 if hash apt 2> /dev/null; then
     apt update
-    for i in tar wget git python3 python3-pip peframe binwalk zzuf valgrind go; do apt install -y $i; done
+    for i in tar wget git python3 python3-pip peframe binwalk zzuf valgrind golang; do apt install -y $i; done
 fi
 
 # Installing virustotal
@@ -27,13 +27,19 @@ if ! hash vt 2> /dev/null; then
     cd /opt/
     git clone https://github.com/VirusTotal/vt-cli
     make install
-    vt completion bash > /etc/bash_completion.d/vt
     vt init
+    vt completion bash > /etc/bash_completion.d/vt
 fi
 
 # Installing metadefender.com
 if ! hash mdcloud-go 2> /dev/null; then
-    go get -u -v github.com/OPSWAT/mdcloud-go
+    if hash go; then
+        go get -u -v github.com/OPSWAT/mdcloud-go
+    elif hash curl && ! hash mdcloud-go; then
+        curl -s https://github.com/OPSWAT/mdcloud-go/releases/download/1.2.0/mdcloud-go_linux_amd64 --output /usr/bin/mdcloud-go && chmod +x /usr/bin/mdcloud-go
+    elif hash wget && [ ! -e /usr/bin/mdcloud-go ]; then
+        wget -q https://github.com/OPSWAT/mdcloud-go/releases/download/1.2.0/mdcloud-go_linux_amd64 -O /usr/bin/mdcloud-go && chmod +x /usr/bin/mdcloud-go
+    fi
     echo "Register an account with metadefender.com, if you dont already own one"
     for i in firefox chrome; do if hash $i; then $i https://id.opswat.com/register; fi; done
     sleep 180
@@ -100,7 +106,7 @@ if ! hash valgrind 2> /dev/null; then
 fi
 
 # Downloading the Vulners Nmap Script
-ln -s /opt/Binspector/binspector.sh /usr/bin/binspector
+if ! -e /usr/bin/binspector; then ln -s /opt/Binspector/binspector.sh /usr/bin/binspector; fi
 
 # Done
 echo finished!
