@@ -27,8 +27,8 @@ if ! hash vt 2> /dev/null; then
     cd /opt/
     git clone https://github.com/VirusTotal/vt-cli
     make install
-    vt init
     vt completion bash > /etc/bash_completion.d/vt
+    vt init
 fi
 
 # Installing metadefender.com
@@ -65,7 +65,6 @@ if ! hash peframe 2> /dev/null; then
         pip3 install -r requirements.txt
         python3 setup.py bdist_wheel
         python3 setup.py install
-        bash.install
     fi
 fi
 
@@ -106,7 +105,7 @@ if ! hash valgrind 2> /dev/null; then
 fi
 
 # Downloading the Vulners Nmap Script
-if ! -e /usr/bin/binspector; then ln -s /opt/Binspector/binspector.sh /usr/bin/binspector; fi
+if [! -e /usr/bin/binspector ]; then ln -s /opt/Binspector/binspector.sh /usr/bin/binspector; fi
 
 # Done
 echo finished!

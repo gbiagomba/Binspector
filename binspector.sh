@@ -6,7 +6,7 @@
 
 # for debugging purposes
 # set -eux
-trap "echo Booh!" SIGINT SIGTERM
+trap "echo Did you mean to do that!?" SIGINT SIGTERM
 
 # Checking if the user is root
 if [ "$EUID" -ne 0 ]
@@ -56,6 +56,16 @@ if [ -z $prj_name ]; then
     echo
 fi
 
+# Functions
+function Banner
+{
+    echo
+    echo "--------------------------------------------------"
+    echo "$1
+    Current Time : $current_time"
+    echo "--------------------------------------------------"
+}
+
 # Capturing main output
 {
     # Moving back to original workspace & loading logo
@@ -76,15 +86,11 @@ fi
 
     {
         # Checking for banned strings
-        echo "--------------------------------------------------"
-        echo "Checking for banned strings against $bin"
-        echo "--------------------------------------------------"
+        Banner "Checking for banned strings against $bin"
         peframe $bin
         echo
-        echo
-        echo "--------------------------------------------------------------------------------"
-        echo "Dumping strings of $bin"
-        echo "--------------------------------------------------------------------------------"
+        
+        Banner "Dumping strings of $bin"
         if hash peframe; then
             echo "Running PEFrame"
             peframe -s $bin | tee -a $wrkpth/PEFrame/$prj_name-peframe-strings_output-$current_time.txt
@@ -94,82 +100,65 @@ fi
             strings -a $bin | tee -a $wrkpth/PEFrame/$prj_name-strings_output-$current_time.txt
         fi
 
-        echo "--------------------------------------------------------------------------------"
-        echo "Checking for dangerous C lang functions against $bin"
-        echo "--------------------------------------------------------------------------------"
+        Banner "Checking for dangerous C lang functions against $bin"
         for str in $(cat /opt/Binspector/sdl_banned_funct.list); do
             if [ "`cat $wrkpth/PEFrame/$prj_name-peframe_output-$current_time.txt $wrkpth/PEFrame/$prj_name-strings_output-$current_time.txt | grep -o $str`" == "$str" ]; then
-                echo "--------------------------------------------------" | tee -a $wrkpth/PEFrame/$prj_name-sdl_banned_funct-$current_time.txt
-                echo "Checking for $str" | tee -a $wrkpth/PEFrame/$prj_name-sdl_banned_funct-$current_time.txt
-                echo "--------------------------------------------------" | tee -a $wrkpth/PEFrame/$prj_name-sdl_banned_funct-$current_time.txt
-                cat $wrkpth/PEFrame/$prj_name-peframe_output-$current_time.txt | grep $str | tee -a $wrkpth/PEFrame/$prj_name-sdl_banned_funct-$current_time.txt
-                echo | tee -a $wrkpth/PEFrame/$prj_name-sdl_banned_funct-$current_time.txt
-                # echo | tee -a $wrkpth/PEFrame/$prj_name-sdl_banned_funct-$current_time.txt
+                Banner "Checking for $str"
+                cat $wrkpth/PEFrame/$prj_name-peframe_output-$current_time.txt | grep $str
+                echo
             fi
-        done
+        done | tee -a $wrkpth/PEFrame/$prj_name-sdl_banned_funct-$current_time.txt
 
         # Troubleshoot if statement below
         if [ -f $wrkpth/PEFrame/$prj_name-sdl_banned_funct-$current_time.txt ]; then
-            echo | tee -a $wrkpth/PEFrame/$prj_name-sdl_banned_funct-$current_time.txt
             echo "For more information on why you shouldn't use the aforementioned functions, see links below:
             https://security.web.cern.ch/security/recommendations/en/codetools/c.shtml
             https://github.com/intel/safestringlib/wiki/SDL-List-of-Banned-Functions
             https://docs.microsoft.com/en-us/previous-versions/bb288454(v=msdn.10)?redirectedfrom=MSDN
-            " | tee -a $wrkpth/PEFrame/$prj_name-sdl_banned_funct-$current_time.txt
-        fi
+            "
+        fi | tee -a $wrkpth/PEFrame/$prj_name-sdl_banned_funct-$current_time.txt
         echo 
     } 2> /dev/null | tee -a $wrkpth/PEFrame/$prj_name-peframe_output-$current_time.txt
 
     # virustotal
-    echo "--------------------------------------------------"
-    echo "Checking $bin against VirusTotal"
-    echo "--------------------------------------------------"
+    Banner "Checking $bin against VirusTotal"
     cd $wrkpth/VirusTotal/
     for i in md5sum sh1sum sh256sum; do $i $pth/$bin | cut -d " " -f 1; done | tee -a $wrkpth/VirusTotal/$prj_name-$bin-$current_time.hash
-    cat $wrkpth/VirusTotal/$prj_name-$bin-$current_time.hash | vt file - | tee $wrkpth/VirusTotal/$prj_name-VirusTotal_output-$current_time.yaml
+    cat $wrkpth/VirusTotal/$prj_name-$bin-$current_time.hash | vt file - | tee -a $wrkpth/VirusTotal/$prj_name-VirusTotal_output-$current_time.yaml
+    if [  -z $wrkpth/VirusTotal/$prj_name-VirusTotal_output-$current_time.yaml ]; then vt scan $bin | tee -a $wrkpth/VirusTotal/$prj_name-VirusTotal_output-$current_time.yaml; fi
     cd $pth
     echo 
 
     # OPSWAT MetaDefender
-    echo "--------------------------------------------------"
-    echo "Checking $bin against OPSWAT MetaDefender"
-    echo "--------------------------------------------------"
+    Banner "Checking $bin against OPSWAT MetaDefender"
     cd $wrkpth/mdcloud/
     mdcloud-go scan -l -s -f json $pth/$bin | jq | tee -a $wrkpth/mdcloud/mdcloud_output.json
     cd $pth
     echo 
 
     # Binwalk
-    echo "--------------------------------------------------"
-    echo "Running binwalk against $bin"
-    echo "--------------------------------------------------"
+    Banner "Running binwalk against $bin"
     cd $wrkpth/Binwalk/
     binwalk -e $pth/$bin | tee $wrkpth/Binwalk/$prj_name-binwalk_output-$current_time.txt
     cd $pth
     echo 
 
     # Intel's cve-bin
-    echo "--------------------------------------------------"
-    echo "Running cve-bin-tool against $bin"
-    echo "--------------------------------------------------"
+    Banner "Running cve-bin-tool against $bin"
     cd $wrkpth/cve-bin-tool/
-    cve-bin-tool -x -f csv -o $wrkpth/cve-bin-tool/$prj_name-cve-bin-tool_output-$current_time.csv -c 4 -u now $pth/$bin | tee -a  $wrkpth/cve-bin-tool/$prj_name-cve-bin-tool_output-$current_time.log
+    cve-bin-tool -x -f csv -o $wrkpth/cve-bin-tool/$prj_name-cve-bin-tool_output-$current_time -c 4 -u now $pth/$bin | tee -a  $wrkpth/cve-bin-tool/$prj_name-cve-bin-tool_output-$current_time.log
     cd $pth
     echo 
 
     # Fuzzing executable binary
-    echo "--------------------------------------------------"
-    echo "Fuzzing executable $bin"
-    echo "--------------------------------------------------"
+    Banner "Fuzzing executable $bin"
     valgrind --tool=memcheck --leak-check=yes --show-reachable=yes --num-callers=20 --track-fds=yes --log-file=$wrkpth/Valgrind/$prj_name-valgrind_output-$current_time.log --verbose ./$bin | tee -a $wrkpth/Valgrind/$prj_name-valgrind_output-$current_time.txt
     zzuf -s 0:1000000 -c -C 0 -q -T 3 objdump -x $bin | tee -a $wrkpth/Zzuf/$prj_name-zzuf_output-$current_time.log  # https://fuzzing-project.org/tutorial1.html
     echo
-} 2> /dev/null | tee -a $wrkpth/$prj_name-binspector_output-$current_time.txt
+} | tee -a $wrkpth/$prj_name-binspector_output-$current_time.txt
 
 # Cleaning up
-echo "--------------------------------------------------"
-echo "Cleaning house"
-echo "--------------------------------------------------"
+Banner "Cleaning house"
 rm -rf $wrktmp/
 find $wrkpth -type d,f -empty -delete
 tar --ignore-failed-read --remove-files -czvf $pth/$prj_name-binspector-$current_time.tar.gz $wrkpth/*
