@@ -24,11 +24,14 @@ fi
 
 # Installing virustotal
 if ! hash vt 2> /dev/null; then
-    cd /opt/
-    git clone https://github.com/VirusTotal/vt-cli
-    make install
-    vt completion bash > /etc/bash_completion.d/vt
-    vt init
+    go get -u -v github.com/VirusTotal/vt-cli/vt
+    if ! hash vt 2> /dev/null; then
+        cd /opt/
+        git clone https://github.com/VirusTotal/vt-cli
+        make install
+        vt completion bash > /etc/bash_completion.d/vt
+        vt init
+    fi
 fi
 
 # Installing metadefender.com
@@ -40,12 +43,11 @@ if ! hash mdcloud-go 2> /dev/null; then
     elif hash wget && [ ! -e /usr/bin/mdcloud-go ]; then
         wget -q https://github.com/OPSWAT/mdcloud-go/releases/download/1.2.0/mdcloud-go_linux_amd64 -O /usr/bin/mdcloud-go && chmod +x /usr/bin/mdcloud-go
     fi
-    echo "Register an account with metadefender.com, if you dont already own one"
-    for i in firefox chrome; do if hash $i; then $i https://id.opswat.com/register; fi; done
-    sleep 180
+    echo && echo "Register an account with metadefender, assuming you dont already have one
+    We are opening the browser for you so you could create said account"
+    for i in firefox chromium; do if hash $i; then $i https://id.opswat.com/register; fi; done
     echo "What is your OPSWAT API key?"; read OPSWAT_APIKEY
-    echo "# OPSWAT API Key
-    export MDCLOUD_APIKEY=$OPSWAT_APIKEY" >> ~/.bashrc
+    printf "\n # OPSWAT API Key\n export MDCLOUD_APIKEY=$OPSWAT_APIKEY" >> ~/.bashrc
 fi
 
 # Installing cve-bin-tool
@@ -105,7 +107,7 @@ if ! hash valgrind 2> /dev/null; then
 fi
 
 # Downloading the Vulners Nmap Script
-if [! -e /usr/bin/binspector ]; then ln -s /opt/Binspector/binspector.sh /usr/bin/binspector; fi
+if [ ! -e /usr/bin/binspector ]; then ln -s /opt/Binspector/binspector.sh /usr/bin/binspector; fi
 
 # Done
 echo finished!
