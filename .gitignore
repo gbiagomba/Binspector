@@ -1,0 +1,21 @@
+# Rust / Cargo
+target/
+**/*.rs.bk
+
+# IDEs and editors
+.vscode/
+.idea/
+*.iml
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs and outputs
+*.log
+binspector-*.tar.gz
+output/
+
+# Node / misc (in case)
+node_modules/
+dist/

@@ -1,0 +1,29 @@
+[package]
+name = "binspector"
+version = "0.1.0"
+edition = "2021"
+description = "Inspect binaries for banned C functions by scanning embedded strings"
+license = "MIT"
+repository = "https://github.com/gbiagomba/Binspector"
+readme = "README.md"
+
+[dependencies]
+anyhow = "1.0"
+clap = { version = "4.5", features = ["derive"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha1 = "0.10"
+sha2 = "0.10"
+md-5 = "0.10"
+hex = "0.4"
+walkdir = "2.5"
+time = { version = "0.3", features = ["formatting"] }
+regex = "1.11"
+
+[dev-dependencies]
+assert_cmd = "2.0"
+predicates = "3.1"
+
+[profile.release]
+lto = true
+codegen-units = 1
