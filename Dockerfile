@@ -15,7 +15,8 @@ FROM debian:bookworm-slim
 RUN useradd -ms /bin/bash app
 WORKDIR /home/app
 COPY --from=build /app/target/release/binspector /usr/local/bin/binspector
-COPY sdl_banned_funct.list /etc/binspector/sdl_banned_funct.list
+# Provide the default banned list in the image for reference/overrides
+COPY rsc/sdl_banned_funct.list /etc/binspector/sdl_banned_funct.list
 USER app
 ENTRYPOINT ["/usr/local/bin/binspector"]
 CMD ["--help"]

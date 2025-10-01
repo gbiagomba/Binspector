@@ -4,7 +4,7 @@ APP := binspector
 TARGET ?=
 FEATURES ?=
 
-.PHONY: all build release run test fmt lint clean
+.PHONY: all build release run test fmt lint clean normalize-banned-list
 
 all: build
 
@@ -29,3 +29,6 @@ lint:
 
 clean:
 	cargo clean
+
+normalize-banned-list:
+	@python3 scripts/normalize_banned_list.py

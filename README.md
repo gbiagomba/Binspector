@@ -50,6 +50,13 @@ Notes:
 - Banned list sanitization: zero-width/format/control characters are stripped, and whitespace splits multiple tokens on a line (to handle legacy list quirks).
  - Validation: Setting both `--no-ascii` and `--no-utf16` errors; enable at least one.
 
+## Project Structure
+- `rsc/`: Resource lists and references for banned/dangerous functions. The Rust CLI embeds `rsc/sdl_banned_funct.list` by default; you can override with `--banned-list <file>`.
+- `legacy/`: Legacy v1 Bash implementation and installers (kept for reference). See the sub-READMEs for details.
+
+## Maintenance
+- Normalize banned list: `make normalize-banned-list` cleans `rsc/sdl_banned_funct.list` (strips zero‑width/control chars, splits tokens, dedupes, sorts).
+
 ## TODO
 - [ ] Fuzzing subcommand (valgrind/zzuf integration)
 - [ ] Optional external tools integration (VirusTotal, MetaDefender, binwalk, cve-bin-tool)
