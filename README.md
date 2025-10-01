@@ -1,7 +1,7 @@
 # Binspector
 Binspector is now a fast, cross‑platform Rust CLI that scans an executable binary for nearly 200 banned and dangerous C functions by extracting embedded strings (ASCII and UTF‑16LE). It also reports file hashes to support downstream checks. A future release will re‑introduce optional fuzzing as a subcommand.
 
-## Install
+## Install (v2)
 
 - From source (requires Rust):
 ```
@@ -54,5 +54,5 @@ Notes:
 3. https://github.com/microsoft/ChakraCore/blob/master/lib/Common/Banned.h
 4. https://security.web.cern.ch/security/recommendations/en/codetools/c.shtml
 
-## Legacy Shell Version
+## Legacy Shell Version (v1)
 The original Bash implementation lives under `legacy/`. It relied on external tools (peframe, binwalk, VirusTotal CLI, MetaDefender, cve-bin-tool, valgrind, zzuf). The Rust port focuses on first‑class, cross‑platform scanning without external dependencies.
