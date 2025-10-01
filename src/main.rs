@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 // no extra imports
 use time::format_description::well_known::Rfc3339;
 
-static BANNED_LIST: &str = include_str!("../sdl_banned_funct.list");
+static BANNED_LIST: &str = include_str!("../rsc/sdl_banned_funct.list");
 
 #[derive(Parser, Debug)]
 #[command(
