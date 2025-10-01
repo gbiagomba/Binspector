@@ -11,6 +11,7 @@ Binspector is now a fast, cross‑platform Rust CLI that scans an executable bin
 # Windows (PowerShell)
 powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1
 ```
+See `scripts/README.md` for options and troubleshooting.
 
 - From source (requires Rust):
 ```
@@ -62,6 +63,7 @@ Notes:
 ## Project Structure
 - `rsc/`: Resource lists and references for banned/dangerous functions. The Rust CLI embeds `rsc/sdl_banned_funct.list` by default; you can override with `--banned-list <file>`.
 - `legacy/`: Legacy v1 Bash implementation and installers (kept for reference). See the sub-READMEs for details.
+- `scripts/`: Cross-platform installers and utilities; see `scripts/README.md`.
 
 ## Maintenance
 - Normalize banned list: `make normalize-banned-list` cleans `rsc/sdl_banned_funct.list` (strips zero‑width/control chars, splits tokens, dedupes, sorts).
