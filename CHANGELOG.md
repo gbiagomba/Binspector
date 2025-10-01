@@ -2,7 +2,8 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.1.0] - 2025-10-01
+## [2.0.0] - 2025-10-01
+- Major: Complete overhaul from shell to Rust CLI.
 - Port to Rust CLI: ASCII and UTF-16LE string extraction, banned function scanning.
 - Add hashing (MD5/SHA1/SHA256) and JSON output for full report.
 - Add custom banned list via `--banned-list`.
