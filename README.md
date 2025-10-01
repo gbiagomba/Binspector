@@ -3,6 +3,15 @@ Binspector is now a fast, cross‑platform Rust CLI that scans an executable bin
 
 ## Install (v2)
 
+- Via script (builds from source):
+```
+# Unix/macOS
+./scripts/install.sh
+
+# Windows (PowerShell)
+powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1
+```
+
 - From source (requires Rust):
 ```
 git clone https://github.com/gbiagomba/Binspector
