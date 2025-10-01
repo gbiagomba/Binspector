@@ -3,8 +3,10 @@ name: CI
 on:
   push:
     branches: [ main, master ]
+    tags: [ 'v*' ]
   pull_request:
     branches: [ main, master ]
+  workflow_dispatch:
 
 jobs:
   linux:
@@ -27,6 +29,19 @@ jobs:
           echo "[target.aarch64-unknown-linux-gnu]\nlinker = \"aarch64-linux-gnu-gcc\"" >> $HOME/.cargo/config.toml
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
+      - name: Package artifact (tar.gz)
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          BIN=target/${{ matrix.target }}/release/binspector
+          NAME=binspector-${{ matrix.target }}-${{ github.ref_name }}
+          tar -czf ${NAME}.tar.gz -C $(dirname "$BIN") $(basename "$BIN") README.md LICENSE || tar -czf ${NAME}.tar.gz -C $(dirname "$BIN") $(basename "$BIN") README.md || tar -czf ${NAME}.tar.gz -C $(dirname "$BIN") $(basename "$BIN")
+          echo "asset_path=${NAME}.tar.gz" >> $GITHUB_OUTPUT
+        id: package
+      - name: Upload to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.package.outputs.asset_path }}
 
   macos:
     name: macOS (${{ matrix.runner }})
@@ -40,6 +55,22 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Build
         run: cargo build --release
+      - name: Package artifact (tar.gz)
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          BIN=target/release/binspector
+          # Derive target from runner
+          if [[ "${{ matrix.runner }}" == "macos-14" ]]; then TARGET=aarch64-apple-darwin; else TARGET=x86_64-apple-darwin; fi
+          NAME=binspector-${TARGET}-${{ github.ref_name }}
+          tar -czf ${NAME}.tar.gz -C $(dirname "$BIN") $(basename "$BIN") README.md LICENSE || tar -czf ${NAME}.tar.gz -C $(dirname "$BIN") $(basename "$BIN") README.md || tar -czf ${NAME}.tar.gz -C $(dirname "$BIN") $(basename "$BIN")
+          echo "asset_path=${NAME}.tar.gz" >> $GITHUB_OUTPUT
+        shell: bash
+        id: package
+      - name: Upload to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.package.outputs.asset_path }}
 
   windows:
     name: Windows (${{ matrix.target }})
@@ -55,3 +86,17 @@ jobs:
           targets: ${{ matrix.target }}
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
+      - name: Package artifact (zip)
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          $bin = "target/${{ matrix.target }}/release/binspector.exe"
+          $name = "binspector-${{ matrix.target }}-${{ github.ref_name }}.zip"
+          Compress-Archive -Path $bin -DestinationPath $name
+          "asset_path=$name" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+        id: package
+      - name: Upload to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.package.outputs.asset_path }}

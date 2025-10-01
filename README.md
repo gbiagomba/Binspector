@@ -17,6 +17,13 @@ docker build -t binspector .
 docker run --rm -v "$PWD:/work" binspector /work/path/to/binary
 ```
 
+- From Releases (prebuilt binaries):
+  - Visit the Releases page and download the asset matching your OS/architecture:
+    - Linux: `binspector-x86_64-unknown-linux-gnu-<tag>.tar.gz` or `binspector-aarch64-unknown-linux-gnu-<tag>.tar.gz`
+    - macOS: `binspector-x86_64-apple-darwin-<tag>.tar.gz` or `binspector-aarch64-apple-darwin-<tag>.tar.gz`
+    - Windows: `binspector-x86_64-pc-windows-msvc-<tag>.zip` or `binspector-aarch64-pc-windows-msvc-<tag>.zip`
+  - Extract and place the binary in your `PATH`.
+
 ## Usage
 ```
 binspector <path-to-binary> \
