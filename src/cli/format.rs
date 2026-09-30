@@ -48,6 +48,27 @@ impl OutputFormat {
         matches!(self, OutputFormat::Sqlite)
     }
 
+    /// Whether this build can write the format at all.
+    ///
+    /// Only `sqlite` is conditional, and only on its cargo feature, which is on by default.
+    pub fn is_available(self) -> bool {
+        !matches!(self, OutputFormat::Sqlite) || cfg!(feature = "sqlite")
+    }
+
+    /// Why the format cannot be written, and what to do instead.
+    pub fn unavailable_message(self) -> String {
+        match self {
+            OutputFormat::Sqlite => "this build has no SQLite support. Rebuild without                  --no-default-features, or use --format sql for an equivalent text dump that                  any SQLite client can load."
+                .to_string(),
+            other => format!("this build cannot write --format {}", other.name()),
+        }
+    }
+
+    /// Every format, whether or not this build can write it.
+    ///
+    /// `Sql` precedes `Sqlite` deliberately: the text dump is the fallback for a build
+    /// without SQLite support, so it must never be the casualty of the binary writer
+    /// failing first.
     pub fn all() -> Vec<OutputFormat> {
         vec![
             OutputFormat::Text,
@@ -56,9 +77,17 @@ impl OutputFormat {
             OutputFormat::Html,
             OutputFormat::Markdown,
             OutputFormat::Sarif,
-            OutputFormat::Sqlite,
             OutputFormat::Sql,
+            OutputFormat::Sqlite,
         ]
+    }
+
+    /// The formats `all` expands to: every format this build can actually write.
+    pub fn available() -> Vec<OutputFormat> {
+        OutputFormat::all()
+            .into_iter()
+            .filter(|f| f.is_available())
+            .collect()
     }
 }
 
@@ -75,7 +104,9 @@ pub fn resolve(spec: &str) -> Result<Vec<OutputFormat>> {
             continue;
         }
         if token == "all" {
-            for f in OutputFormat::all() {
+            // `all` means every format this build can write. Naming an unavailable format
+            // explicitly is still an error below, because that asked for something specific.
+            for f in OutputFormat::available() {
                 if !out.contains(&f) {
                     out.push(f);
                 }
@@ -97,6 +128,9 @@ pub fn resolve(spec: &str) -> Result<Vec<OutputFormat>> {
                 other
             ),
         };
+        if !f.is_available() {
+            bail!("{}", f.unavailable_message());
+        }
         if !out.contains(&f) {
             out.push(f);
         }
@@ -175,16 +209,49 @@ mod tests {
         assert_eq!(resolve("TEXT").unwrap(), vec![OutputFormat::Text]);
         assert_eq!(resolve("md").unwrap(), vec![OutputFormat::Markdown]);
         assert_eq!(resolve("markdown").unwrap(), vec![OutputFormat::Markdown]);
-        assert_eq!(resolve("db").unwrap(), vec![OutputFormat::Sqlite]);
-        assert_eq!(resolve("sqlite").unwrap(), vec![OutputFormat::Sqlite]);
+        // The sqlite aliases only resolve where the build can write the format.
+        if cfg!(feature = "sqlite") {
+            assert_eq!(resolve("db").unwrap(), vec![OutputFormat::Sqlite]);
+            assert_eq!(resolve("sqlite").unwrap(), vec![OutputFormat::Sqlite]);
+        }
     }
 
     #[test]
-    fn all_expands_to_every_format() {
+    fn all_expands_to_every_format_this_build_can_write() {
         let got = resolve("all").unwrap();
-        assert_eq!(got.len(), 8);
+        assert_eq!(got.len(), OutputFormat::available().len());
         assert!(got.contains(&OutputFormat::Sarif));
-        assert!(got.contains(&OutputFormat::Sqlite));
+        assert_eq!(
+            got.contains(&OutputFormat::Sqlite),
+            cfg!(feature = "sqlite")
+        );
+        // The text dump is always present, which is the whole point of the ordering.
+        assert!(got.contains(&OutputFormat::Sql));
+    }
+
+    #[test]
+    fn sql_is_ordered_before_sqlite() {
+        // A build without SQLite support must not lose the text dump to the binary
+        // writer failing first, which is exactly what happened before this ordering.
+        let all = OutputFormat::all();
+        let sql = all.iter().position(|f| *f == OutputFormat::Sql).unwrap();
+        let sqlite = all.iter().position(|f| *f == OutputFormat::Sqlite).unwrap();
+        assert!(sql < sqlite, "got {:?}", all);
+    }
+
+    #[test]
+    fn naming_an_unavailable_format_is_an_error_not_a_silent_skip() {
+        // `all` skips what this build cannot write; naming it does not.
+        let got = resolve("sqlite");
+        assert_eq!(
+            got.is_ok(),
+            cfg!(feature = "sqlite"),
+            "availability and resolution disagree"
+        );
+        match got {
+            Ok(v) => assert_eq!(v, vec![OutputFormat::Sqlite]),
+            Err(e) => assert!(e.to_string().contains("no SQLite support"), "{}", e),
+        }
     }
 
     #[test]

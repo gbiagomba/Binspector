@@ -494,16 +494,23 @@ mod tests {
     #[test]
     fn sqlite_and_multi_format_now_work_without_an_output_flag() {
         // Both previously required -o; the timestamped default supplies one.
-        assert!(parse(&["file.bin", "--format", "sqlite"]).is_ok());
         assert!(parse(&["file.bin", "--format", "json,csv"]).is_ok());
+        // Only meaningful where the format exists at all; a build without it rejects the
+        // name outright, which `naming_an_unavailable_format_is_an_error_not_a_silent_skip`
+        // covers.
+        if cfg!(feature = "sqlite") {
+            assert!(parse(&["file.bin", "--format", "sqlite"]).is_ok());
+        }
     }
 
     #[test]
     fn stdout_still_cannot_take_sqlite_or_several_formats() {
-        let err = parse(&["file.bin", "--format", "sqlite", "-o", "-"])
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("cannot go to stdout"), "got {}", err);
+        if cfg!(feature = "sqlite") {
+            let err = parse(&["file.bin", "--format", "sqlite", "-o", "-"])
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("cannot go to stdout"), "got {}", err);
+        }
         let err = parse(&["file.bin", "--format", "json,csv", "-o", "-"])
             .unwrap_err()
             .to_string();

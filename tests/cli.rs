@@ -173,6 +173,53 @@ fn format_all_writes_every_file() {
 }
 
 #[test]
+fn format_all_writes_every_available_format_and_succeeds() {
+    // The regression this pins: `--format all` used to abort the whole loop when one
+    // writer was unavailable, losing every format ordered after it and exiting 2. The
+    // reported symptom was a missing .sql dump on a build without SQLite support.
+    let f = fixture();
+    let stem = f.out.join("everything");
+    bin()
+        .args(["--format", "all", "-o"])
+        .arg(&stem)
+        .arg(&f.target)
+        .assert()
+        .success();
+
+    // Written whatever this build supports.
+    for ext in ["txt", "json", "csv", "html", "md", "sarif", "sql"] {
+        let p = f.out.join(format!("everything.{}", ext));
+        assert!(p.exists(), "missing {}", p.display());
+        assert!(std::fs::metadata(&p).unwrap().len() > 0, "empty {}", ext);
+    }
+    // The binary database is present exactly when the build can write it, and `all`
+    // silently omits it otherwise rather than failing the run.
+    let db = f.out.join("everything.sqlite");
+    if db.exists() {
+        assert!(std::fs::metadata(&db).unwrap().len() > 0, "empty sqlite");
+    }
+}
+
+#[test]
+fn naming_sqlite_explicitly_is_not_silently_skipped() {
+    // `all` omits what this build cannot write. Asking for it by name must still say so,
+    // because that request was specific.
+    let f = fixture();
+    let out = bin()
+        .args(["--format", "sqlite", "-o"])
+        .arg(f.out.join("db.sqlite"))
+        .arg(&f.target)
+        .output()
+        .unwrap();
+    if out.status.success() {
+        assert!(f.out.join("db.sqlite").exists());
+    } else {
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(err.contains("no SQLite support"), "stderr: {}", err);
+    }
+}
+
+#[test]
 fn json_output_is_machine_readable() {
     let f = fixture();
     let out = bin_stdout()
@@ -237,12 +284,20 @@ fn rejects_contradictory_and_invalid_options() {
         .code(2)
         .stderr(contains("unknown output format"));
 
-    bin()
+    // A binary database can never go to stdout. On a build without SQLite support the
+    // format is refused earlier, for a different and equally correct reason.
+    let out = bin()
         .args(["--format", "sqlite", "-o", "-"])
         .arg(&f.target)
-        .assert()
-        .code(2)
-        .stderr(contains("cannot go to stdout"));
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("cannot go to stdout") || err.contains("no SQLite support"),
+        "stderr: {}",
+        err
+    );
 }
 
 #[test]

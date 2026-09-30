@@ -58,11 +58,11 @@ pub fn render_to_path(
     match fmt {
         #[cfg(feature = "sqlite")]
         OutputFormat::Sqlite => sqlite::write(path, report, spool, opts),
+        // Backstop only: `--format all` no longer offers sqlite in a build without it, and
+        // naming it explicitly is rejected during CLI validation. Reaching here means a
+        // caller built the format list itself.
         #[cfg(not(feature = "sqlite"))]
-        OutputFormat::Sqlite => bail!(
-            "this build has no SQLite support. Rebuild with --features sqlite, or use \
-             --format sql for an equivalent text dump that any SQLite client can load."
-        ),
+        OutputFormat::Sqlite => bail!("{}", OutputFormat::Sqlite.unavailable_message()),
         other => {
             let file = std::fs::File::create(path)
                 .map_err(|e| anyhow::anyhow!("creating {}: {}", path.display(), e))?;

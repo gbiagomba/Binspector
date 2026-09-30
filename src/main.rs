@@ -235,9 +235,15 @@ fn run_scan(resolved: &binspector::cli::Resolved) -> Result<ExitCode> {
     } else {
         format::Naming::Exact
     };
+    // With several formats requested, one failing writer must not discard the others: a
+    // completed analysis is worth more than a tidy error. Failures are collected, every
+    // writable format is written, and the run still exits 2 at the end. A single format
+    // keeps failing outright, since there is nothing to salvage.
+    let mut failures: Vec<String> = Vec::new();
+    let several = resolved.formats.len() > 1;
     for fmt in &resolved.formats {
         let dump_here = resolved.dump && fmt.supports_dump();
-        match &resolved.output {
+        let outcome = match &resolved.output {
             Some(base) => {
                 let path = format::destination(base, *fmt, naming);
                 let opts = RenderOpts {
@@ -246,8 +252,9 @@ fn run_scan(resolved: &binspector::cli::Resolved) -> Result<ExitCode> {
                     dump: dump_here,
                 };
                 let sp = prepare_spool(&mut spool, dump_here)?;
-                report::render_to_path(*fmt, &path, &report, sp, &opts)?;
-                eprintln!("binspector: wrote {}", path.display());
+                report::render_to_path(*fmt, &path, &report, sp, &opts).map(|()| {
+                    eprintln!("binspector: wrote {}", path.display());
+                })
             }
             None => {
                 let opts = RenderOpts {
@@ -258,10 +265,26 @@ fn run_scan(resolved: &binspector::cli::Resolved) -> Result<ExitCode> {
                 let sp = prepare_spool(&mut spool, dump_here)?;
                 let stdout = io::stdout();
                 let mut w = io::BufWriter::new(stdout.lock());
-                report::render(*fmt, &mut w, &report, sp, &opts)?;
-                w.flush()?;
+                report::render(*fmt, &mut w, &report, sp, &opts).and_then(|()| Ok(w.flush()?))
             }
+        };
+        match outcome {
+            Ok(()) => {}
+            Err(e) if several => {
+                eprintln!("binspector: --format {} failed: {:#}", fmt.name(), e);
+                failures.push(fmt.name().to_string());
+            }
+            Err(e) => return Err(e),
         }
+    }
+    if !failures.is_empty() {
+        eprintln!(
+            "binspector: {} of {} formats could not be written: {}",
+            failures.len(),
+            resolved.formats.len(),
+            failures.join(", ")
+        );
+        return Ok(ExitCode::from(2));
     }
 
     Ok(exit_code(resolved, &report))
