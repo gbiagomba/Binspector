@@ -63,6 +63,19 @@ pub struct Coverage {
     pub members_scanned: usize,
     pub total_unpacked_bytes: u64,
     pub entries: Vec<CoverageEntry>,
+    /// Embedded signatures found by carving, per member. Empty unless --carve ran.
+    pub carved: Vec<CarvedMember>,
+    /// Whether carving ran, so an empty result is not read as "nothing embedded".
+    pub carve_ran: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct CarvedMember {
+    pub member: String,
+    pub items: Vec<crate::container::CarvedItem>,
+    /// Checksums, certificates, and text markers, counted rather than listed.
+    pub metadata_markers: usize,
+    pub speculative: usize,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -120,6 +133,11 @@ impl Report {
             .iter()
             .filter(|e| e.pe.is_some())
             .collect()
+    }
+
+    /// Total embedded signatures carving found across every member.
+    pub fn carved_total(&self) -> usize {
+        self.coverage.carved.iter().map(|c| c.items.len()).sum()
     }
 
     /// Occurrences backed by a recorded PE import rather than embedded text.

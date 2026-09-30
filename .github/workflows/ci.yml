@@ -28,6 +28,8 @@ jobs:
         run: cargo test --all
       - name: Tests with all features
         run: cargo test --all --all-features
+      - name: Clippy with all features
+        run: cargo clippy --all-targets --all-features -- -D warnings
       - name: Fuzz harnesses build
         run: cd fuzz && cargo build --release
       - name: Short differential fuzz campaign

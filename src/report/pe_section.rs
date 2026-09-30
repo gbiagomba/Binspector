@@ -165,6 +165,81 @@ pub fn largest_pe(r: &Report) -> Option<(&str, u64)> {
         .max_by_key(|(_, s)| *s)
 }
 
+/// Embedded signatures found by carving.
+pub fn write_carve_text(w: &mut dyn Write, r: &Report) -> Result<()> {
+    if !r.coverage.carve_ran {
+        return Ok(());
+    }
+    let total = r.carved_total();
+    let containers: usize = r
+        .coverage
+        .carved
+        .iter()
+        .flat_map(|c| c.items.iter())
+        .filter(|i| i.class == crate::container::carve::Class::Container)
+        .count();
+    let markers: usize = r.coverage.carved.iter().map(|c| c.metadata_markers).sum();
+    writeln!(
+        w,
+        "Carving ({} candidate embedded archive(s) or filesystem(s), {} other signature(s))",
+        thousands(containers as u64),
+        thousands(total.saturating_sub(containers) as u64)
+    )?;
+    if markers > 0 {
+        writeln!(
+            w,
+            "  {} checksum, certificate, and text marker(s) excluded as not being embedded files.",
+            thousands(markers as u64)
+        )?;
+    }
+    if total == 0 {
+        writeln!(w, "  No embedded file signatures found past offset 0.")?;
+        writeln!(w)?;
+        return Ok(());
+    }
+    if containers > 0 {
+        writeln!(
+            w,
+            "  A signature match is a lead, not proof. Extract with `binwalk -e` to confirm."
+        )?;
+    }
+    for c in r.coverage.carved.iter().take(40) {
+        writeln!(w, "  {}", short_name(&c.member))?;
+        for i in c.items.iter().take(10) {
+            writeln!(
+                w,
+                "    [{}] {} at offset 0x{:x} ({} bytes){}  {}",
+                match i.class {
+                    crate::container::carve::Class::Container => "archive",
+                    crate::container::carve::Class::Embedded => "embedded",
+                    crate::container::carve::Class::Other => "other",
+                },
+                i.signature,
+                i.offset,
+                i.size,
+                if i.confident { "" } else { " [low confidence]" },
+                i.description
+            )?;
+        }
+        if c.speculative > 0 {
+            writeln!(
+                w,
+                "    plus {} speculative match(es) not listed",
+                c.speculative
+            )?;
+        }
+    }
+    if r.coverage.carved.len() > 40 {
+        writeln!(
+            w,
+            "  ... and {} more member(s)",
+            r.coverage.carved.len() - 40
+        )?;
+    }
+    writeln!(w)?;
+    Ok(())
+}
+
 /// Reputation and CVE enrichment, when present.
 pub fn write_intel_text(w: &mut dyn Write, r: &Report) -> Result<()> {
     if r.intel.is_empty() {

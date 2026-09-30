@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use crate::container::{self, Limits};
 use crate::hashing;
 use crate::intel;
-use crate::model::{Coverage, CoverageEntry, HitRecord, MatchSummary, Report};
+use crate::model::{CarvedMember, Coverage, CoverageEntry, HitRecord, MatchSummary, Report};
 use crate::pe::{ioc, PeAnalysis};
 use crate::spool::{Spool, SpoolReader};
 use banned::BannedList;
@@ -340,6 +340,17 @@ pub fn run(path: &Path, cfg: &ScanConfig) -> Result<ScanOutput> {
             members_scanned: outcome.members_scanned,
             total_unpacked_bytes: outcome.total_unpacked,
             entries: coverage_entries,
+            carved: outcome
+                .carved
+                .into_iter()
+                .map(|(member, r)| CarvedMember {
+                    member,
+                    items: r.items,
+                    metadata_markers: r.metadata_markers,
+                    speculative: r.speculative,
+                })
+                .collect(),
+            carve_ran: cfg.limits.carve,
         },
         warnings,
     };

@@ -125,6 +125,11 @@ pub struct Cli {
     #[arg(long = "include-low-confidence")]
     pub include_low_confidence: bool,
 
+    /// Scan every member for embedded file signatures. Needs a build with
+    /// --features carve
+    #[arg(long)]
+    pub carve: bool,
+
     /// Skip PE parsing (headers, sections, imports, mitigations)
     #[arg(long = "no-pe")]
     pub no_pe: bool,
@@ -289,6 +294,7 @@ impl Cli {
                 max_member_bytes: self.max_member_bytes,
                 max_expansion_ratio: self.max_expansion_ratio,
                 max_members: self.max_members,
+                carve: self.carve,
             },
             dump: self.dump,
             max_hits: self.max_hits,
@@ -299,6 +305,9 @@ impl Cli {
             detect_components: !self.no_components,
         };
 
+        if self.carve && !crate::container::carve::available() {
+            bail!("{}", crate::container::carve::unavailable_message());
+        }
         if (self.reputation || self.cve) && self.no_components && self.cve {
             bail!("--cve needs component detection; remove --no-components");
         }

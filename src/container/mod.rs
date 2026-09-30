@@ -5,6 +5,9 @@
 //! tree. Nothing is written to disk, which keeps a scan safe to run on a host with
 //! little free space and removes extraction as an attack surface entirely.
 
+pub mod archives;
+pub mod carve;
+pub mod compressed;
 pub mod detect;
 pub mod limits;
 pub mod zip;
@@ -13,6 +16,7 @@ use anyhow::{bail, Context, Result};
 use std::fs;
 use std::path::Path;
 
+pub use carve::{CarveReport, CarvedItem};
 pub use detect::Format;
 pub use limits::{Budget, Limits};
 
@@ -41,6 +45,8 @@ pub struct WalkOutcome {
     pub warnings: Vec<String>,
     /// Every leaf visited, with its detected format, for the coverage section.
     pub leaves: Vec<(String, Format, u64)>,
+    /// Embedded signatures found by carving, when the `carve` feature is enabled.
+    pub carved: Vec<(String, CarveReport)>,
 }
 
 /// Walk `root`, invoking `visit` for every scannable leaf.
@@ -72,19 +78,19 @@ where
     let root_size = data.len() as u64;
     let root_format = detect::detect(data);
 
+    let carve_enabled = limits.carve;
     let mut budget = Budget::new(limits, root_size);
     let mut leaves = Vec::new();
     let mut members_scanned = 0usize;
+    let mut carved = Vec::new();
 
-    descend(
-        data,
-        vec![root_name],
-        0,
-        &mut budget,
-        &mut leaves,
-        &mut members_scanned,
-        visit,
-    )?;
+    let mut ctx = Ctx {
+        leaves: &mut leaves,
+        members_scanned: &mut members_scanned,
+        carved: &mut carved,
+        carve_enabled,
+    };
+    descend(data, vec![root_name], 0, &mut budget, &mut ctx, visit)?;
 
     Ok(WalkOutcome {
         root_format,
@@ -93,17 +99,24 @@ where
         total_unpacked: budget.total_unpacked(),
         warnings: budget.warnings().to_vec(),
         leaves,
+        carved,
     })
 }
 
-#[allow(clippy::too_many_arguments)]
+/// Mutable state threaded through the recursion, so `descend` keeps a short signature.
+struct Ctx<'a> {
+    leaves: &'a mut Vec<(String, Format, u64)>,
+    members_scanned: &'a mut usize,
+    carved: &'a mut Vec<(String, CarveReport)>,
+    carve_enabled: bool,
+}
+
 fn descend<F>(
     data: &[u8],
     chain: Vec<String>,
     depth: usize,
     budget: &mut Budget,
-    leaves: &mut Vec<(String, Format, u64)>,
-    members_scanned: &mut usize,
+    ctx: &mut Ctx,
     visit: &mut F,
 ) -> Result<()>
 where
@@ -114,61 +127,80 @@ where
 
     if format.is_walkable_archive() {
         if budget.check_depth(depth + 1, &at).is_some() {
-            // Too deep to open, so treat the archive itself as a leaf and say so.
-            return visit_leaf(data, chain, format, leaves, members_scanned, visit);
+            return visit_leaf(data, chain, format, budget, ctx, visit);
         }
-        let mut opened_any = false;
         let mut entries: Vec<(String, Vec<u8>)> = Vec::new();
-        let result = zip::for_each_entry(data, budget, &at, &mut |name, bytes| {
+        let collect = &mut |name: &str, bytes: Vec<u8>| {
             entries.push((name.to_string(), bytes));
             Ok(())
-        });
+        };
+        let result = match format {
+            Format::Zip => zip::for_each_entry(data, budget, &at, collect),
+            Format::SevenZip => archives::for_each_7z_entry(data, budget, &at, collect),
+            Format::Cab => archives::for_each_cab_entry(data, budget, &at, collect),
+            _ => unreachable!("is_walkable_archive covers exactly these formats"),
+        };
         match result {
             Ok(()) => {
+                let opened_any = !entries.is_empty();
                 for (name, bytes) in entries {
-                    opened_any = true;
                     let mut child = chain.clone();
                     child.push(name);
-                    descend(
-                        &bytes,
-                        child,
-                        depth + 1,
-                        budget,
-                        leaves,
-                        members_scanned,
-                        visit,
-                    )?;
+                    descend(&bytes, child, depth + 1, budget, ctx, visit)?;
+                }
+                if opened_any {
+                    return Ok(());
                 }
             }
             Err(e) => {
-                // A corrupt or unsupported archive still gets scanned raw, so a
+                // A corrupt or password-protected archive still gets scanned raw, so a
                 // parse failure degrades coverage instead of losing the member.
                 budget.warn(format!("{}: {:#}; scanning raw bytes instead", at, e));
             }
         }
-        if opened_any {
-            return Ok(());
+        return visit_leaf(data, chain, format, budget, ctx, visit);
+    }
+
+    if format.is_single_stream() {
+        if budget.check_depth(depth + 1, &at).is_some() {
+            return visit_leaf(data, chain, format, budget, ctx, visit);
         }
-        return visit_leaf(data, chain, format, leaves, members_scanned, visit);
+        let limit = budget.limits().max_member_bytes;
+        match compressed::decompress(data, format, limit, &at, budget) {
+            Ok(payload) if !payload.is_empty() => {
+                budget.commit(payload.len() as u64);
+                let last = chain.last().cloned().unwrap_or_default();
+                let mut child = chain.clone();
+                child.push(compressed::inner_name(&last, format));
+                return descend(&payload, child, depth + 1, budget, ctx, visit);
+            }
+            Ok(_) => {
+                budget.warn(format!("{}: {} stream was empty", at, format.as_str()));
+            }
+            Err(e) => {
+                budget.warn(format!("{}: {:#}; scanning raw bytes instead", at, e));
+            }
+        }
+        return visit_leaf(data, chain, format, budget, ctx, visit);
     }
 
     if format.is_unsupported_archive() {
         budget.warn(format!(
-            "{}: {} container is recognised but not unpacked yet, so its contents were not scanned",
+            "{}: {} container is recognised but not unpacked, so its contents were not scanned",
             at,
             format.as_str()
         ));
     }
 
-    visit_leaf(data, chain, format, leaves, members_scanned, visit)
+    visit_leaf(data, chain, format, budget, ctx, visit)
 }
 
 fn visit_leaf<F>(
     data: &[u8],
     chain: Vec<String>,
     format: Format,
-    leaves: &mut Vec<(String, Format, u64)>,
-    members_scanned: &mut usize,
+    budget: &mut Budget,
+    ctx: &mut Ctx,
     visit: &mut F,
 ) -> Result<()>
 where
@@ -179,9 +211,24 @@ where
         data,
         format,
     };
-    leaves.push((member.chain_display(), format, member.data.len() as u64));
-    *members_scanned += 1;
+    let name = member.chain_display();
+    carve_leaf(member.data, &name, budget, ctx);
+    ctx.leaves
+        .push((name.clone(), format, member.data.len() as u64));
+    *ctx.members_scanned += 1;
     visit(&member)
+}
+
+/// Carve every leaf for embedded signatures. Run as a separate pass so carving cannot
+/// change what the ordinary walk reports.
+fn carve_leaf(data: &[u8], at: &str, budget: &mut Budget, ctx: &mut Ctx) {
+    if !ctx.carve_enabled {
+        return;
+    }
+    let report = carve::scan(data, at, budget, 100);
+    if !report.is_empty() {
+        ctx.carved.push((at.to_string(), report));
+    }
 }
 
 #[cfg(test)]

@@ -34,7 +34,10 @@ help:
 	@echo "  fuzz-hfuzz TARGET=name  build a honggfuzz target (needs cargo-hfuzz)"
 	@echo "  clean                 remove build artifacts"
 	@echo ""
-	@echo "Features: sqlite (binary --format sqlite output; off by default)"
+	@echo "Features:"
+	@echo "  sqlite   binary --format sqlite output"
+	@echo "  carve    embedded signature carving via binwalk"
+	@echo "Both off by default. Use FEATURES=carve or cargo --all-features."
 
 build:
 	cargo build $(if $(TARGET),--target $(TARGET),) $(if $(FEATURES),--features $(FEATURES),)

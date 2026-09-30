@@ -1,6 +1,6 @@
 [package]
 name = "binspector"
-version = "4.0.0"
+version = "4.1.0"
 edition = "2021"
 description = "Inspect binaries for banned C/C++ functions and exploit mitigations, unpacking nested containers, with PE analysis, reputation and CVE enrichment, and fuzzing"
 license = "MIT"
@@ -23,9 +23,17 @@ zip = "8.6"
 tempfile = "3.27"
 rusqlite = { version = "0.40", features = ["bundled"], optional = true }
 goblin = "0.10.7"
+flate2 = "1.1.10"
+bzip2 = "0.6.1"
+zstd = "0.14.0"
+lzma-rust2 = "0.21.0"
+sevenz-rust2 = "0.23.0"
+cab = "0.6.0"
+binwalk-ng = { version = "4.0.0", default-features = false, optional = true }
 
 [dev-dependencies]
 assert_cmd = "2.0"
+flate2 = "1.1.10"
 predicates = "3.1"
 serde_json = "1.0"
 zip = "8.6"
@@ -37,7 +45,13 @@ default = []
 # text format needs no feature and produces an equivalent, loadable dump.
 # Enable with: cargo build --features sqlite
 sqlite = ["dep:rusqlite"]
+# Signature-based carving of embedded data in formats Binspector does not parse,
+# via the binwalk library. Off by default: the ZIP family plus the single-stream
+# and archive formats above already cover ordinary application bundles, and carving
+# is a firmware-analysis tool that produces a lot of output on other input.
+carve = ["dep:binwalk-ng"]
 ureq = []
+binwalk-ng = ["dep:binwalk-ng"]
 
 [profile.release]
 lto = true

@@ -19,6 +19,8 @@ pub struct Limits {
     pub max_expansion_ratio: u64,
     /// Maximum number of members visited.
     pub max_members: usize,
+    /// Scan each member for embedded file signatures. Needs the `carve` feature.
+    pub carve: bool,
 }
 
 impl Default for Limits {
@@ -29,6 +31,7 @@ impl Default for Limits {
             max_member_bytes: 512 * 1024 * 1024,
             max_expansion_ratio: 100,
             max_members: 50_000,
+            carve: false,
         }
     }
 }

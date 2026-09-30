@@ -47,10 +47,12 @@ cargo build --release
 ./target/release/binspector --help
 ```
 
-With binary SQLite output (optional, lengthens the build):
+Optional features:
 
 ```bash
-cargo build --release --features sqlite
+cargo build --release --features sqlite   # binary --format sqlite output
+cargo build --release --features carve    # embedded signature carving via binwalk
+cargo build --release --all-features
 ```
 
 Via Docker:
@@ -119,6 +121,7 @@ binspector --include-low-confidence ./app.exe
 | `--cve-limit <N>` | Maximum CVEs per component (default 10) |
 | `--no-pe` | Skip PE parsing (headers, sections, imports, mitigations) |
 | `--ioc-cap <N>` | Maximum indicators of each kind to collect (default 500) |
+| `--carve` | Scan every member for embedded file signatures (needs `--features carve`) |
 | `--fail-on <SEVERITY>` | Exit 1 when a match at or above `critical`, `high`, or `medium` is found |
 | `--max-depth <N>` | Container nesting depth (default 4) |
 | `--max-unpacked-bytes <N>` | Total unpacked byte cap (default 2 GiB) |
@@ -257,17 +260,54 @@ the report says so explicitly and calls the result inconclusive.
 
 ## Supported containers
 
-ZIP family, unpacked recursively: `.zip`, `.msixbundle`, `.msix`, `.appx`, `.jar`,
-`.nupkg`, and any other ZIP-based format, detected by magic bytes rather than extension.
+Detected by magic bytes rather than extension, and unpacked recursively.
 
-Recognised but not yet unpacked, and reported as a coverage gap: gzip, bzip2, xz, 7z,
-and cab. Executables (PE, ELF, Mach-O) are identified and scanned directly, and PE images
-are parsed in full.
+| Kind | Formats |
+|---|---|
+| ZIP family | `.zip`, `.msixbundle`, `.msix`, `.appx`, `.jar`, `.nupkg`, and any other ZIP-based format |
+| Other archives | 7z, cab |
+| Single stream | gzip, bzip2, xz, zstd |
+| Executables | PE (parsed in full), ELF, Mach-O |
+
+A single-stream format wraps one payload, so it decompresses to a single child that keeps
+a useful name: `App.exe.gz` becomes `App.exe`, and `src.tgz` becomes `src.tar`.
+
+Nothing Binspector detects is left unopened. For data that no directory declares, such as
+a payload appended to an executable, see carving below.
+
+## Carving
+
+```bash
+cargo build --release --features carve
+binspector --carve ./app.exe
+```
+
+Carving scans for file signatures anywhere in a blob, which finds embedded data that no
+container declares. It is off by default because it costs time and produces leads rather
+than facts.
+
+**Raw signature output is not usable, so it is filtered.** Run against a real 256 MiB
+application bundle, binwalk reported **2,348 signatures**, almost all `copyright` strings
+and `pkcs_der_hash` markers that say nothing about anything being embedded. Binspector
+classifies them: embedded archives and filesystems lead the report, embedded executables
+and media follow, unrecognised signatures are still listed so a new format is never
+silently dropped, and checksums, certificates, and text markers are counted rather than
+listed. That turns 2,348 signatures into 8 candidate containers.
+
+Short magic values are also verified rather than trusted. `PK\x03\x04` is four bytes and
+collides readily: on that same sample it matched inside a 36 MB DLL where the header
+fields were actually text, claiming version 0, a zero-length member name, and a 22,635
+byte extra field. ZIP matches are validated against the local file header before being
+reported as an archive.
+
+A signature match is still a lead. Extract with `binwalk -e` to confirm and scan the
+contents.
 
 ## Project structure
 
 - `src/cli/`: command line surface, format resolution, color and palette handling
-- `src/container/`: magic detection, ZIP recursion, resource caps
+- `src/container/`: magic detection, ZIP and 7z and cab recursion, single-stream
+  decompression, carving, resource caps
 - `src/scan/`: string extraction, Aho-Corasick matching, banned list, confidence scoring
 - `src/pe/`: PE headers, sections and entropy, imports, mitigations, packers, indicators
 - `src/intel/`: reputation, CVE enrichment, component detection, credentials
@@ -295,9 +335,8 @@ regression fails the build.
 
 ## Roadmap
 
-- **4.1.0** binwalk carving for embedded data in unrecognised formats, plus gzip, bzip2,
-  xz, 7z, and cab unpacking. These are currently detected and reported as a coverage gap
-  rather than opened.
+No committed work outstanding. The container coverage gap is closed, so future work is
+driven by what real samples turn up.
 
 ## References
 

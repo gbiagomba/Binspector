@@ -290,3 +290,81 @@ fn warns_when_no_executable_was_reached() {
         .success()
         .stdout(contains("no executable image"));
 }
+
+// --- 4.1.0: single-stream and additional archive formats ---
+
+fn gz(data: &[u8]) -> Vec<u8> {
+    use std::io::Write as _;
+    let mut e = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    e.write_all(data).unwrap();
+    e.finish().unwrap()
+}
+
+#[test]
+fn scans_inside_a_gzip_stream() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("payload.bin.gz");
+    // A PE holding a banned symbol, gzipped. Before 4.1.0 this was reported as a
+    // coverage gap and its contents were never read.
+    std::fs::write(&path, gz(&fake_pe(b"\x00strcpy\x00"))).unwrap();
+    bin()
+        .arg(&path)
+        .assert()
+        .success()
+        .stdout(contains("strcpy"))
+        .stdout(contains("payload.bin"));
+}
+
+#[test]
+fn scans_a_gzip_stream_nested_inside_a_zip() {
+    let dir = TempDir::new().unwrap();
+    let inner = gz(&fake_pe(b"\x00gets\x00"));
+    let bundle = zip_bytes(&[("App.exe.gz", &inner)]);
+    let path = dir.path().join("nested.zip");
+    std::fs::write(&path, bundle).unwrap();
+    let out = bin().arg(&path).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("gets"), "stdout:\n{}", stdout);
+    // The decompressed child keeps a useful name.
+    assert!(stdout.contains("App.exe"), "stdout:\n{}", stdout);
+}
+
+#[test]
+fn compressed_formats_are_no_longer_reported_as_a_coverage_gap() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("p.gz");
+    std::fs::write(&path, gz(b"\x00strcpy\x00some payload here\x00")).unwrap();
+    let out = bin().arg(&path).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(!stdout.contains("not unpacked"), "stdout:\n{}", stdout);
+}
+
+#[test]
+fn a_gzip_bomb_is_capped() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("bomb.gz");
+    // 8 MiB of zeros compresses to a few KiB.
+    std::fs::write(&path, gz(&vec![0u8; 8 * 1024 * 1024])).unwrap();
+    bin()
+        .arg(&path)
+        .args(["--max-member-bytes", "4096"])
+        .assert()
+        .success()
+        .stdout(contains("truncated"));
+}
+
+#[test]
+fn carve_flag_is_rejected_without_the_feature() {
+    // The default build has no carving, and says so rather than silently reporting
+    // that nothing was embedded.
+    let f = fixture();
+    let out = bin().arg("--carve").arg(&f.target).output().unwrap();
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(err.contains("--features carve"), "stderr: {}", err);
+    } else {
+        // Built with the feature: carving ran and reported a section.
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("Carving"), "stdout:\n{}", stdout);
+    }
+}

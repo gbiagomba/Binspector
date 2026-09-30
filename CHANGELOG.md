@@ -2,6 +2,58 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.1.0] - 2026-09-30
+
+Closes the container coverage gap that 3.0.0 opened and 4.0.0 carried. Every format
+Binspector detects is now either unpacked or carved, so nothing is named in a report
+without its contents being reachable.
+
+### Added
+- **Single-stream decompression:** gzip, bzip2, xz, and zstd. These wrap one payload, so
+  each decompresses to a single child that the walk treats like any other member. A
+  `.exe.gz` inside a bundle is now scanned rather than only named, and the child keeps a
+  useful name (`App.exe.gz` becomes `App.exe`, `src.tgz` becomes `src.tar`).
+- **7z and cab archives**, enumerated member by member like ZIP, with the same rules:
+  unsafe names and oversized members are skipped with a warning rather than aborting.
+- **zstd detection** by frame magic.
+- **`--carve`**, behind the `carve` cargo feature, scanning every member for embedded
+  file signatures via the binwalk library. Carving answers a different question from
+  unpacking: it finds a payload appended to an executable or buried in a resource, where
+  no directory declares it.
+
+### Carving is filtered, because raw output is not usable
+Run against the reference sample, binwalk reported **2,348 signatures**, almost all of
+them `copyright` strings and `pkcs_der_hash` markers, which say nothing about anything
+being embedded. Signatures are now classified:
+
+- **Container** (archives and filesystems) leads the report, because that is the finding
+  worth acting on.
+- **Embedded** (executables and media) follows.
+- **Other** is still listed, so a format added to binwalk later is never silently dropped.
+- Checksums, certificates, key material, and text markers are counted, not listed.
+
+That turned 2,348 raw signatures into **8 candidate containers** plus 138 other
+signatures, with 176 markers excluded.
+
+### Fixed
+- **A ZIP magic collision that carving reported as a real archive.** `PK\x03\x04` is only
+  four bytes and collides readily inside a large binary. On the reference sample it
+  matched at offset 0x1d6c924 inside a 36 MB DLL, where the header fields were actually
+  text: version 0, a zero-length member name, an extra field of 22,635 bytes, and an
+  uncompressed size of 0 against a compressed size of 25,968. ZIP matches are now
+  validated against the local file header and demoted to speculative when the fields are
+  not plausible.
+- Compressed and archive formats no longer report themselves as an unhandled coverage gap,
+  because they are handled.
+
+### Notes
+- Carving is off by default. Signature scanning costs time (about 10 s against 7 s on the
+  reference sample) and produces leads rather than facts, so it is opt-in, and asking for
+  `--carve` from a build without the feature is an error that names the flag to rebuild
+  with rather than silently reporting nothing.
+- `flate2`, `bzip2`, `zstd`, and `lzma-rust2` were already in the dependency tree via
+  `zip`, so the single-stream formats cost almost nothing to add.
+
 ## [4.0.0] - 2026-09-30
 
 Delivers the three phases the 3.0.0 roadmap listed as 3.1.0, 3.2.0, and 3.3.0. They

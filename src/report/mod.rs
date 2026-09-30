@@ -209,6 +209,8 @@ pub(crate) mod tests_support {
                     strings: 10,
                     pe: None,
                 }],
+                carved: vec![],
+                carve_ran: false,
             },
             iocs: Default::default(),
             intel: Default::default(),

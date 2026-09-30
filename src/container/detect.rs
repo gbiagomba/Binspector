@@ -9,6 +9,7 @@ pub enum Format {
     Gzip,
     Bzip2,
     Xz,
+    Zstd,
     SevenZip,
     Cab,
     Pe,
@@ -24,6 +25,7 @@ impl Format {
             Format::Gzip => "gzip",
             Format::Bzip2 => "bzip2",
             Format::Xz => "xz",
+            Format::Zstd => "zstd",
             Format::SevenZip => "7z",
             Format::Cab => "cab",
             Format::Pe => "pe",
@@ -33,18 +35,23 @@ impl Format {
         }
     }
 
-    /// True when this format is a container Binspector can descend into.
+    /// True when this format holds a member list Binspector can enumerate.
     pub fn is_walkable_archive(self) -> bool {
-        matches!(self, Format::Zip)
+        matches!(self, Format::Zip | Format::SevenZip | Format::Cab)
     }
 
-    /// True when the format is an archive Binspector recognises but cannot open yet.
-    /// These are reported so a reviewer knows coverage was incomplete.
-    pub fn is_unsupported_archive(self) -> bool {
+    /// True when the format wraps exactly one payload, which decompresses to one child.
+    pub fn is_single_stream(self) -> bool {
         matches!(
             self,
-            Format::Gzip | Format::Bzip2 | Format::Xz | Format::SevenZip | Format::Cab
+            Format::Gzip | Format::Bzip2 | Format::Xz | Format::Zstd
         )
+    }
+
+    /// True when the format is a container Binspector recognises but cannot open. Kept
+    /// so a future format is reported as a coverage gap rather than silently skipped.
+    pub fn is_unsupported_archive(self) -> bool {
+        false
     }
 
     /// True when the bytes are an executable image worth scanning directly.
@@ -81,6 +88,10 @@ pub fn detect(data: &[u8]) -> Format {
     }
     if data.starts_with(&[0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C]) {
         return Format::SevenZip;
+    }
+    // zstd frame magic, little endian 0xFD2FB528.
+    if data.starts_with(&[0x28, 0xB5, 0x2F, 0xFD]) {
+        return Format::Zstd;
     }
     if is_pe(data) {
         return Format::Pe;
@@ -138,7 +149,39 @@ mod tests {
         assert_eq!(detect(&[0x1F, 0x8B, 0x08, 0x00]), Format::Gzip);
         assert_eq!(detect(b"BZh91AY"), Format::Bzip2);
         assert_eq!(detect(&[0xFD, b'7', b'z', b'X', b'Z']), Format::Xz);
-        assert!(Format::Gzip.is_unsupported_archive());
+        assert_eq!(detect(&[0x28, 0xB5, 0x2F, 0xFD, 0x00]), Format::Zstd);
+    }
+
+    #[test]
+    fn single_stream_and_walkable_are_distinct_categories() {
+        for f in [Format::Gzip, Format::Bzip2, Format::Xz, Format::Zstd] {
+            assert!(f.is_single_stream(), "{:?}", f);
+            assert!(!f.is_walkable_archive(), "{:?}", f);
+        }
+        for f in [Format::Zip, Format::SevenZip, Format::Cab] {
+            assert!(f.is_walkable_archive(), "{:?}", f);
+            assert!(!f.is_single_stream(), "{:?}", f);
+        }
+        // Nothing is an unhandled archive any more.
+        for f in [
+            Format::Gzip,
+            Format::Bzip2,
+            Format::Xz,
+            Format::Zstd,
+            Format::SevenZip,
+            Format::Cab,
+        ] {
+            assert!(!f.is_unsupported_archive(), "{:?}", f);
+        }
+    }
+
+    #[test]
+    fn detects_7z_and_cab() {
+        assert_eq!(
+            detect(&[0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C]),
+            Format::SevenZip
+        );
+        assert_eq!(detect(b"MSCF\0\0\0\0"), Format::Cab);
     }
 
     #[test]

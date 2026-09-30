@@ -219,6 +219,8 @@ fn tight_limits() -> Limits {
         max_member_bytes: 16 * 1024 * 1024,
         max_expansion_ratio: 50,
         max_members: 500,
+        // Carving is a separate concern and would slow every iteration.
+        carve: false,
     }
 }
 
