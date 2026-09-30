@@ -20,17 +20,24 @@ use fuzz_args::FuzzArgs;
     name = "binspector",
     version,
     about = "Scan binaries for banned C/C++ functions, descending into nested containers",
-    long_about = "Binspector extracts printable strings from a binary and reports references to \
-                  banned C/C++ functions.\n\nArchives are unpacked in memory, so a .msixbundle, \
-                  .msix, .appx, .jar, .nupkg, or .zip is scanned by its real contents rather than \
-                  its compressed bytes. Matches are verified against identifier boundaries, so a \
-                  substring such as 'targetsize' is not reported as 'gets'."
+    after_help = "Containers are unpacked in memory, so a .msixbundle, .msix, .appx, .jar, \
+                  .nupkg, or .zip is scanned by its real contents rather than its compressed \
+                  bytes. Matches are boundary-verified, so a substring such as 'targetsize' is \
+                  never reported as 'gets'.\n\nFull reference: usage.md",
+    // clap maps --help to its long renderer by default, which puts every option in its own
+    // block with blank lines between them. The concise form is the useful one at a terminal
+    // and the full reference lives in usage.md, so both flags print the short help.
+    disable_help_flag = true
 )]
 pub struct Cli {
+    /// Print help
+    #[arg(short = 'h', long = "help", action = clap::ArgAction::HelpShort, global = true)]
+    pub help: Option<bool>,
+
     #[command(subcommand)]
     pub command: Option<Commands>,
 
-    /// Path to the target binary or archive. Required unless a subcommand is used
+    /// Target binary or archive. Required unless a subcommand is used
     #[arg(value_name = "BINARY")]
     pub binary: Option<PathBuf>,
 
@@ -42,12 +49,11 @@ pub struct Cli {
     #[arg(short = 'l', long, default_value_t = 4, value_name = "N")]
     pub min_len: usize,
 
-    /// Write output to a file. With several formats, this is used as a filename stem
+    /// Write output to a file, or a filename stem when several formats are given
     #[arg(short = 'o', long, value_name = "FILE")]
     pub output: Option<PathBuf>,
 
-    /// Output format: text/txt, json, html, markdown/md, sarif, sqlite/db, sql, csv, all.
-    /// Several may be given comma separated
+    /// Output format, comma separated for several: text, json, csv, html, md, sarif, sqlite, sql, all
     #[arg(long, default_value = "text", value_name = "FORMAT")]
     pub format: String,
 
@@ -63,8 +69,7 @@ pub struct Cli {
     #[arg(long)]
     pub matches_only: bool,
 
-    /// Include every extracted string, with banned functions highlighted.
-    /// Supported by text, markdown, html, csv, sql, and sqlite
+    /// Include every extracted string, with banned functions highlighted
     #[arg(long)]
     pub dump: bool,
 
@@ -76,7 +81,7 @@ pub struct Cli {
     #[arg(long = "no-utf16")]
     pub no_utf16: bool,
 
-    /// Match case sensitively. Matching is case insensitive by default
+    /// Match case sensitively (default is case insensitive)
     #[arg(long = "case-sensitive")]
     pub case_sensitive: bool,
 
@@ -88,7 +93,7 @@ pub struct Cli {
     #[arg(long, value_enum, default_value_t = ColorChoice::Auto)]
     pub color: ColorChoice,
 
-    /// Highlight palette. `colorblind` uses Okabe-Ito colors with no red-green pairing
+    /// Highlight palette
     #[arg(long, value_enum, default_value_t = Palette::Default)]
     pub palette: Palette,
 
@@ -104,7 +109,7 @@ pub struct Cli {
     #[arg(long, default_value_t = 512 * 1024 * 1024, value_name = "BYTES")]
     pub max_member_bytes: u64,
 
-    /// Maximum ratio of unpacked bytes to input size, as bomb protection
+    /// Maximum ratio of unpacked bytes to input size (bomb protection)
     #[arg(long, default_value_t = 100, value_name = "N")]
     pub max_expansion_ratio: u64,
 
@@ -112,21 +117,19 @@ pub struct Cli {
     #[arg(long, default_value_t = 50_000, value_name = "N")]
     pub max_members: usize,
 
-    /// Maximum individually recorded occurrences. Aggregate counts stay complete
+    /// Maximum individually recorded occurrences
     #[arg(long, default_value_t = 100_000, value_name = "N")]
     pub max_hits: usize,
 
-    /// Characters of surrounding context kept with each occurrence
+    /// Characters of context kept with each occurrence
     #[arg(long, default_value_t = 120, value_name = "N")]
     pub context: usize,
 
-    /// Also report low-confidence matches: namespace segments such as
-    /// System.Windows, and documentation prose such as "Gets or sets"
+    /// Also report low-confidence matches (namespace segments and documentation prose)
     #[arg(long = "include-low-confidence")]
     pub include_low_confidence: bool,
 
-    /// Scan every member for embedded file signatures. Needs a build with
-    /// --features carve
+    /// Scan members for embedded file signatures (needs --features carve)
     #[arg(long)]
     pub carve: bool,
 
@@ -134,21 +137,19 @@ pub struct Cli {
     #[arg(long = "no-pe")]
     pub no_pe: bool,
 
-    /// Maximum indicators of each kind (URL, IP, email, registry, path) to collect
+    /// Maximum indicators of each kind to collect
     #[arg(long = "ioc-cap", default_value_t = 500, value_name = "N")]
     pub ioc_cap: usize,
 
-    /// Look the file hash up with VirusTotal and MetaDefender. Sends only the SHA-256,
-    /// never file content. Needs VT_API_KEY and/or MD_API_KEY in the environment
+    /// Look the hash up with VirusTotal and MetaDefender (hash only, never file content)
     #[arg(long)]
     pub reputation: bool,
 
-    /// Resolve detected components against NVD for known CVEs. Set NVD_API_KEY to
-    /// raise the rate limit
+    /// Resolve detected components against NVD for known CVEs
     #[arg(long)]
     pub cve: bool,
 
-    /// Skip third-party component and version detection (offline, on by default)
+    /// Skip third-party component detection (offline, on by default)
     #[arg(long = "no-components")]
     pub no_components: bool,
 
@@ -156,7 +157,7 @@ pub struct Cli {
     #[arg(long = "cve-limit", default_value_t = 10, value_name = "N")]
     pub cve_limit: usize,
 
-    /// Exit non-zero when a match at or above this severity is found
+    /// Exit 1 when a match at or above this severity is found
     #[arg(long, value_name = "SEVERITY")]
     pub fail_on: Option<FailOn>,
 }

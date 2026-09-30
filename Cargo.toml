@@ -1,6 +1,6 @@
 [package]
 name = "binspector"
-version = "4.1.2"
+version = "4.2.0"
 edition = "2021"
 description = "Inspect binaries for banned C/C++ functions and exploit mitigations, unpacking nested containers, with PE analysis, reputation and CVE enrichment, and fuzzing"
 license = "MIT"
@@ -12,9 +12,9 @@ anyhow = "1.0"
 clap = { version = "4.5", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-sha1 = "0.10"
-sha2 = "0.10"
-md-5 = "0.10"
+sha1 = "0.11"
+sha2 = "0.11"
+md-5 = "0.11"
 hex = "0.4"
 time = { version = "0.3", features = ["formatting"] }
 regex = "1.11"

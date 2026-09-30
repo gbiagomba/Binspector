@@ -2,6 +2,39 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.2.0] - 2026-09-30
+
+Documentation split, a concise `--help`, and dependency updates. The 4.1.x line was never
+published: v4.1.0 and v4.1.1 shipped with no assets and their releases have been removed,
+and 4.1.2 was held unreleased. This is the first release since v4.0.0.
+
+### Changed
+- **`--help` is concise again.** clap routes `--help` to its long renderer, which puts each
+  option in its own block separated by blank lines. Every option's help is now a single
+  line, and both `-h` and `--help` print the short form, with the depth living in
+  `usage.md`. A 130-line wall of text became a 45-line table.
+- **`usage.md` is the full reference** and the README is the overview. The README went from
+  371 lines to 170: it keeps the rationale, install, a quick start, safety, and the new
+  attribution section, and links to `usage.md` for every option, the severity and confidence
+  tiers, container support, PE analysis, reputation and CVE detail, carving, fuzzing, and how
+  to read a report.
+
+### Added
+- **An "Inspired by" section in the README**, naming peframe, binwalk, cve-bin-tool, AFL++,
+  honggfuzz, WinAFL, arbitrary, zzuf, VirusTotal, MetaDefender, NVD, goblin, SARIF, and
+  `strings`, with what Binspector takes from each, plus the four sources of the banned
+  function lists.
+
+### Fixed
+- Upgraded `md-5`, `sha1`, and `sha2` from 0.10 to 0.11, which also pulls a current
+  `generic-array`. Digest output was verified unchanged: the known-answer tests still pass
+  and all three hashes match `md5`, `shasum -a 1`, and `shasum -a 256` byte for byte on a
+  256 MiB sample. This matters because reputation lookups key on the hash.
+- Fixed a rustdoc warning: `<sample stem>` in a doc comment was parsed as an unclosed HTML
+  tag.
+- Removed two stray feature entries left by dependency edits: `ureq`, whose dependency no
+  longer exists, and `binwalk-ng`, which duplicated `carve`.
+
 ## [4.1.2] - 2026-09-30
 
 Second attempt at the 4.1.x build fix. v4.1.0 and v4.1.1 both published **no release

@@ -66,7 +66,7 @@ pub struct FuzzArgs {
     #[arg(long = "corpus-from", value_name = "FILE")]
     pub corpus_from: Option<PathBuf>,
 
-    /// Corpus directory. Defaults to fuzz/corpus/<sample stem>
+    /// Corpus directory. Defaults to `fuzz/corpus/<sample stem>`
     #[arg(long, value_name = "DIR")]
     pub corpus: Option<PathBuf>,
 
