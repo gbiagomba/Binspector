@@ -44,8 +44,16 @@ cargo build --release
 ```
 
 Prebuilt binaries for Linux, macOS, and Windows on x86_64 and arm64 are attached to each
-[release](https://github.com/gbiagomba/Binspector/releases). Extract and put `binspector`
-on your `PATH`.
+[release](https://github.com/gbiagomba/Binspector/releases), in two forms:
+
+- `binspector-<target>-<tag>.tar.gz` or `.zip`, containing the binary plus `LICENSE` and
+  `README.md`. Preferred: the archive preserves the executable bit, so it runs after
+  extraction with no `chmod`.
+- `binspector-<target>-<tag>` or `.exe`, a bare binary for scripted installs. Needs
+  `chmod +x` on Unix, and carries no license text.
+
+`LICENSE`, `README.md`, and `usage.md` are also attached standalone, so they can be linked
+or fetched without downloading a platform archive.
 
 Two optional build features, both off by default:
 

@@ -68,19 +68,33 @@ jobs:
           } >> "$GITHUB_ENV"
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
-      - name: Package artifact (tar.gz)
+      - name: Package artifacts
         if: startsWith(github.ref, 'refs/tags/')
         run: |
+          set -euo pipefail
           BIN=target/${{ matrix.target }}/release/binspector
           NAME=binspector-${{ matrix.target }}-${{ github.ref_name }}
-          tar -czf ${NAME}.tar.gz -C $(dirname "$BIN") $(basename "$BIN") README.md LICENSE || tar -czf ${NAME}.tar.gz -C $(dirname "$BIN") $(basename "$BIN") README.md || tar -czf ${NAME}.tar.gz -C $(dirname "$BIN") $(basename "$BIN")
-          echo "asset_path=${NAME}.tar.gz" >> $GITHUB_OUTPUT
+          # Staged rather than assembled with -C, which previously pointed at
+          # target/release where README.md and LICENSE do not exist, so the archive
+          # silently shipped the binary alone. The license has to travel with the
+          # binary now that the crate is GPL-3.0.
+          STAGE=$(mktemp -d)
+          cp "$BIN" README.md LICENSE "$STAGE/"
+          tar -czf "${NAME}.tar.gz" -C "$STAGE" .
+          # A bare binary alongside the archive, for scripted installs.
+          cp "$BIN" "./${NAME}"
+          {
+            echo "archive=${NAME}.tar.gz"
+            echo "bare=${NAME}"
+          } >> "$GITHUB_OUTPUT"
         id: package
       - name: Upload to GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ steps.package.outputs.asset_path }}
+          files: |
+            ${{ steps.package.outputs.archive }}
+            ${{ steps.package.outputs.bare }}
 
   macos:
     name: macOS (${{ matrix.target }})
@@ -109,14 +123,21 @@ jobs:
           cp README.md LICENSE "$STAGE/"
           NAME=binspector-${{ matrix.target }}-${{ github.ref_name }}
           tar -czf "${NAME}.tar.gz" -C "$STAGE" .
-          echo "asset_path=${NAME}.tar.gz" >> $GITHUB_OUTPUT
+          # A bare binary alongside the archive, for scripted installs.
+          cp "target/${{ matrix.target }}/release/binspector" "./${NAME}"
+          {
+            echo "archive=${NAME}.tar.gz"
+            echo "bare=${NAME}"
+          } >> "$GITHUB_OUTPUT"
         shell: bash
         id: package
       - name: Upload to GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ steps.package.outputs.asset_path }}
+          files: |
+            ${{ steps.package.outputs.archive }}
+            ${{ steps.package.outputs.bare }}
 
   windows:
     name: Windows (${{ matrix.target }})
@@ -133,17 +154,44 @@ jobs:
           targets: ${{ matrix.target }}
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
-      - name: Package artifact (zip)
+      - name: Package artifacts
         if: startsWith(github.ref, 'refs/tags/')
         shell: pwsh
         run: |
-          $bin = "target/${{ matrix.target }}/release/binspector.exe"
-          $name = "binspector-${{ matrix.target }}-${{ github.ref_name }}.zip"
-          Compress-Archive -Path $bin -DestinationPath $name
-          "asset_path=$name" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          $ErrorActionPreference = "Stop"
+          $bin  = "target/${{ matrix.target }}/release/binspector.exe"
+          $name = "binspector-${{ matrix.target }}-${{ github.ref_name }}"
+          # Staged so the zip carries the license and readme. Compress-Archive was
+          # previously handed the binary alone, which shipped a GPL binary with no
+          # license text.
+          $stage = Join-Path $env:RUNNER_TEMP "stage"
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Copy-Item $bin, "README.md", "LICENSE" -Destination $stage
+          Compress-Archive -Path (Join-Path $stage "*") -DestinationPath "$name.zip" -Force
+          # A bare executable alongside the archive, for scripted installs.
+          Copy-Item $bin -Destination "./$name.exe"
+          "archive=$name.zip" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "bare=$name.exe"    | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
         id: package
       - name: Upload to GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ steps.package.outputs.asset_path }}
+          files: |
+            ${{ steps.package.outputs.archive }}
+            ${{ steps.package.outputs.bare }}
+
+  docs-assets:
+    name: Standalone LICENSE and README
+    needs: quality
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            LICENSE
+            README.md
+            usage.md

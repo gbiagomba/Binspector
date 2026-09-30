@@ -2,6 +2,38 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.2.2] - 2026-09-30
+
+Release packaging. No change to scanning behavior or output.
+
+### Fixed
+- **Four of six release archives shipped without `LICENSE` or `README.md`.** Both Windows
+  zips and both Linux tarballs contained the binary alone. The Linux job assembled its
+  archive with `tar -C target/<target>/release`, where neither file exists, so its `||`
+  fallback chain silently produced a binary-only archive; the Windows job handed
+  `Compress-Archive` just the executable. Only macOS was correct, because that job was
+  rewritten separately in 4.1.0.
+
+  This matters beyond tidiness: the crate is GPL-3.0, so the license text should travel
+  with the binary. All three jobs now stage the files first, and all six archives carry
+  the binary, `LICENSE`, and `README.md`.
+
+### Added
+- **Bare binaries** attached alongside each archive, for scripted installs that would
+  rather not unpack: `binspector-<target>-<tag>` on Unix and `...-<tag>.exe` on Windows.
+  The archives remain the primary format, because a bare download loses the executable
+  bit and carries no license.
+- **Standalone `LICENSE`, `README.md`, and `usage.md`** attached to each release, so they
+  can be linked or fetched without downloading a platform archive.
+
+A tagged build now produces 15 assets: 6 archives, 6 bare binaries, and 3 documents.
+
+### Verified
+Both packaging paths were exercised locally before tagging rather than discovered in CI:
+the Unix path by running the staging and `tar` commands, and the Windows path by running
+the PowerShell block under `pwsh`. Both produce archives containing all three files plus a
+bare executable.
+
 ## [4.2.1] - 2026-09-30
 
 Licensing metadata correction and a documentation scrub. No change to scanning behavior or

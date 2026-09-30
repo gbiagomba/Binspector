@@ -1,6 +1,6 @@
 [package]
 name = "binspector"
-version = "4.2.1"
+version = "4.2.2"
 edition = "2021"
 description = "Inspect binaries for banned C/C++ functions and exploit mitigations, unpacking nested containers, with PE analysis, reputation and CVE enrichment, and fuzzing"
 license = "GPL-3.0-or-later"
