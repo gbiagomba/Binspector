@@ -63,19 +63,22 @@ serde_json = "1.0"
 zip = "8.6"
 
 [features]
-default = []
-# Binary SQLite report output (`--format sqlite`). Off by default because the
-# bundled SQLite amalgamation costs significant build time and disk. The `sql`
-# text format needs no feature and produces an equivalent, loadable dump.
-# Enable with: cargo build --features sqlite
+# Everything ships in a default build, so a released binary can write every format,
+# browse a report, and carve. Each feature is still separable for a minimal build:
+# `--no-default-features` drops all three, and the gates below still compile.
+default = ["sqlite", "carve", "repl"]
+# Binary SQLite report output (`--format sqlite`). Costs the bundled SQLite
+# amalgamation, which needs a C compiler and is the bulk of a cold build. The `sql`
+# text format needs no feature and produces an equivalent, loadable dump, so a
+# minimal build loses no information.
 sqlite = ["dep:rusqlite"]
 # Signature-based carving of embedded data in formats Binspector does not parse,
-# via the binwalk library. Off by default: the ZIP family plus the single-stream
-# and archive formats above already cover ordinary application bundles, and carving
-# is a firmware-analysis tool that produces a lot of output on other input.
+# via the binwalk library. Compiled in by default, but `--carve` stays opt-in at
+# runtime: carving is a firmware-analysis technique and produces a great deal of
+# low-value output on an ordinary application bundle.
 carve = ["dep:binwalk-ng"]
-# Interactive browser over a saved report (`binspector repl scan.json`). Off by
-# default: it adds a line editor, and everything it shows is already in the report.
+# Interactive browser over a saved report (`binspector repl scan.json`). Adds a
+# line editor; everything it shows is already in the report.
 repl = ["dep:rustyline"]
 
 [profile.release]

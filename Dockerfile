@@ -1,9 +1,12 @@
 # Multi-stage build for binspector.
 #
-# Build arg FEATURES selects optional cargo features, for example:
-#   docker build --build-arg FEATURES=sqlite -t binspector .
+# All optional features (sqlite, carve, repl) are on by default since 4.4.0.
+# FEATURES adds extra cargo features; CARGO_FLAGS passes raw flags, which is how a
+# minimal image is built:
+#   docker build --build-arg CARGO_FLAGS=--no-default-features -t binspector .
 FROM rust:1.90-slim AS build
 ARG FEATURES=""
+ARG CARGO_FLAGS=""
 WORKDIR /app
 
 # Cache dependency compilation against the manifests alone.
@@ -11,7 +14,7 @@ COPY Cargo.toml Cargo.lock ./
 RUN mkdir -p src \
  && echo 'fn main() {}' > src/main.rs \
  && echo '' > src/lib.rs \
- && cargo build --release $(test -n "$FEATURES" && echo "--features $FEATURES") \
+ && cargo build --release $CARGO_FLAGS $(test -n "$FEATURES" && echo "--features $FEATURES") \
  && rm -rf src
 
 # Build the real application. The banned list is included via include_str!, so rsc/
@@ -19,7 +22,7 @@ RUN mkdir -p src \
 COPY src ./src
 COPY rsc ./rsc
 RUN touch src/main.rs src/lib.rs \
- && cargo build --release $(test -n "$FEATURES" && echo "--features $FEATURES")
+ && cargo build --release $CARGO_FLAGS $(test -n "$FEATURES" && echo "--features $FEATURES")
 
 FROM debian:bookworm-slim
 RUN useradd -ms /bin/bash app

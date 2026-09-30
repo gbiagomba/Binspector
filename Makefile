@@ -34,11 +34,11 @@ help:
 	@echo "  fuzz-hfuzz TARGET=name  build a honggfuzz harness (needs cargo-hfuzz)"
 	@echo "  clean                 remove build artifacts"
 	@echo ""
-	@echo "Features:"
+	@echo "Features (all ON by default since 4.4.0):"
 	@echo "  sqlite   binary --format sqlite output"
 	@echo "  carve    embedded signature carving via binwalk"
 	@echo "  repl     interactive browser over a saved report"
-	@echo "All off by default. Use FEATURES=carve or cargo --all-features."
+	@echo "For a minimal build: cargo build --no-default-features"
 
 build:
 	cargo build $(if $(TARGET),--target $(TARGET),) $(if $(FEATURES),--features $(FEATURES),)

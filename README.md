@@ -55,11 +55,11 @@ Prebuilt binaries for Linux, macOS, and Windows on x86_64 and arm64 are attached
 `LICENSE`, `README.md`, and `usage.md` are also attached standalone, so they can be linked
 or fetched without downloading a platform archive.
 
-Two optional build features, both off by default:
+Every feature is compiled into a default build, so a released binary writes all nine
+formats, browses a report, and can carve. For a smaller build:
 
 ```bash
-cargo build --release --features sqlite   # binary --format sqlite output
-cargo build --release --features carve    # embedded signature carving via binwalk
+cargo build --release --no-default-features   # drops sqlite, carve, and repl
 ```
 
 Via Docker:
@@ -96,7 +96,7 @@ binspector fuzz --differential ./app.exe --iterations 20000
 # Watch the scan decide. Verbose goes to stderr, so the report stays clean
 binspector -vv ./app.exe 2> decisions.log
 
-# Browse a finished report instead of grepping it (needs --features repl)
+# Browse a finished report instead of grepping it
 binspector --format json -o scan.json ./app.exe
 binspector repl scan.json
 ```
@@ -151,7 +151,7 @@ it is worth naming them.
 | Project | What Binspector takes from it |
 |---|---|
 | [peframe](https://github.com/guelfoweb/peframe) | The shape of a PE report: headers, sections, imports, packer hints, and indicator extraction in one pass. `src/pe/` is a deliberate mirror of its capabilities |
-| [binwalk](https://github.com/ReFirmLabs/binwalk) | Signature-based carving of embedded data. Used as a library behind `--features carve`, not shelled out to |
+| [binwalk](https://github.com/ReFirmLabs/binwalk) | Signature-based carving of embedded data. Used as a library behind `--carve`, not shelled out to |
 | [cve-bin-tool](https://github.com/intel/cve-bin-tool) | Detecting third-party components from strings and resolving them to CVEs. Binspector implements a curated subset and says so |
 | [AFL++](https://github.com/AFLplusplus/AFLplusplus), [honggfuzz](https://github.com/google/honggfuzz), [WinAFL](https://github.com/googleprojectzero/winafl) | The fuzzing engines `binspector fuzz --engine` prepares and drives |
 | [arbitrary](https://github.com/rust-fuzz/arbitrary) | Structured fuzz input, so the option space is explored alongside the byte space |

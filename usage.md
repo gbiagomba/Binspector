@@ -94,7 +94,7 @@ binspector --banned-filter '^str' ./app.exe
 | Option | Description |
 |---|---|
 | `--no-pe` | Skip PE parsing (headers, sections, imports, mitigations) |
-| `--carve` | Scan every member for embedded file signatures (needs `--features carve`) |
+| `--carve` | Scan every member for embedded file signatures. Opt-in at runtime, not a build gate |
 | `--ioc-cap <N>` | Maximum indicators of each kind to collect (default 500) |
 | `--reputation` | Look the hash up with VirusTotal and MetaDefender |
 | `--cve` | Resolve detected components against NVD for known CVEs |
@@ -151,7 +151,7 @@ a filename stem.
 | `html` | `htm` | Self-contained, light and dark, no external assets |
 | `markdown` | `md` | For pasting into a ticket or wiki page |
 | `sarif` | | SARIF 2.1.0, located by byte offset rather than invented line numbers |
-| `sqlite` | `db` | Binary database. Needs `--features sqlite` and an output path |
+| `sqlite` | `db` | Binary database. Needs an output path, and a build with the `sqlite` feature, which is the default |
 | `sql` | | Portable INSERT script. No feature needed, loadable with `.read` |
 | `all` | | Every format above |
 
@@ -320,8 +320,7 @@ supplied on its stdin, never as `-H` arguments.
 
 `curl` must be on `PATH` for these lookups. It is used in place of a Rust HTTP client
 deliberately: rustls, ring, and webpki would add a large dependency tree and roughly a
-gigabyte of build output for a feature that is off by default and issues a handful of
-requests.
+gigabyte of build output for a feature that issues a handful of requests.
 
 ### Component detection coverage
 
@@ -333,7 +332,6 @@ not the same as having none.
 ## Carving
 
 ```bash
-cargo build --release --features carve
 binspector --carve ./app.exe
 ```
 
@@ -483,8 +481,7 @@ account for the two-bytes-per-character stride, so they are directly usable.
 
 ## Browsing a report
 
-Needs `--features repl`. Loads a report an earlier scan produced and answers questions about
-it:
+Loads a report an earlier scan produced and answers questions about it:
 
 ```bash
 binspector --format json,sqlite -o scan ./bundle.msixbundle
@@ -529,21 +526,23 @@ awkward `jq` expression otherwise.
 
 ## Build features
 
-All three are off by default.
+All three are **on by default** since 4.4.0, so a released binary can do everything the
+documentation describes. They remain separable for a minimal build.
 
 ```bash
-cargo build --release                      # default
-cargo build --release --features sqlite    # binary --format sqlite output
-cargo build --release --features carve     # embedded signature carving via binwalk
-cargo build --release --features repl      # the interactive report browser
-cargo build --release --all-features
+cargo build --release                        # sqlite, carve, and repl included
+cargo build --release --no-default-features  # none of them
+cargo build --release --no-default-features --features repl
 ```
 
-| Feature | Adds | Cost |
+| Feature | Adds | Cost of including it |
 |---|---|---|
-| `sqlite` | `--format sqlite` | Bundles SQLite; noticeable build time and disk. The `sql` format is equivalent and needs no feature |
-| `carve` | `--carve` | Pulls the binwalk library |
+| `sqlite` | `--format sqlite`, and `sqlite` inside `--format all` | Bundles the SQLite C amalgamation, which needs a C compiler and is most of a cold build. The `sql` format is equivalent and needs no feature, so dropping this loses no information |
+| `carve` | The `--carve` flag. Carving still has to be asked for at runtime | Pulls the binwalk library |
 | `repl` | `binspector repl` | Pulls a line editor. Everything it shows is already in the report |
+
+Without the `sqlite` feature, `--format all` writes the other eight formats and says why
+`sqlite` was left out; naming `--format sqlite` explicitly is still an error.
 
 ## Development
 

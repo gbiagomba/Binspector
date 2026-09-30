@@ -362,9 +362,10 @@ fn a_gzip_bomb_is_capped() {
 }
 
 #[test]
-fn carve_flag_is_rejected_without_the_feature() {
-    // The default build has no carving, and says so rather than silently reporting
-    // that nothing was embedded.
+fn carve_flag_matches_the_build() {
+    // Carving is compiled in by default since 4.4.0. A build without the feature says so
+    // rather than silently reporting that nothing was embedded, so assert whichever
+    // behaviour this build has.
     let f = fixture();
     let out = bin_stdout().arg("--carve").arg(&f.target).output().unwrap();
     if !out.status.success() {
