@@ -1,43 +1,58 @@
-Purpose
+# Banned function lists
 
-- Resource lists and references used to curate banned/dangerous C function names and related material. These files are not loaded by the Rust CLI at runtime by default, but can be used as custom inputs via `--banned-list`.
+## Purpose
 
-Contents
+Curated lists of banned and dangerous C/C++ function names, plus the reference material
+they came from. `sdl_banned_funct.list` is compiled into the binary with `include_str!`,
+so a default scan needs no files at runtime. Any other list here can be used instead:
 
-- `sdl_banned_funct.list`: Canonical list used by the Rust CLI by default.
-- `banner_h.list`: Function names derived from Windows/`Banned.h` style sources.
-- `banned.h`: Reference header collected from public sources.
-- `sql_extended.list`: Extra SQL-related strings sometimes useful in static string scans.
-- `sdl_banned_funct.old`: Legacy variant of the SDL banned functions list kept for reference.
-- `references.txt`: Links and notes that informed the lists above.
-
-Notes
-
-- The default list used by Binspector (Rust) is `rsc/sdl_banned_funct.list`, embedded at build time. To use any other file in this folder instead, run: `binspector <bin> --banned-list rsc/<file>`.
-
-Normalization
-
-- One token per line; `#` starts a comment line.
-- Strip zero‑width and control characters (seen in copy/pasted lists).
-- Deduplicate and sort for stable diffs; keep natural casing of identifiers.
-- The Rust CLI also sanitizes at runtime, but keeping this file clean helps portability.
-
-Suggested cleanup snippet:
-
+```bash
+binspector <binary> --banned-list rsc/<file>
 ```
-python3 - << 'PY'
-import unicodedata
-infile='rsc/sdl_banned_funct.list'
-ZW = dict.fromkeys(map(ord, ['\u200b','\u200c','\u200d','\ufeff','\u2060','\u00ad','\u034f']))
-seen=set(); out=[]
-for line in open(infile, encoding='utf-8', errors='ignore'):
-    s=line.strip()
-    if not s or s.startswith('#'): continue
-    s=s.translate(ZW)
-    s=''.join(ch for ch in s if not unicodedata.category(ch).startswith('C'))
-    for tok in s.split():
-        if tok and tok not in seen:
-            seen.add(tok); out.append(tok)
-open(infile,'w',encoding='utf-8').write('\n'.join(sorted(out))+"\n")
-PY
+
+## Contents
+
+| File | Lines | What it actually holds |
+|---|---:|---|
+| `sdl_banned_funct.list` | 197 | The default list, compiled in. Windows API and CRT names, alphabetically sorted. |
+| `banner_h.list` | 168 | The `strcpy` / `strcat` / `sprintf` families, derived from Microsoft's `Banned.h`. 156 of its entries are already in the default list. |
+| `sql_extended.list` | 198 | Despite the name, this is **not** SQL. It is another banned function list, starting with `gets`, `_getts`, `_gettws`, and `IsBadWritePtr`. 144 of its entries are already in the default list. The name is historical and misleading. |
+| `banned.h` | 68 | The reference header collected from public sources. Not a list format; kept for provenance. |
+| `references.txt` | | Links and notes that informed the lists above. |
+
+The three `.list` files overlap heavily, which is why the default is a single one rather
+than a merge. They are kept separate rather than consolidated so that an existing
+`--banned-list rsc/<file>` invocation keeps producing the same result.
+
+## Severity and category are not stored here
+
+The lists are flat names. Binspector derives severity (`critical`, `high`, `medium`) and
+category (`buffer-overflow`, `format-string`, and so on) from the function family at
+scan time, in `src/scan/banned.rs`. A custom list supplied with `--banned-list` therefore
+gets the same tiering with no extra annotation, and a name the classifier does not
+recognise defaults to `high` rather than being dropped.
+
+## Format
+
+- One token per line. A line starting with `#` is a comment.
+- Several whitespace separated tokens on one line are accepted, a quirk of the legacy
+  lists.
+- Zero-width and control characters are stripped, because hand-edited and copy-pasted
+  lists have carried them.
+- Identifier casing is preserved. It matters: the classifier and the confidence scorer
+  both treat a lowercase name differently from a mixed-case Windows API name such as
+  `lstrcpyA`, since a lowercase CRT name appearing with different capitalization is
+  usually namespace or prose text rather than a call.
+
+Binspector sanitizes at runtime regardless, so a slightly untidy custom list still works.
+Keeping the files clean just makes diffs readable.
+
+## Normalizing
+
+```bash
+make normalize-banned-list
 ```
+
+This runs `scripts/normalize_banned_list.py` against `sdl_banned_funct.list`: it strips
+zero-width and control characters, splits multi-token lines, deduplicates, and sorts for
+stable diffs.
