@@ -167,4 +167,8 @@ No `.rs` file exceeds 1500 lines, enforced by `make loc-check` in CI. See
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+GNU General Public License v3.0 or later. See [LICENSE](LICENSE).
+
+Binspector links the binwalk library under the `carve` feature and several MIT and
+Apache-2.0 crates; those licenses are compatible with distributing this work under the
+GPL.

@@ -374,7 +374,7 @@ mod tests {
     fn formats_large_numbers_readably() {
         let out = render_to_string(&report(), &opts());
         assert!(out.contains("3,150,271"), "{}", out);
-        assert!(out.contains("256 MiB"));
+        assert!(out.contains("256.0 MiB"));
     }
 
     #[test]

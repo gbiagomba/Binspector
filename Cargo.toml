@@ -3,7 +3,7 @@ name = "binspector"
 version = "4.2.0"
 edition = "2021"
 description = "Inspect binaries for banned C/C++ functions and exploit mitigations, unpacking nested containers, with PE analysis, reputation and CVE enrichment, and fuzzing"
-license = "MIT"
+license = "GPL-3.0-or-later"
 repository = "https://github.com/gbiagomba/Binspector"
 readme = "README.md"
 

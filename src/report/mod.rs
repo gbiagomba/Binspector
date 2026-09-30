@@ -235,7 +235,7 @@ mod tests {
     fn human_bytes_scales() {
         assert_eq!(human_bytes(512), "512 B");
         assert_eq!(human_bytes(1024), "1.0 KiB");
-        assert_eq!(human_bytes(268_435_456), "256 MiB");
+        assert_eq!(human_bytes(268_435_456), "256.0 MiB");
     }
 
     #[test]
