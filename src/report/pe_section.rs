@@ -114,7 +114,6 @@ pub fn write_text(w: &mut dyn Write, r: &Report) -> Result<()> {
             thousands(r.definitive_hits() as u64)
         )?;
     }
-    write_loader_text(w, r)?;
     writeln!(w)?;
 
     if !r.iocs.is_empty() {
@@ -129,49 +128,127 @@ pub fn write_text(w: &mut dyn Write, r: &Report) -> Result<()> {
     Ok(())
 }
 
-/// Dynamic loading surface.
+/// Everything about DLL search order, in one place.
 ///
-/// Reported as a surface rather than as findings, because `LoadLibrary` with a fully
-/// qualified path is correct code and an import table does not record the argument. What can
-/// be said is whether an image hardened its search path, whether it uses the plain call that
-/// cannot restrict the search at all, and whether it carries module names with no path. Each
-/// of those is stated, and the conclusion is left to a reviewer.
-pub fn write_loader_text(w: &mut dyn Write, r: &Report) -> Result<()> {
-    let loaders: Vec<_> = r
-        .pe_members()
-        .into_iter()
+/// Deliberately one section rather than facts spread across the executable analysis, the
+/// findings list, and the mitigation matrix. Search-order hijacking is a single question, so
+/// a reviewer should be able to answer it without cross-referencing three places: the calls
+/// that are defects on sight, the images that load modules at runtime, and the evidence for
+/// each are all here.
+///
+/// The `LoadLibrary` family is reported as a surface, not as findings, because
+/// `LoadLibrary` with a fully qualified path is correct code and an import table does not
+/// record the argument. What is stated is knowable; the conclusion is left to a reviewer.
+pub fn write_dll_search_text(w: &mut dyn Write, r: &Report) -> Result<()> {
+    let pes = r.pe_members();
+    let loaders: Vec<_> = pes
+        .iter()
         .filter(|e| e.pe.as_ref().is_some_and(|a| a.loader.loads_dynamically()))
         .collect();
+
+    // Calls that are defects on sight, which live in the findings list as well.
+    let mut finding_counts: Vec<(&str, usize)> = Vec::new();
+    for cat in ["dll-hijacking", "process-creation"] {
+        let n = r.hits.iter().filter(|h| h.category.as_str() == cat).count();
+        if n > 0 {
+            finding_counts.push((cat, n));
+        }
+    }
+
+    if loaders.is_empty() && finding_counts.is_empty() {
+        return Ok(());
+    }
+
+    writeln!(w, "DLL search order")?;
+
+    for (cat, n) in &finding_counts {
+        writeln!(
+            w,
+            "  {} occurrence(s) in category {}, listed with the other findings",
+            thousands(*n as u64),
+            cat
+        )?;
+    }
+
     if loaders.is_empty() {
+        writeln!(w)?;
         return Ok(());
     }
 
     let mut hardened = 0usize;
-    let mut unqualified: Vec<&crate::model::CoverageEntry> = Vec::new();
     let mut unhardened = 0usize;
+    // The pairing worth acting on: an image that names modules without a path *and* carries
+    // no signature. Anyone who can write to the application directory gets code execution,
+    // and nothing checks the file they dropped.
+    let mut priority: Vec<&&&crate::model::CoverageEntry> = Vec::new();
+    let mut unqualified: Vec<&&&crate::model::CoverageEntry> = Vec::new();
     for e in &loaders {
-        match e.pe.as_ref().expect("filtered").loader.verdict {
+        let a = e.pe.as_ref().expect("filtered");
+        match a.loader.verdict {
             Verdict::Hardened => hardened += 1,
-            Verdict::Unqualified => unqualified.push(e),
+            Verdict::Unqualified => {
+                if a.mitigations.authenticode == State::Disabled {
+                    priority.push(e);
+                } else {
+                    unqualified.push(e);
+                }
+            }
             _ => unhardened += 1,
         }
     }
 
     writeln!(
         w,
-        "  Dynamic loading: {} of {} image(s) load modules at runtime",
+        "  {} of {} image(s) load modules at runtime: {} hardened, {} unhardened, {} naming \
+         a module with no path",
         loaders.len(),
-        r.pe_members().len()
-    )?;
-    writeln!(
-        w,
-        "    {} hardened (restrict the search path), {} unhardened, {} naming a module with no path",
+        pes.len(),
         hardened,
         unhardened,
-        unqualified.len()
+        priority.len() + unqualified.len()
     )?;
-    // The evidence, so the count above is checkable rather than taken on trust.
-    for e in unqualified.iter().take(10) {
+    if hardened == 0 && !loaders.is_empty() {
+        writeln!(
+            w,
+            "  !! no image restricts its own search path: none import SetDefaultDllDirectories \
+             or AddDllDirectory"
+        )?;
+    }
+
+    if !priority.is_empty() {
+        writeln!(
+            w,
+            "  Unsigned and naming a module with no path ({}), review these first:",
+            priority.len()
+        )?;
+        emit_loader_rows(w, &priority, 12)?;
+    }
+    if !unqualified.is_empty() {
+        writeln!(
+            w,
+            "  Signed, naming a module with no path ({}):",
+            unqualified.len()
+        )?;
+        emit_loader_rows(w, &unqualified, 8)?;
+    }
+
+    writeln!(
+        w,
+        "  A surface, not a defect: the module argument is not recoverable without \
+         disassembly. Seek to the offsets above to confirm, and note that names already \
+         resolved from the import table, the api-ms-win-* API sets, and self-references are \
+         excluded."
+    )?;
+    writeln!(w)?;
+    Ok(())
+}
+
+fn emit_loader_rows(
+    w: &mut dyn Write,
+    rows: &[&&&crate::model::CoverageEntry],
+    max: usize,
+) -> Result<()> {
+    for e in rows.iter().take(max) {
         let a = e.pe.as_ref().expect("filtered");
         let names: Vec<String> = a
             .loader
@@ -182,20 +259,16 @@ pub fn write_loader_text(w: &mut dyn Write, r: &Report) -> Result<()> {
             .collect();
         writeln!(
             w,
-            "    !! {}: {} plain LoadLibrary call(s), no search-path hardening, names {}",
+            "    !! {}: {} plain LoadLibrary, {} LoadLibraryEx, names {}",
             short_name(&e.member),
             a.loader.load_library,
+            a.loader.load_library_ex,
             names.join(", ")
         )?;
     }
-    if unqualified.len() > 10 {
-        writeln!(w, "    ... and {} more", unqualified.len() - 10)?;
+    if rows.len() > max {
+        writeln!(w, "    ... and {} more", rows.len() - max)?;
     }
-    writeln!(
-        w,
-        "    A surface, not a defect: the module argument is not recoverable without \
-         disassembly, so verify at the offsets above"
-    )?;
     Ok(())
 }
 
