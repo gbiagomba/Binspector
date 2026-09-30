@@ -9,8 +9,29 @@ on:
   workflow_dispatch:
 
 jobs:
+  quality:
+    name: Quality gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Formatting
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+      - name: File size budget
+        run: ./scripts/loc_check.sh
+      - name: Tests
+        run: cargo test --all
+      - name: Tests with all features
+        run: cargo test --all --all-features
+
   linux:
     name: Linux (${{ matrix.target }})
+    needs: quality
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -45,6 +66,7 @@ jobs:
 
   macos:
     name: macOS (${{ matrix.runner }})
+    needs: quality
     strategy:
       fail-fast: false
       matrix:
@@ -74,6 +96,7 @@ jobs:
 
   windows:
     name: Windows (${{ matrix.target }})
+    needs: quality
     runs-on: windows-latest
     strategy:
       fail-fast: false

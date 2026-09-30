@@ -19,3 +19,27 @@ output/
 # Node / misc (in case)
 node_modules/
 dist/
+
+# Build output directories from older layouts
+executables/
+
+# Scan artifacts and test outputs (never commit report output)
+*_output.txt
+*_output.json
+*_output.html
+binspector_output.*
+strings_output.txt
+*.sarif
+*.sqlite
+*.sqlite3
+*.db
+report.*
+scan.*
+
+# Fuzzing (phase 2.4)
+fuzz/target/
+fuzz/artifacts/
+fuzz/corpus/
+hfuzz_target/
+hfuzz_workspace/
+.greprules/
