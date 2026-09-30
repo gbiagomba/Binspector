@@ -2,6 +2,37 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.2.1] - 2026-09-30
+
+Licensing metadata correction and a documentation scrub. No change to scanning behavior or
+output.
+
+### Fixed
+- **The declared license was wrong.** `LICENSE` has always contained the GNU GPL v3 text,
+  byte-identical to gnu.org's `gpl-3.0.txt`, but `Cargo.toml` declared `MIT` and the README
+  repeated it. Both now read `GPL-3.0-or-later`. This corrects the metadata to match the
+  license that was always shipped; it is not a relicensing.
+
+### Changed
+- **The reference sample is now generic.** This repository is public, so vendor-identifying
+  detail from the sample used during development has been replaced throughout the docs, the
+  test fixtures, and the git history: the sample filename and its inner members, the DLL
+  names quoted as evidence, a registry path and a program-files path in an indicator test,
+  one compound font-name string in a matcher regression test, and an internal ticket
+  reference.
+- The sample's MD5, SHA-1, and SHA-256 in the report test fixtures are now obvious
+  placeholders, and its exact byte size is a round 268,435,456. A digest fingerprints a
+  specific file as precisely as its name does, so leaving those in place would have defeated
+  the rename. The size change is paired with the expectation strings, since 268,435,456
+  bytes is exactly 256.0 MiB.
+- Git history was rewritten across 14 commits to scrub the same references from commit
+  messages, file contents, and annotated tag messages. Tags v1.0.0 through v2.0.0 predate
+  any of it and are unchanged; v3.0.0 onward now point at rewritten commits.
+
+All measurements describing the tool's behavior are unchanged: the member counts, string
+counts, finding counts, and the false positives the regression tests pin are all real, and
+only the names and fingerprints differ.
+
 ## [4.2.0] - 2026-09-30
 
 Documentation split, a concise `--help`, and dependency updates. The 4.1.x line was never
