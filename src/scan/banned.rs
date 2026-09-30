@@ -54,6 +54,11 @@ pub enum Category {
     Randomness,
     MemoryManagement,
     SecurityDescriptor,
+    /// Dynamic loading whose search order an attacker can influence, the DLL
+    /// preloading and search-order hijacking family.
+    DllHijacking,
+    /// Launching another program by a name the shell or loader has to resolve.
+    ProcessCreation,
     Other,
 }
 
@@ -67,6 +72,8 @@ impl Category {
             Category::Randomness => "randomness",
             Category::MemoryManagement => "memory-management",
             Category::SecurityDescriptor => "security-descriptor",
+            Category::DllHijacking => "dll-hijacking",
+            Category::ProcessCreation => "process-creation",
             Category::Other => "other",
         }
     }
@@ -224,6 +231,50 @@ fn classify(name: &str) -> (Severity, Category) {
         "wcstok", "tcstok",
     ];
     const RANDOM_FNS: &[&str] = &["rand", "srand", "random", "srandom", "drand48"];
+    // Search-order hijacking. Microsoft's dynamic-link-library-security guidance names
+    // SearchPath explicitly as the wrong way to locate a module, because it resolves
+    // through a search path an attacker may be able to influence.
+    // https://learn.microsoft.com/en-us/windows/win32/dlls/dynamic-link-library-security
+    const HIGH_LOADER: &[&str] = &["searchpath", "searchpatha", "searchpathw"];
+    // Dangerous only when the module is named without a qualified path, which an import
+    // table cannot show. Medium, and the per-image loader surface carries the evidence.
+    const MEDIUM_LOADER: &[&str] = &[
+        "setdlldirectory",
+        "setdlldirectorya",
+        "setdlldirectoryw",
+        "dlopen",
+        "dlmopen",
+        "dlsym",
+        "nsaddimage",
+    ];
+    // Legacy launchers with no way to qualify the image path: they search the working
+    // directory and the environment path.
+    const HIGH_PROCESS: &[&str] = &[
+        "winexec",
+        "loadmodule",
+        "shellexecute",
+        "shellexecutea",
+        "shellexecutew",
+        "shellexecuteex",
+        "shellexecuteexa",
+        "shellexecuteexw",
+        "system",
+        "wsystem",
+        "popen",
+        "wpopen",
+    ];
+    // CreateProcess can be called safely with a fully qualified, quoted application
+    // name. An unquoted or relative one is the classic path-interception bug.
+    const MEDIUM_PROCESS: &[&str] = &[
+        "createprocess",
+        "createprocessa",
+        "createprocessw",
+        "createprocessasuser",
+        "createprocessasusera",
+        "createprocessasuserw",
+        "createprocesswithlogonw",
+        "createprocesswithtokenw",
+    ];
 
     if CRITICAL_BUFFER.contains(&n) {
         return (Severity::Critical, Category::BufferOverflow);
@@ -245,6 +296,21 @@ fn classify(name: &str) -> (Severity, Category) {
     }
     if RANDOM_FNS.contains(&n) {
         return (Severity::Medium, Category::Randomness);
+    }
+    if HIGH_LOADER.contains(&n) {
+        return (Severity::High, Category::DllHijacking);
+    }
+    if MEDIUM_LOADER.contains(&n) {
+        return (Severity::Medium, Category::DllHijacking);
+    }
+    if HIGH_PROCESS.contains(&n) {
+        return (Severity::High, Category::ProcessCreation);
+    }
+    if MEDIUM_PROCESS.contains(&n) {
+        return (Severity::Medium, Category::ProcessCreation);
+    }
+    if n.starts_with("_dyld_") || n.starts_with("dyld_") {
+        return (Severity::Medium, Category::DllHijacking);
     }
     if n.contains("securitydescriptor") || n.contains("setsecurity") {
         return (Severity::High, Category::SecurityDescriptor);
@@ -329,5 +395,98 @@ mod tests {
         assert_eq!(classify("sprintf").1, Category::FormatString);
         assert_eq!(classify("getenv").1, Category::PathHandling);
         assert_eq!(classify("atoi").1, Category::Conversion);
+    }
+
+    #[test]
+    fn classifies_the_loader_family() {
+        // SearchPath is high because Microsoft's guidance names it outright as the wrong
+        // way to locate a module.
+        assert_eq!(
+            classify("SearchPathW"),
+            (Severity::High, Category::DllHijacking)
+        );
+        // These are dangerous only when the module is named without a qualified path,
+        // which an import table cannot reveal, so they stay medium.
+        assert_eq!(
+            classify("SetDllDirectoryW"),
+            (Severity::Medium, Category::DllHijacking)
+        );
+        assert_eq!(
+            classify("dlopen"),
+            (Severity::Medium, Category::DllHijacking)
+        );
+        assert_eq!(
+            classify("_dyld_image_count"),
+            (Severity::Medium, Category::DllHijacking)
+        );
+    }
+
+    #[test]
+    fn classifies_process_creation() {
+        assert_eq!(
+            classify("WinExec"),
+            (Severity::High, Category::ProcessCreation)
+        );
+        assert_eq!(
+            classify("ShellExecuteExW"),
+            (Severity::High, Category::ProcessCreation)
+        );
+        // Reclassified from `other` in 4.4.0: the shell resolves the name, so this is a
+        // process-creation concern rather than a miscellaneous one. Severity is unchanged.
+        assert_eq!(
+            classify("system"),
+            (Severity::High, Category::ProcessCreation)
+        );
+        assert_eq!(
+            classify("_popen"),
+            (Severity::High, Category::ProcessCreation)
+        );
+        // CreateProcess can be called safely with a quoted, fully qualified path.
+        assert_eq!(
+            classify("CreateProcessW"),
+            (Severity::Medium, Category::ProcessCreation)
+        );
+    }
+
+    #[test]
+    fn the_default_list_carries_the_loader_names() {
+        let list = BannedList::load(None, None).unwrap();
+        let names = list.names();
+        for expected in [
+            "SearchPathW",
+            "SetDllDirectoryW",
+            "WinExec",
+            "LoadModule",
+            "ShellExecuteExW",
+            "CreateProcessW",
+            "dlopen",
+        ] {
+            assert!(
+                names.iter().any(|n| n == expected),
+                "default list is missing {}",
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn load_library_is_deliberately_not_a_finding() {
+        // LoadLibrary with a fully qualified path, or LoadLibraryEx with a search flag, is
+        // correct usage, and neither is visible from an import table. Reporting 78 of 441
+        // images as defective on the strength of the name would be inference, not
+        // evidence. The per-image loader surface covers it instead.
+        let names = BannedList::load(None, None).unwrap().names();
+        for absent in [
+            "LoadLibrary",
+            "LoadLibraryW",
+            "LoadLibraryExW",
+            "GetProcAddress",
+        ] {
+            assert!(
+                !names.iter().any(|n| n == absent),
+                "{} should not be a banned-list finding",
+                absent
+            );
+        }
     }
 }
