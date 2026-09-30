@@ -92,6 +92,9 @@ pub struct Report {
     pub coverage: Coverage,
     /// Indicators aggregated across every member.
     pub iocs: crate::pe::Iocs,
+    /// Reputation and CVE enrichment. Empty unless explicitly requested.
+    #[serde(skip_serializing_if = "crate::intel::Intel::is_empty")]
+    pub intel: crate::intel::Intel,
     pub warnings: Vec<String>,
 }
 

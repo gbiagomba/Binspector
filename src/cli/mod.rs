@@ -128,6 +128,24 @@ pub struct Cli {
     #[arg(long = "ioc-cap", default_value_t = 500, value_name = "N")]
     pub ioc_cap: usize,
 
+    /// Look the file hash up with VirusTotal and MetaDefender. Sends only the SHA-256,
+    /// never file content. Needs VT_API_KEY and/or MD_API_KEY in the environment
+    #[arg(long)]
+    pub reputation: bool,
+
+    /// Resolve detected components against NVD for known CVEs. Set NVD_API_KEY to
+    /// raise the rate limit
+    #[arg(long)]
+    pub cve: bool,
+
+    /// Skip third-party component and version detection (offline, on by default)
+    #[arg(long = "no-components")]
+    pub no_components: bool,
+
+    /// Maximum CVEs to report per detected component
+    #[arg(long = "cve-limit", default_value_t = 10, value_name = "N")]
+    pub cve_limit: usize,
+
     /// Exit non-zero when a match at or above this severity is found
     #[arg(long, value_name = "SEVERITY")]
     pub fail_on: Option<FailOn>,
@@ -155,6 +173,10 @@ impl FailOn {
 pub struct Resolved {
     /// The target the scan runs against.
     pub binary: PathBuf,
+    /// Network enrichment requested by the caller.
+    pub reputation: bool,
+    pub cve: bool,
+    pub cve_limit: usize,
     pub scan: ScanConfig,
     pub formats: Vec<format::OutputFormat>,
     pub output: Option<PathBuf>,
@@ -246,10 +268,18 @@ impl Cli {
             include_low_confidence: self.include_low_confidence,
             analyze_pe: !self.no_pe,
             ioc_cap: self.ioc_cap,
+            detect_components: !self.no_components,
         };
+
+        if (self.reputation || self.cve) && self.no_components && self.cve {
+            bail!("--cve needs component detection; remove --no-components");
+        }
 
         Ok(Resolved {
             binary: self.binary,
+            reputation: self.reputation,
+            cve: self.cve,
+            cve_limit: self.cve_limit,
             scan,
             formats,
             output: self.output,

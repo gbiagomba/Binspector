@@ -165,6 +165,78 @@ pub fn largest_pe(r: &Report) -> Option<(&str, u64)> {
         .max_by_key(|(_, s)| *s)
 }
 
+/// Reputation and CVE enrichment, when present.
+pub fn write_intel_text(w: &mut dyn Write, r: &Report) -> Result<()> {
+    if r.intel.is_empty() {
+        return Ok(());
+    }
+
+    if !r.intel.components.is_empty() {
+        writeln!(
+            w,
+            "Third-party components ({})",
+            thousands(r.intel.components.len() as u64)
+        )?;
+        for c in r.intel.components.iter().take(30) {
+            writeln!(w, "  {} {}", c.name, c.version)?;
+        }
+        if r.intel.components.len() > 30 {
+            writeln!(w, "  ... and {} more", r.intel.components.len() - 30)?;
+        }
+        writeln!(w)?;
+    }
+
+    if let Some(rep) = &r.intel.reputation {
+        writeln!(
+            w,
+            "Reputation (hash lookup only, no file content transmitted)"
+        )?;
+        writeln!(w, "  SHA256:       {}", rep.sha256)?;
+        writeln!(w, "  VirusTotal:   {}", rep.virustotal.summary())?;
+        writeln!(w, "  MetaDefender: {}", rep.metadefender.summary())?;
+        if rep.virustotal.is_actionable() || rep.metadefender.is_actionable() {
+            writeln!(w, "  !!! At least one service flagged this hash.")?;
+        }
+        writeln!(w)?;
+    }
+
+    if let Some(cves) = &r.intel.cves {
+        writeln!(
+            w,
+            "Known CVEs ({} across {} component(s))",
+            thousands(cves.total_cves() as u64),
+            cves.components.len()
+        )?;
+        if let Some(worst) = cves.worst_cvss() {
+            writeln!(w, "  Highest CVSS: {:.1}", worst)?;
+        }
+        for c in &cves.components {
+            if let Some(err) = &c.error {
+                writeln!(
+                    w,
+                    "  {} {}: lookup failed: {}",
+                    c.component.name, c.component.version, err
+                )?;
+                continue;
+            }
+            if c.cves.is_empty() {
+                continue;
+            }
+            writeln!(w, "  {} {}", c.component.name, c.component.version)?;
+            for v in c.cves.iter().take(10) {
+                let score = match v.cvss {
+                    Some(s) => format!("{:.1}", s),
+                    None => "n/a".to_string(),
+                };
+                writeln!(w, "    {} CVSS {} ({})  {}", v.id, score, v.severity, v.url)?;
+            }
+        }
+        writeln!(w, "  {}", cves.coverage_note)?;
+        writeln!(w)?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

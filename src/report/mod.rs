@@ -211,6 +211,7 @@ pub(crate) mod tests_support {
                 }],
             },
             iocs: Default::default(),
+            intel: Default::default(),
             warnings: vec!["a coverage warning".into()],
         }
     }

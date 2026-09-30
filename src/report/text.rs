@@ -49,6 +49,7 @@ pub fn write(
 
     write_coverage(w, r)?;
     super::pe_section::write_text(w, r)?;
+    super::pe_section::write_intel_text(w, r)?;
     write_warnings(w, r, opts)?;
     write_summary(w, r, opts)?;
     write_occurrences(w, r, opts)?;
@@ -341,6 +342,7 @@ mod tests {
                 }],
             },
             iocs: Default::default(),
+            intel: Default::default(),
             warnings: vec!["a warning".into()],
         }
     }

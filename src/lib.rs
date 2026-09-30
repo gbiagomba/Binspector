@@ -7,6 +7,7 @@
 pub mod cli;
 pub mod container;
 pub mod hashing;
+pub mod intel;
 pub mod model;
 pub mod pe;
 pub mod report;

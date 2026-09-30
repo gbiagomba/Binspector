@@ -37,6 +37,7 @@ default = []
 # text format needs no feature and produces an equivalent, loadable dump.
 # Enable with: cargo build --features sqlite
 sqlite = ["dep:rusqlite"]
+ureq = []
 
 [profile.release]
 lto = true

@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 
 use crate::container::{self, Limits};
 use crate::hashing;
+use crate::intel;
 use crate::model::{Coverage, CoverageEntry, HitRecord, MatchSummary, Report};
 use crate::pe::{ioc, PeAnalysis};
 use crate::spool::{Spool, SpoolReader};
@@ -41,6 +42,8 @@ pub struct ScanConfig {
     pub analyze_pe: bool,
     /// Maximum indicators of each kind to collect.
     pub ioc_cap: usize,
+    /// Detect third-party components and versions from strings. Offline.
+    pub detect_components: bool,
 }
 
 impl Default for ScanConfig {
@@ -60,6 +63,7 @@ impl Default for ScanConfig {
             include_low_confidence: false,
             analyze_pe: true,
             ioc_cap: 500,
+            detect_components: true,
         }
     }
 }
@@ -99,6 +103,7 @@ pub fn run(path: &Path, cfg: &ScanConfig) -> Result<ScanOutput> {
     let mut hit_cap_reached = false;
     let mut low_confidence_total = 0usize;
     let mut iocs = ioc::Extractor::new(cfg.ioc_cap);
+    let mut components = intel::components::Detector::new(200);
     let mut spool = if cfg.dump { Some(Spool::new()?) } else { None };
 
     let outcome = container::walk_bytes(
@@ -216,6 +221,9 @@ pub fn run(path: &Path, cfg: &ScanConfig) -> Result<ScanOutput> {
                     }
                 }
                 iocs.feed(&s.text);
+                if cfg.detect_components {
+                    components.feed(&s.text);
+                }
                 if let Some(sp) = spool.as_mut() {
                     let ranges: Vec<(usize, usize)> =
                         found.iter().map(|h| (h.start, h.end)).collect();
@@ -318,6 +326,15 @@ pub fn run(path: &Path, cfg: &ScanConfig) -> Result<ScanOutput> {
         low_confidence_top: low_top,
         include_low_confidence: cfg.include_low_confidence,
         iocs: iocs.finish(),
+        intel: intel::Intel {
+            reputation: None,
+            cves: None,
+            components: if cfg.detect_components {
+                components.finish()
+            } else {
+                Vec::new()
+            },
+        },
         coverage: Coverage {
             root_format: outcome.root_format.as_str().to_string(),
             members_scanned: outcome.members_scanned,

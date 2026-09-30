@@ -7,6 +7,7 @@ use std::process::ExitCode;
 
 use binspector::cli::color::{ColorChoice, Theme};
 use binspector::cli::{format, Cli};
+use binspector::intel;
 use binspector::report::{self, RenderOpts};
 use binspector::scan;
 
@@ -29,7 +30,46 @@ fn run() -> Result<ExitCode> {
 
     // Destructured so the report can be borrowed immutably while the spool is
     // borrowed mutably for streaming.
-    let scan::ScanOutput { report, mut spool } = scan::run(&resolved.binary, &resolved.scan)?;
+    let scan::ScanOutput {
+        mut report,
+        mut spool,
+    } = scan::run(&resolved.binary, &resolved.scan)?;
+
+    // Network enrichment runs after the scan and never blocks the report: a failed
+    // lookup is recorded in the output rather than aborting a completed analysis.
+    if resolved.reputation || resolved.cve {
+        let creds = intel::Credentials::load()?;
+        if resolved.reputation {
+            if creds.virustotal.is_none() && creds.metadefender.is_none() {
+                eprintln!(
+                    "binspector: {}",
+                    intel::Credentials::missing_message("reputation", "VT_API_KEY or MD_API_KEY")
+                );
+            }
+            match intel::reputation::lookup(&report.sha256, &creds) {
+                Ok(r) => report.intel.reputation = Some(r),
+                Err(e) => eprintln!("binspector: reputation lookup unavailable: {:#}", e),
+            }
+        }
+        if resolved.cve {
+            if creds.nvd.is_none() {
+                eprintln!("binspector: no NVD_API_KEY set, so the NVD rate limit will be very low");
+            }
+            let components = report.intel.components.clone();
+            if components.is_empty() {
+                eprintln!(
+                    "binspector: no third-party components were detected, so there is nothing \
+                     to resolve against NVD"
+                );
+            } else {
+                let sig_count = intel::components::Detector::new(1).signature_count();
+                match intel::cve::lookup(&components, sig_count, &creds, resolved.cve_limit) {
+                    Ok(c) => report.intel.cves = Some(c),
+                    Err(e) => eprintln!("binspector: CVE lookup unavailable: {:#}", e),
+                }
+            }
+        }
+    }
 
     // Terminal output may be colorized. File output is plain unless colour was
     // explicitly forced, since escape sequences in a saved report are noise.
