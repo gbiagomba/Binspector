@@ -73,26 +73,32 @@ jobs:
           files: ${{ steps.package.outputs.asset_path }}
 
   macos:
-    name: macOS (${{ matrix.runner }})
+    name: macOS (${{ matrix.target }})
     needs: quality
     strategy:
       fail-fast: false
       matrix:
-        runner: [ macos-13, macos-14 ] # 13 = x86_64, 14 = arm64
-    runs-on: ${{ matrix.runner }}
+        target: [ x86_64-apple-darwin, aarch64-apple-darwin ]
+    # One Apple silicon runner cross-compiles both targets. The previous matrix used
+    # macos-13 for x86_64, which GitHub has deprecated; its queue left the x86_64
+    # asset unbuilt for v3.0.0.
+    runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
       - name: Build
-        run: cargo build --release
+        run: cargo build --release --target ${{ matrix.target }}
       - name: Package artifact (tar.gz)
         if: startsWith(github.ref, 'refs/tags/')
         run: |
-          BIN=target/release/binspector
-          # Derive target from runner
-          if [[ "${{ matrix.runner }}" == "macos-14" ]]; then TARGET=aarch64-apple-darwin; else TARGET=x86_64-apple-darwin; fi
-          NAME=binspector-${TARGET}-${{ github.ref_name }}
-          tar -czf ${NAME}.tar.gz -C $(dirname "$BIN") $(basename "$BIN") README.md LICENSE || tar -czf ${NAME}.tar.gz -C $(dirname "$BIN") $(basename "$BIN") README.md || tar -czf ${NAME}.tar.gz -C $(dirname "$BIN") $(basename "$BIN")
+          set -euo pipefail
+          STAGE=$(mktemp -d)
+          cp target/${{ matrix.target }}/release/binspector "$STAGE/"
+          cp README.md LICENSE "$STAGE/"
+          NAME=binspector-${{ matrix.target }}-${{ github.ref_name }}
+          tar -czf "${NAME}.tar.gz" -C "$STAGE" .
           echo "asset_path=${NAME}.tar.gz" >> $GITHUB_OUTPUT
         shell: bash
         id: package
