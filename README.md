@@ -53,6 +53,10 @@ Optional features:
 cargo build --release --features sqlite   # binary --format sqlite output
 cargo build --release --features carve    # embedded signature carving via binwalk
 cargo build --release --all-features
+
+# Coverage-guided instrumentation for the fuzz harnesses
+cargo afl build --features afl-target --release --bin fuzz_pe
+cargo hfuzz build --features hfuzz-target --bin fuzz_pe
 ```
 
 Via Docker:
@@ -216,7 +220,7 @@ binspector fuzz --differential ./sample.msixbundle --iterations 20000 --seed 1
 binspector fuzz --corpus-from ./sample.msixbundle
 
 # Drive an external engine against a harness you supply.
-binspector fuzz --engine afl++ --harness ./fuzz/target/release/fuzz_pe \
+binspector fuzz --engine afl++ --harness ./target/release/fuzz_pe \
   --corpus fuzz/corpus/sample --run-secs 3600
 
 # Coverage-guided self-fuzzing (needs cargo-afl or cargo-hfuzz).
@@ -232,8 +236,10 @@ campaign, builds the corpus, and parses the crash directory; running it still ne
 engine installed, and WinAFL needs a Windows host. The differential mode is the one that
 works everywhere with no setup.
 
-The self-fuzzing targets live in `fuzz/` and use `arbitrary`, so the option space is
-explored alongside the byte space. Each asserts a real invariant rather than only waiting
+The self-fuzzing harnesses live in `src/bin/fuzz_*.rs` and use `arbitrary`, so the option
+space is explored alongside the byte space. They are binaries of this crate rather than a
+separate one, so a plain `cargo build` compiles them and a change to a library type cannot
+break them unnoticed. Each asserts a real invariant rather than only waiting
 for a crash: offsets stay inside the input, provenance chains are never empty, and
 section entropy stays within 0 to 8.
 
@@ -313,7 +319,7 @@ contents.
 - `src/intel/`: reputation, CVE enrichment, component detection, credentials
 - `src/fuzz/`: differential fuzzer, mutation engine, corpus builder, engine orchestration
 - `src/report/`: one module per output format
-- `fuzz/`: separate crate holding the coverage-guided self-fuzzing targets
+- `src/bin/fuzz_*.rs`: the self-fuzzing harnesses, built as binaries of this crate
 - `rsc/`: banned function lists and references. `rsc/sdl_banned_funct.list` is compiled
   in by default and overridable with `--banned-list`
 - `scripts/`: installers and utilities, see `scripts/README.md`

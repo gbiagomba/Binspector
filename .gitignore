@@ -37,10 +37,9 @@ report.*
 scan.*
 
 # Fuzzing (phase 2.4)
-fuzz/target/
 fuzz/artifacts/
 fuzz/corpus/
+fuzz/out/
 hfuzz_target/
 hfuzz_workspace/
 .greprules/
-fuzz/Cargo.lock

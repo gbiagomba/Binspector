@@ -1,6 +1,7 @@
 //! Fuzz the container parser.
 //!
-//! Build with one of:
+//! A plain build produces a file-reading harness, which is what AFL's `@@` and
+//! honggfuzz's `___FILE___` placeholders substitute. Instrumented builds:
 //!   cargo afl build --features afl-target --release --bin fuzz_container
 //!   cargo hfuzz build --features hfuzz-target --bin fuzz_container
 
@@ -11,6 +12,7 @@ fn exercise(data: &[u8]) {
         max_member_bytes: 16 * 1024 * 1024,
         max_expansion_ratio: 50,
         max_members: 500,
+        carve: false,
     };
     let _ = binspector::container::walk_bytes(data, "fuzz".to_string(), limits, &mut |m| {
         // Members must never be handed out with an empty provenance chain, since
@@ -27,7 +29,7 @@ fn main() {
     });
 }
 
-#[cfg(feature = "hfuzz-target")]
+#[cfg(all(feature = "hfuzz-target", not(feature = "afl-target")))]
 fn main() {
     loop {
         honggfuzz::fuzz!(|data: &[u8]| {

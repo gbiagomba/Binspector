@@ -1,4 +1,4 @@
-//! Shared input shaping for the fuzz targets.
+//! Structured input shaping for the fuzz harnesses.
 //!
 //! `arbitrary` turns the engine's raw bytes into structured parameters, so the fuzzer
 //! explores the option space (minimum length, which encodings are enabled) as well as
@@ -21,7 +21,9 @@ impl<'a> Arbitrary<'a> for StringsInput {
         let min_len = (u8::arbitrary(u)? % 32) as usize + 1;
         let ascii = bool::arbitrary(u)?;
         let utf16 = bool::arbitrary(u)?;
-        let data = u.arbitrary_iter::<u8>()?.collect::<arbitrary::Result<_>>()?;
+        let data = u
+            .arbitrary_iter::<u8>()?
+            .collect::<arbitrary::Result<_>>()?;
         Ok(Self {
             min_len,
             // At least one extraction source must be on, which the CLI also enforces.

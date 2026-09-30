@@ -1,6 +1,7 @@
 //! Fuzz the pe parser.
 //!
-//! Build with one of:
+//! A plain build produces a file-reading harness, which is what AFL's `@@` and
+//! honggfuzz's `___FILE___` placeholders substitute. Instrumented builds:
 //!   cargo afl build --features afl-target --release --bin fuzz_pe
 //!   cargo hfuzz build --features hfuzz-target --bin fuzz_pe
 
@@ -26,7 +27,7 @@ fn main() {
     });
 }
 
-#[cfg(feature = "hfuzz-target")]
+#[cfg(all(feature = "hfuzz-target", not(feature = "afl-target")))]
 fn main() {
     loop {
         honggfuzz::fuzz!(|data: &[u8]| {

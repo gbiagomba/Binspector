@@ -27,11 +27,11 @@ help:
 	@echo "  docker                build the container image"
 	@echo ""
 	@echo "Fuzzing:"
-	@echo "  fuzz-build            build the plain harnesses (no engine needed)"
+	@echo "  fuzz-build            build all binaries including the fuzz harnesses"
 	@echo "  fuzz-diff BIN=path    differential fuzz Binspector's parsers against a sample"
 	@echo "  fuzz-corpus BIN=path  build a seed corpus from a sample"
-	@echo "  fuzz-afl TARGET=name  build an AFL-instrumented target (needs cargo-afl)"
-	@echo "  fuzz-hfuzz TARGET=name  build a honggfuzz target (needs cargo-hfuzz)"
+	@echo "  fuzz-afl TARGET=name  build an AFL-instrumented harness (needs cargo-afl)"
+	@echo "  fuzz-hfuzz TARGET=name  build a honggfuzz harness (needs cargo-hfuzz)"
 	@echo "  clean                 remove build artifacts"
 	@echo ""
 	@echo "Features:"
@@ -69,14 +69,15 @@ lint:
 loc-check:
 	@HARD=$(HARD) SOFT=$(SOFT) ./scripts/loc_check.sh
 
-check: fmt-check lint loc-check test
+check: fmt-check lint loc-check test fuzz-build
 
 docker:
 	docker build -t $(APP):latest .
 
-# The harnesses build without any engine installed, which is what CI checks.
+# The harnesses are binaries of this crate, so a plain build compiles them. Kept as a
+# named target for clarity, and so CI can state what it is checking.
 fuzz-build:
-	cd fuzz && cargo build --release
+	cargo build --release --bins
 
 fuzz-diff:
 	@if [ -z "$(BIN)" ]; then echo "Usage: make fuzz-diff BIN=path/to/sample"; exit 1; fi
@@ -89,15 +90,14 @@ fuzz-corpus:
 
 fuzz-afl:
 	@if [ -z "$(TARGET)" ]; then echo "Usage: make fuzz-afl TARGET=fuzz_pe"; exit 1; fi
-	cd fuzz && cargo afl build --features afl-target --release --bin $(TARGET)
+	cargo afl build --features afl-target --release --bin $(TARGET)
 
 fuzz-hfuzz:
 	@if [ -z "$(TARGET)" ]; then echo "Usage: make fuzz-hfuzz TARGET=fuzz_pe"; exit 1; fi
-	cd fuzz && cargo hfuzz build --features hfuzz-target --bin $(TARGET)
+	cargo hfuzz build --features hfuzz-target --bin $(TARGET)
 
 clean:
 	cargo clean
-	cd fuzz && cargo clean
 
 normalize-banned-list:
 	@python3 scripts/normalize_banned_list.py

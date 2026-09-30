@@ -1,14 +1,12 @@
 //! Fuzz string extraction.
 //!
-//! Build with one of:
+//! A plain build produces a file-reading harness, which is what AFL's `@@` and
+//! honggfuzz's `___FILE___` placeholders substitute. Instrumented builds:
 //!   cargo afl build --features afl-target --release --bin fuzz_strings
 //!   cargo hfuzz build --features hfuzz-target --bin fuzz_strings
-#[path = "common.rs"]
-mod common;
-
 use arbitrary::Arbitrary;
+use binspector::fuzz::StringsInput;
 use binspector::scan::strings;
-use common::StringsInput;
 
 fn exercise(data: &[u8]) {
     let mut u = arbitrary::Unstructured::new(data);
@@ -35,7 +33,7 @@ fn main() {
     });
 }
 
-#[cfg(feature = "hfuzz-target")]
+#[cfg(all(feature = "hfuzz-target", not(feature = "afl-target")))]
 fn main() {
     loop {
         honggfuzz::fuzz!(|data: &[u8]| {

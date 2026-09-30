@@ -2,6 +2,35 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.1.1] - 2026-09-30
+
+Fixes a build break that made v4.1.0 publish no release assets, and moves the fuzz
+harnesses into the main crate so the same class of break cannot recur. No change to
+scanning behavior or output.
+
+### Fixed
+- **The fuzz harnesses did not compile.** 4.1.0 added a `carve` field to
+  `container::Limits` and updated every constructor inside the crate, but the harnesses
+  lived in a separate `fuzz/` crate with its own `[workspace]`, so `cargo test` and
+  `make check` at the repository root never built them. CI caught it, the quality gate
+  failed, and because the platform build jobs declare `needs: quality`, v4.1.0 shipped
+  with zero assets.
+- **`--all-features` defined two `main` functions.** Enabling `afl-target` and
+  `hfuzz-target` together, which `--all-features` does, matched both engine `main`
+  gates. The gates are now mutually exclusive, with AFL taking precedence, then
+  honggfuzz, then the plain file-reading harness.
+
+### Changed
+- **The fuzz harnesses moved from `fuzz/fuzz_targets/` to `src/bin/`.** They are now
+  binaries of this crate, so an ordinary `cargo build` compiles them and a change to a
+  library type cannot break them unnoticed. The separate crate and its `Cargo.toml` are
+  gone. `src/fuzz/` keeps the library side (mutation engine, differential runner, corpus
+  builder, engine orchestration) and gains `input.rs` for the `arbitrary` input shaping
+  the harnesses share.
+- `make check` now runs `fuzz-build`, which is what would have caught this locally.
+- `make fuzz-afl` and `make fuzz-hfuzz` no longer change directory, and the harness path
+  in the README is `./target/release/fuzz_pe`.
+
 ## [4.1.0] - 2026-09-30
 
 Closes the container coverage gap that 3.0.0 opened and 4.0.0 carried. Every format
