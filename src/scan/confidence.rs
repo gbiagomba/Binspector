@@ -12,9 +12,9 @@
 //! how the token sits inside its string, and whether its case matches. C runtime
 //! names are lowercase, so an uppercase variant inside prose is almost never a call.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Confidence {
     /// The name appears in the PE import directory. This is a linker-recorded

@@ -4,72 +4,112 @@ Generation prompts for a Binspector logo, written for Adobe Firefly but usable w
 text-to-image model. Kept in the repo so the branding rationale is recorded alongside the
 tool rather than living in a chat log.
 
-## Design rationale
+## What the logo has to say
 
-The tool's identity is **looking inside a container to find what a surface scan misses**.
-That is the thing worth encoding, and it is what separates Binspector from a generic
-"magnifying glass over a file" icon.
+The tool's idea is **cracking a container open to find what a surface scan misses**. Every
+prompt below encodes that literally: something sealed, opened, and a single dangerous thing
+lit up inside it. That is the differentiator, and it is what separates this from a generic
+magnifying glass over a file.
 
-Supporting inputs:
+The aesthetic direction is steampunk, cyberpunk, comic-book heroic, and anime, which is a
+richer register than a flat vector icon. Two practical consequences:
 
-- The legacy banner's epigraph, which is the stated philosophy: *"Truth is confirmed by
-  inspection and delay; falsehood by haste and uncertainly"* (Tacitus).
-- A terminal-first Rust CLI, so a flat technical aesthetic rather than anything glossy.
-- The palette already used by the tool's colorblind mode: Okabe-Ito amber `#E69F00` and
-  slate blue `#0072B2`, which are chosen to avoid a red-green pairing.
+- **Two tiers.** A detailed illustration reads beautifully at 1024 and turns to mush at 64,
+  so the badge prompts below are deliberately simpler than the key-visual prompts. Generate
+  both. Use the illustration for the README header and social preview, the badge for the
+  favicon and any app icon.
+- **Palette holds across both.** Okabe-Ito amber `#E69F00` and slate blue `#0072B2`, the
+  same pair the colorblind mode uses, over deep charcoal. Amber is always the discovered
+  threat, blue is always the machinery. Keeping that consistent is what makes a detailed
+  illustration and a flat badge look like one brand.
 
-## Primary: nested containers
+The legacy banner's epigraph is the tone to aim for: *"Truth is confirmed by inspection and
+delay; falsehood by haste and uncertainly"* (Tacitus). Patient, methodical, slightly severe.
+Not a hero mid-punch.
 
-Recommended. Encodes the differentiator instead of the category.
+## Primary: cyberpunk anime key visual
 
-```
-Flat vector app icon for a security tool called Binspector. A hexagonal outer
-shell, partially cut away to reveal two smaller nested shells inside it, and at
-the innermost core a glowing warning glyph. Thin geometric line work, 2px
-uniform strokes, no gradients. Deep charcoal background, cool slate blue shells,
-a single amber accent on the exposed core. Centered, symmetrical, generous
-padding, legible at 64 pixels. Minimal, technical, modern developer-tool
-branding. No text, no lettering.
-```
-
-## Alternative A: inspection instrument
-
-More immediately readable as "inspector", less conceptually specific.
+Recommended for the README header. Most distinctive, and the composition leaves room for a
+wordmark.
 
 ```
-Minimal vector logo for a binary analysis tool. A precision caliper or lens
-measuring a stack of data layers, rendered as clean concentric geometry. Flat
-monoline style, uniform stroke weight, no gradients, no bevels. Palette limited
-to dark slate, cool blue, and one amber highlight. Square canvas, centered,
-strong silhouette, works as a small app icon. Technical and restrained, in the
-style of modern open-source security tooling. No text.
+Anime key visual, cinematic cyberpunk illustration. A lone hooded technician
+kneels in profile before a floating matte-black hexagonal container that has
+split open along glowing seams, its inner shells peeled back in mid-air to
+expose a single amber warning sigil burning at the core. Cel-shaded with hard
+light, thick confident linework, dramatic rim lighting, volumetric haze, faint
+scanlines. Deep charcoal and slate blue environment lit only by amber from the
+opened core. Low camera angle, strong silhouette, negative space on the upper
+left. Restrained and methodical rather than action-posed. Highly detailed, no
+text, no lettering, no signature.
 ```
 
-## Alternative B: terminal wordmark
+## Alternative A: steampunk inspection engine
 
-For a README header rather than an icon. Matches the ASCII banner aesthetic of the legacy
-implementation.
+Warmer and more mechanical. Reads as craft and patience, which suits the epigraph best.
 
 ```
-Wide banner logo for a command-line security tool. A stylized terminal window
-with a monospaced cursor, and inside it a faint grid of hexadecimal digits with
-a handful highlighted in amber. Flat vector, dark charcoal, cool blue, single
-amber accent, subtle scanline texture. Horizontal composition with clear space
-on the left for a wordmark. Clean, technical, no clutter. No text.
+Detailed steampunk illustration of a brass inspection engine. A riveted
+spherical vessel clamped in an armature, its plating hinged open in overlapping
+petals to reveal nested inner spheres, and at the center a single amber ember
+held in a caliper. Fine copper piping, exposed gear trains, pressure gauges,
+etched engraving detail, patinated brass and oxidised steel. Lit by the amber
+core against a deep charcoal workshop, cool slate blue highlights on the metal.
+Centered three-quarter view, symmetrical, ornate but legible. Ink and watercolor
+rendering, visible line weight. No text, no lettering.
+```
+
+## Alternative B: heroic emblem badge
+
+The app-icon tier. Comic-book chest-crest construction, which is exactly the shape language
+that survives being shrunk to 64 pixels.
+
+```
+Bold comic-book emblem badge, chest-crest construction. A heavy-shouldered
+hexagonal shield, cracked open down the center to reveal three receding inner
+frames and a single amber diamond at the heart. Thick black keyline, flat bold
+color fills, hard cel-shaded highlights, halftone dot texture in the shadows,
+slight chromatic edge. Slate blue plating, amber core, deep charcoal ground.
+Perfectly symmetrical, centered, generous padding, aggressive silhouette that
+stays legible at 64 pixels. Modern superhero insignia design. No text, no
+lettering, no franchise iconography.
+```
+
+## Alternative C: mecha inspector mascot
+
+For a mascot or sticker rather than a logo. Use if a character is wanted.
+
+```
+Anime mecha character illustration, three-quarter view, full body. A compact
+inspection drone the size of a person, matte charcoal armor with slate blue
+accent panels, a single large amber optical lens, articulated multi-jointed
+scanning arms folded at rest, one arm extended holding open a small cracked
+container that glows amber. Cel-shaded, clean mechanical linework, panel lines
+and visible fasteners, subtle wear. Neutral dark background with a soft amber
+floor glow. Calm posture, not combat-ready. Detailed hard-surface design,
+no text.
 ```
 
 ## Notes on use
 
-**Every prompt ends with "No text" on purpose.** Firefly and comparable models render
-lettering unreliably. Set the wordmark in a real typeface afterward; a monospace face suits
-the tool's aesthetic, and JetBrains Mono or IBM Plex Mono both work.
+**Every prompt ends with "no text" on purpose.** Firefly and comparable models render
+lettering unreliably, and a misspelled logo is unusable. Set the wordmark in a real typeface
+afterward. A monospace face suits the tool: JetBrains Mono or IBM Plex Mono for a restrained
+look, or a heavier display face if the emblem direction wins.
 
-**To match the CLI output exactly**, append: `amber #E69F00 accent, slate blue #0072B2
-shells`.
+**To pin the palette exactly**, append to any prompt: `amber #E69F00 core, slate blue #0072B2
+plating, charcoal #1A1A1A ground`.
 
-**No borrowed iconography.** These deliberately avoid motifs from any franchise. A public
-repository's logo leaning on someone else's intellectual property is avoidable risk, and the
-nested-shell idea fits what the tool does better anyway.
+**No borrowed iconography, and this is a real constraint rather than a note.** The prompts
+reach for the register of superhero and anime design without naming a franchise, a character,
+a studio, or an artist. A public repository whose logo leans on someone else's intellectual
+property is avoidable risk, and Firefly's commercial-use claim only holds while the output is
+not derivative. If a generation comes back looking recognisably like a specific character,
+discard it.
 
-**Sizes worth exporting** once a direction is picked: 1024 and 512 for listings, 128 and 64
-for an app icon, and a 1280x640 banner if Alternative B is used as a social preview.
+**Sizes worth exporting** once a direction is picked: 1280x640 for the social preview, 1024
+and 512 for listings, 128 and 64 for the app icon and favicon. Check the 64 pixel render
+before committing to a direction; that is where detailed illustration fails.
+
+**Pairing that works:** Primary for the README header, Alternative B for the favicon. The
+shared palette and the shared cracked-container motif carry the identity between them.

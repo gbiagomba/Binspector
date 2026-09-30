@@ -1,6 +1,6 @@
 [package]
 name = "binspector"
-version = "4.2.2"
+version = "4.3.0"
 edition = "2021"
 description = "Inspect binaries for banned C/C++ functions and exploit mitigations, unpacking nested containers, with PE analysis, reputation and CVE enrichment, and fuzzing"
 license = "GPL-3.0-or-later"
@@ -16,7 +16,7 @@ sha1 = "0.11"
 sha2 = "0.11"
 md-5 = "0.11"
 hex = "0.4"
-time = { version = "0.3", features = ["formatting"] }
+time = { version = "0.3", features = ["formatting", "local-offset"] }
 regex = "1.11"
 aho-corasick = "1.1"
 zip = "8.6"
@@ -31,6 +31,7 @@ sevenz-rust2 = "0.23.0"
 cab = "0.6.0"
 binwalk-ng = { version = "4.0.0", default-features = false, optional = true }
 arbitrary = { version = "1.4.2", features = ["derive"] }
+rustyline = { version = "18.0.1", optional = true }
 
 [[bin]]
 name = "binspector"
@@ -73,6 +74,9 @@ sqlite = ["dep:rusqlite"]
 # and archive formats above already cover ordinary application bundles, and carving
 # is a firmware-analysis tool that produces a lot of output on other input.
 carve = ["dep:binwalk-ng"]
+# Interactive browser over a saved report (`binspector repl scan.json`). Off by
+# default: it adds a line editor, and everything it shows is already in the report.
+repl = ["dep:rustyline"]
 
 [profile.release]
 lto = true

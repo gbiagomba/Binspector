@@ -159,8 +159,8 @@ pub(crate) mod tests_support {
 
     pub fn sample_report() -> Report {
         Report {
-            tool: "binspector",
-            tool_version: "3.0.0",
+            tool: "binspector".to_string(),
+            tool_version: "3.0.0".to_string(),
             binary: "bundle.msixbundle".into(),
             project: Some("PROJ-123".into()),
             timestamp: "2026-09-30T00:00:00Z".into(),

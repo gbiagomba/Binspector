@@ -34,6 +34,15 @@ pub struct Cli {
     #[arg(short = 'h', long = "help", action = clap::ArgAction::HelpShort, global = true)]
     pub help: Option<bool>,
 
+    /// Report what the scan is doing, to stderr. Repeat for more: -v phases and totals,
+    /// -vv every member and decision, -vvv every string
+    #[arg(short = 'v', long = "verbose", action = clap::ArgAction::Count)]
+    pub verbose: u8,
+
+    /// Do not print the banner
+    #[arg(long = "no-banner")]
+    pub no_banner: bool,
+
     #[command(subcommand)]
     pub command: Option<Commands>,
 
@@ -165,13 +174,23 @@ pub struct Cli {
 #[derive(clap::Subcommand, Debug)]
 pub enum Commands {
     /// Fuzz Binspector's parsers, or drive an external engine
-    Fuzz(FuzzArgs),
+    ///
+    /// Boxed because `FuzzArgs` is far larger than the other variant, and an enum sized for
+    /// its biggest member would be copied around the scan path for no reason.
+    Fuzz(Box<FuzzArgs>),
+    /// Browse a saved report interactively (needs --features repl)
+    Repl {
+        /// A JSON or SQLite report produced by an earlier scan
+        #[arg(value_name = "REPORT")]
+        report: PathBuf,
+    },
 }
 
 /// What the invocation asked for.
 pub enum Action {
     Scan(Box<Resolved>),
     Fuzz(Box<FuzzArgs>),
+    Repl(PathBuf),
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, clap::ValueEnum)]
@@ -196,6 +215,13 @@ impl FailOn {
 pub struct Resolved {
     /// The target the scan runs against.
     pub binary: PathBuf,
+    /// Verbosity level from the `-v` count.
+    pub verbose: u8,
+    /// Suppress the banner.
+    pub no_banner: bool,
+    /// True when `output` is the timestamped default, so it is treated as a stem and gets
+    /// a per-format extension.
+    pub output_is_default: bool,
     /// Network enrichment requested by the caller.
     pub reputation: bool,
     pub cve: bool,
@@ -214,9 +240,13 @@ pub struct Resolved {
 
 impl Cli {
     pub fn resolve(self) -> Result<Action> {
-        if let Some(Commands::Fuzz(args)) = self.command {
-            args.validate()?;
-            return Ok(Action::Fuzz(Box::new(args)));
+        match self.command {
+            Some(Commands::Fuzz(args)) => {
+                args.validate()?;
+                return Ok(Action::Fuzz(args));
+            }
+            Some(Commands::Repl { report }) => return Ok(Action::Repl(report)),
+            None => {}
         }
         let binary = match self.binary {
             Some(b) => b,
@@ -247,16 +277,37 @@ impl Cli {
         }
         let formats = format::resolve(&spec)?;
 
+        // `-o -` asks for stdout explicitly. Anything else, including no -o at all, writes
+        // a file; without -o the name is a timestamped default matching the v1 naming.
+        let to_stdout = self
+            .output
+            .as_deref()
+            .is_some_and(|p| p == std::path::Path::new("-"));
+        let output: Option<PathBuf> = if to_stdout {
+            None
+        } else {
+            Some(
+                self.output
+                    .clone()
+                    .unwrap_or_else(|| PathBuf::from(format::default_stem())),
+            )
+        };
         if self.output.is_none() {
+            notices.push(format!(
+                "writing to {}.<format>. Pass -o FILE to choose a name, or -o - for stdout.",
+                format::default_stem()
+            ));
+        }
+        if to_stdout {
             if let Some(f) = formats.iter().find(|f| f.requires_path()) {
                 bail!(
-                    "--format {} writes a binary database and needs an output path; pass -o FILE",
+                    "--format {} writes a binary database and cannot go to stdout; pass -o FILE",
                     f.name()
                 );
             }
-        }
-        if formats.len() > 1 && self.output.is_none() {
-            bail!("several output formats were requested; pass -o to use it as a filename stem");
+            if formats.len() > 1 {
+                bail!("several output formats cannot share stdout; pass -o to use as a stem");
+            }
         }
 
         if self.dump {
@@ -306,6 +357,14 @@ impl Cli {
             detect_components: !self.no_components,
         };
 
+        if self.verbose >= crate::observe::level::TRACE && self.banned_filter.is_none() {
+            notices.push(
+                "-vvv traces every extracted string, which is millions of lines on a large \
+                 sample. Narrow it with --banned-filter or a larger --min-len, or expect the \
+                 trace to be capped."
+                    .to_string(),
+            );
+        }
         if self.carve && !crate::container::carve::available() {
             bail!("{}", crate::container::carve::unavailable_message());
         }
@@ -315,12 +374,15 @@ impl Cli {
 
         Ok(Action::Scan(Box::new(Resolved {
             binary,
+            verbose: self.verbose,
+            no_banner: self.no_banner,
+            output_is_default: self.output.is_none() && !to_stdout,
             reputation: self.reputation,
             cve: self.cve,
             cve_limit: self.cve_limit,
             scan,
             formats,
-            output: self.output,
+            output,
             matches_only: self.matches_only,
             dump: self.dump,
             color: self.color,
@@ -342,6 +404,7 @@ mod tests {
         match Cli::try_parse_from(full)?.resolve()? {
             Action::Scan(r) => Ok(*r),
             Action::Fuzz(_) => anyhow::bail!("expected a scan, got the fuzz subcommand"),
+            Action::Repl(_) => anyhow::bail!("expected a scan, got the repl subcommand"),
         }
     }
 
@@ -398,18 +461,59 @@ mod tests {
     }
 
     #[test]
-    fn sqlite_requires_an_output_path() {
-        let err = parse(&["file.bin", "--format", "sqlite"])
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("needs an output path"));
-        assert!(parse(&["file.bin", "--format", "sqlite", "-o", "out.db"]).is_ok());
+    fn a_missing_output_gets_a_timestamped_default() {
+        let r = parse(&["file.bin"]).unwrap();
+        let path = r.output.expect("a default path").display().to_string();
+        assert!(path.starts_with("binspector_output-"), "got {}", path);
+        assert!(r.notices.iter().any(|n| n.contains("Pass -o FILE")));
     }
 
     #[test]
-    fn several_formats_require_an_output_stem() {
-        assert!(parse(&["file.bin", "--format", "json,csv"]).is_err());
-        assert!(parse(&["file.bin", "--format", "json,csv", "-o", "stem"]).is_ok());
+    fn the_default_stem_is_flagged_so_it_gains_an_extension() {
+        assert!(parse(&["file.bin"]).unwrap().output_is_default);
+        assert!(
+            !parse(&["file.bin", "-o", "mine.txt"])
+                .unwrap()
+                .output_is_default
+        );
+        assert!(!parse(&["file.bin", "-o", "-"]).unwrap().output_is_default);
+    }
+
+    #[test]
+    fn an_explicit_output_overrides_the_default() {
+        let r = parse(&["file.bin", "-o", "mine.txt"]).unwrap();
+        assert_eq!(r.output.unwrap().display().to_string(), "mine.txt");
+    }
+
+    #[test]
+    fn dash_means_stdout() {
+        let r = parse(&["file.bin", "-o", "-"]).unwrap();
+        assert!(r.output.is_none(), "-o - should mean stdout");
+    }
+
+    #[test]
+    fn sqlite_and_multi_format_now_work_without_an_output_flag() {
+        // Both previously required -o; the timestamped default supplies one.
+        assert!(parse(&["file.bin", "--format", "sqlite"]).is_ok());
+        assert!(parse(&["file.bin", "--format", "json,csv"]).is_ok());
+    }
+
+    #[test]
+    fn stdout_still_cannot_take_sqlite_or_several_formats() {
+        let err = parse(&["file.bin", "--format", "sqlite", "-o", "-"])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("cannot go to stdout"), "got {}", err);
+        let err = parse(&["file.bin", "--format", "json,csv", "-o", "-"])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("cannot share stdout"), "got {}", err);
+    }
+
+    #[test]
+    fn no_banner_flag_is_carried_through() {
+        assert!(!parse(&["file.bin"]).unwrap().no_banner);
+        assert!(parse(&["file.bin", "--no-banner"]).unwrap().no_banner);
     }
 
     #[test]
@@ -433,6 +537,32 @@ mod tests {
     fn rejects_bad_regex_and_zero_min_len() {
         assert!(parse(&["file.bin", "--banned-filter", "("]).is_err());
         assert!(parse(&["file.bin", "--min-len", "0"]).is_err());
+    }
+
+    #[test]
+    fn verbose_count_reaches_resolved() {
+        assert_eq!(parse(&["file.bin"]).unwrap().verbose, 0);
+        assert_eq!(parse(&["file.bin", "-v"]).unwrap().verbose, 1);
+        assert_eq!(parse(&["file.bin", "-vv"]).unwrap().verbose, 2);
+        assert_eq!(parse(&["file.bin", "-vvv"]).unwrap().verbose, 3);
+        assert_eq!(
+            parse(&["file.bin", "--verbose", "--verbose"])
+                .unwrap()
+                .verbose,
+            2
+        );
+    }
+
+    #[test]
+    fn trace_level_warns_about_volume_unless_narrowed() {
+        let r = parse(&["file.bin", "-vvv"]).unwrap();
+        assert!(r
+            .notices
+            .iter()
+            .any(|n| n.contains("traces every extracted string")));
+        // A filter means the user has already narrowed, so no lecture.
+        let narrowed = parse(&["file.bin", "-vvv", "--banned-filter", "^str"]).unwrap();
+        assert!(!narrowed.notices.iter().any(|n| n.contains("traces every")));
     }
 
     #[test]

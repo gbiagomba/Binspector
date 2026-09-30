@@ -2,6 +2,75 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.3.0] - 2026-09-30
+
+Two additive surfaces for inspecting the tool rather than the sample, plus a default output
+name. No change to existing scanning behavior or output content.
+
+### Added
+- **Verbose mode, `-v` and repeatable.** `-v` reports phases, archives opened with their
+  member counts, PE parse totals, and per-phase timing. `-vv` adds every member, every skip
+  and cap breach with its reason, and every suppression naming the rule that fired. `-vvv`
+  adds a per-string trace.
+
+  The point is auditability, not debugging. A large bundle reports tens of thousands of
+  suppressed occurrences, and before this the only options were to trust the total or rebuild
+  with prints added. `grep -c '^     drop'` on `-vv` output now equals `low_confidence_total`
+  in the JSON report, which was verified against a 249.6 MiB bundle: 24,196 drop lines to
+  24,196 reported.
+
+  Implemented as an observer rather than prints inside the scan, because the library does not
+  print: every `println!` lives in `src/main.rs` and the scan returns its warnings in
+  `Report.warnings`. `src/observe.rs` defines the events, `Null` keeps the non-verbose path
+  unchanged, and `Stderr` is wired from the flag count. Verbose output goes to stderr, so
+  stdout at `-vv` is byte-identical to a quiet run and `--format json -o -` still pipes into
+  `jq`.
+
+  `-vvv` would emit millions of lines on a large sample, so the trace stops after 100,000 and
+  says so once, naming the count and suggesting `--banned-filter` or a larger `--min-len`. It
+  does not truncate silently, and the reported totals stay complete.
+
+- **Interactive report browser, `binspector repl <report>`**, behind the `repl` feature.
+  Deliberately read-only: it loads a JSON or SQLite report an earlier scan produced and never
+  scans, which is what keeps it from ever disagreeing with the scan. Commands cover the
+  summary, coverage, filterable occurrences, per-member detail, the mitigation matrix,
+  components, CVEs, indicators, carved signatures, warnings, raw `sql` against a SQLite
+  report, and `export`.
+
+  `jq` and the `sqlite3` shell already cover most of this. The case that justifies the
+  feature is the cross-cutting one: `mitigations --missing aslr` is one line here and an
+  awkward expression otherwise. `export` calls the same writers the scan calls, so an exported
+  file is identical to the same format written directly and there is no second rendering path
+  to drift.
+
+  The input is detected by content rather than extension, matching how the scanner treats
+  input, so a misnamed report still loads.
+
+- **The banner from the legacy shell implementation**, printed to stderr and only when stderr
+  is a terminal, so it never reaches a report, a pipe, or a log. `--no-banner` suppresses it.
+
+- **A default output name.** With no `-o`, output is written to
+  `binspector_output-<YYYY.MM.DD-HH.MM.SS>.<ext>` in the current directory, matching the
+  naming the original shell implementation used so output from either version sorts together.
+  `-o` overrides it and `-o -` writes to stdout. Built from `time` component accessors rather
+  than a format description, so it adds no dependency and cannot fail to format.
+
+  Consequence worth stating: `--format sqlite` and multi-format runs no longer require an
+  explicit `-o`, because the default supplies a path. Sending either to stdout is still
+  rejected.
+
+### Changed
+- `Report.tool` and `Report.tool_version` are now `String` rather than `&'static str`, and
+  skip-serialized fields carry `#[serde(default)]`, so a report round-trips through JSON.
+  Required by the browser, and correct regardless.
+
+### Decided against
+- **An AI component.** The infrastructure was already there, so it would have been cheap, but
+  sending findings from an internal binary to a hosted model is the same class of disclosure
+  as the `vt scan` upload removed in 3.0.0. The marginal value over pasting a Markdown report
+  into a chat window does not justify weakening "no file content leaves the machine", which is
+  currently an unqualified claim.
+
 ## [4.2.2] - 2026-09-30
 
 Release packaging. No change to scanning behavior or output.

@@ -10,7 +10,7 @@ pub mod cve;
 pub mod http;
 pub mod reputation;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 pub use components::Component;
 pub use creds::Credentials;
@@ -18,10 +18,12 @@ pub use cve::CveReport;
 pub use reputation::Reputation;
 
 /// The enrichment attached to a report.
-#[derive(Clone, Debug, Serialize, Default)]
+#[derive(Clone, Debug, Serialize, Default, Deserialize)]
 pub struct Intel {
+    #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reputation: Option<Reputation>,
+    #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cves: Option<CveReport>,
     /// Components detected from strings, present whenever detection ran.

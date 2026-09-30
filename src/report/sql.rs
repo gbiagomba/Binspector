@@ -49,8 +49,8 @@ pub fn write(
         writeln!(
             w,
             "INSERT INTO scan VALUES (1,{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{});",
-            sql_literal(r.tool),
-            sql_literal(r.tool_version),
+            sql_literal(&r.tool),
+            sql_literal(&r.tool_version),
             sql_literal(&r.binary),
             r.project
                 .as_deref()

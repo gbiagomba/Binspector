@@ -7,7 +7,7 @@
 //! reports "not found" and stops.
 
 use anyhow::Result;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 use super::creds::Credentials;
@@ -15,7 +15,7 @@ use super::http;
 
 const TIMEOUT: Duration = Duration::from_secs(20);
 
-#[derive(Clone, Debug, Serialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, PartialEq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Verdict {
     /// The service has seen this hash and reported detections.
@@ -52,7 +52,7 @@ impl Verdict {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Reputation {
     pub sha256: String,
     pub virustotal: Verdict,

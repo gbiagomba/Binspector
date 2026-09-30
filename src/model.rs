@@ -1,6 +1,6 @@
 //! The report data model, shared by the scanner and every output format.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::container::Format;
 use crate::pe::PeAnalysis;
@@ -9,7 +9,7 @@ use crate::scan::confidence::Confidence;
 use crate::scan::strings::Encoding;
 
 /// One banned function that matched, aggregated across the whole scan.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MatchSummary {
     pub function: String,
     pub severity: Severity,
@@ -22,7 +22,7 @@ pub struct MatchSummary {
 }
 
 /// One concrete occurrence, with enough provenance to verify it by hand.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HitRecord {
     pub function: String,
     pub severity: Severity,
@@ -46,18 +46,19 @@ pub struct HitRecord {
 
 /// What the walk actually opened, so a clean result can be distinguished from a
 /// scan that never reached any real code.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CoverageEntry {
     pub member: String,
     pub format: String,
     pub size: u64,
     pub strings: usize,
     /// Present when the member parsed as a PE image.
+    #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pe: Option<PeAnalysis>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Coverage {
     pub root_format: String,
     pub members_scanned: usize,
@@ -69,7 +70,7 @@ pub struct Coverage {
     pub carve_ran: bool,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CarvedMember {
     pub member: String,
     pub items: Vec<crate::container::CarvedItem>,
@@ -78,10 +79,12 @@ pub struct CarvedMember {
     pub speculative: usize,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Report {
-    pub tool: &'static str,
-    pub tool_version: &'static str,
+    // Owned rather than &'static str so a report round-trips through JSON, which the
+    // repl browser relies on.
+    pub tool: String,
+    pub tool_version: String,
     pub binary: String,
     pub project: Option<String>,
     pub timestamp: String,
@@ -106,6 +109,7 @@ pub struct Report {
     /// Indicators aggregated across every member.
     pub iocs: crate::pe::Iocs,
     /// Reputation and CVE enrichment. Empty unless explicitly requested.
+    #[serde(default)]
     #[serde(skip_serializing_if = "crate::intel::Intel::is_empty")]
     pub intel: crate::intel::Intel,
     pub warnings: Vec<String>,

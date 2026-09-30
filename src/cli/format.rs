@@ -107,21 +107,56 @@ pub fn resolve(spec: &str) -> Result<Vec<OutputFormat>> {
     Ok(out)
 }
 
-/// Destination path for one format when several are written from one `-o` value.
+/// The default output stem, used when `-o` is omitted.
 ///
-/// A single format keeps the path exactly as given, so `-o report.txt` is not
-/// rewritten. Several formats treat the value as a stem.
-pub fn destination(base: &Path, fmt: OutputFormat, multiple: bool) -> PathBuf {
-    if !multiple {
-        return base.to_path_buf();
+/// Matches the v1 shell implementation's naming so output from either version sorts
+/// together. Built from component accessors rather than a format description, so it needs
+/// no extra `time` feature beyond what the crate already uses, and it cannot fail to
+/// format.
+pub fn default_stem() -> String {
+    let now = time::OffsetDateTime::now_local().unwrap_or_else(|_| time::OffsetDateTime::now_utc());
+    format!(
+        "binspector_output-{:04}.{:02}.{:02}-{:02}.{:02}.{:02}",
+        now.year(),
+        now.month() as u8,
+        now.day(),
+        now.hour(),
+        now.minute(),
+        now.second()
+    )
+}
+
+/// How a format's extension is applied to the output path.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum Naming {
+    /// Use the path exactly as given. One explicit format, one explicit name.
+    Exact,
+    /// Replace the extension, so `-o report.txt` with several formats yields
+    /// `report.json`, `report.csv`, and so on.
+    ReplaceExtension,
+    /// Append the extension without stripping anything.
+    ///
+    /// Required for the timestamped default, whose name contains dots: `file_stem` would
+    /// read the seconds field of `binspector_output-2026.09.30-16.19.53` as an extension
+    /// and silently truncate it.
+    Append,
+}
+
+/// Destination path for one format.
+pub fn destination(base: &Path, fmt: OutputFormat, naming: Naming) -> PathBuf {
+    match naming {
+        Naming::Exact => base.to_path_buf(),
+        Naming::Append => PathBuf::from(format!("{}.{}", base.display(), fmt.name())),
+        Naming::ReplaceExtension => {
+            let stem = base
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| "binspector".to_string());
+            let mut p = base.to_path_buf();
+            p.set_file_name(format!("{}.{}", stem, fmt.name()));
+            p
+        }
     }
-    let stem = base
-        .file_stem()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_else(|| "binspector".to_string());
-    let mut p = base.to_path_buf();
-    p.set_file_name(format!("{}.{}", stem, fmt.name()));
-    p
 }
 
 #[cfg(test)]
@@ -166,17 +201,82 @@ mod tests {
     }
 
     #[test]
-    fn single_format_keeps_the_exact_path() {
-        let p = destination(Path::new("out/report.txt"), OutputFormat::Text, false);
+    fn default_stem_matches_the_legacy_naming() {
+        let s = default_stem();
+        assert!(s.starts_with("binspector_output-"), "got {}", s);
+        // binspector_output-YYYY.MM.DD-HH.MM.SS
+        let stamp = s.trim_start_matches("binspector_output-");
+        assert_eq!(stamp.len(), 19, "unexpected stamp {:?}", stamp);
+        let (date, time_part) = stamp.split_once('-').expect("date-time separator");
+        assert_eq!(date.split('.').count(), 3);
+        assert_eq!(time_part.split('.').count(), 3);
+        for c in stamp.chars() {
+            assert!(
+                c.is_ascii_digit() || c == '.' || c == '-',
+                "bad char {:?}",
+                c
+            );
+        }
+    }
+
+    #[test]
+    fn exact_naming_keeps_the_path() {
+        let p = destination(
+            Path::new("out/report.txt"),
+            OutputFormat::Text,
+            Naming::Exact,
+        );
         assert_eq!(p, PathBuf::from("out/report.txt"));
     }
 
     #[test]
-    fn multiple_formats_use_the_path_as_a_stem() {
-        let p = destination(Path::new("out/report.txt"), OutputFormat::Json, true);
+    fn replace_extension_swaps_the_suffix() {
+        let p = destination(
+            Path::new("out/report.txt"),
+            OutputFormat::Json,
+            Naming::ReplaceExtension,
+        );
         assert_eq!(p, PathBuf::from("out/report.json"));
-        let p = destination(Path::new("out/scan"), OutputFormat::Sqlite, true);
+        let p = destination(
+            Path::new("out/scan"),
+            OutputFormat::Sqlite,
+            Naming::ReplaceExtension,
+        );
         assert_eq!(p, PathBuf::from("out/scan.sqlite"));
+    }
+
+    #[test]
+    fn append_preserves_a_dotted_timestamp() {
+        // The whole reason Append exists: ReplaceExtension would eat the seconds.
+        let stem = "binspector_output-2026.09.30-16.19.53";
+        let appended = destination(Path::new(stem), OutputFormat::Json, Naming::Append);
+        assert_eq!(
+            appended,
+            PathBuf::from("binspector_output-2026.09.30-16.19.53.json")
+        );
+        let replaced = destination(
+            Path::new(stem),
+            OutputFormat::Json,
+            Naming::ReplaceExtension,
+        );
+        assert_eq!(
+            replaced,
+            PathBuf::from("binspector_output-2026.09.30-16.19.json"),
+            "this truncation is why Append exists"
+        );
+    }
+
+    #[test]
+    fn append_works_with_a_directory_prefix() {
+        let p = destination(
+            Path::new("out/binspector_output-2026.09.30-16.19.53"),
+            OutputFormat::Markdown,
+            Naming::Append,
+        );
+        assert_eq!(
+            p,
+            PathBuf::from("out/binspector_output-2026.09.30-16.19.53.md")
+        );
     }
 
     #[test]

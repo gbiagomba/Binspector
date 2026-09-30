@@ -12,7 +12,7 @@
 //! formats already cover every container in a normal application bundle. Carving earns
 //! its cost on firmware and on samples where something is deliberately hidden.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::limits::Budget;
 
@@ -23,7 +23,7 @@ use super::limits::Budget;
 /// the overwhelming majority were `copyright` strings and `pkcs_der_hash` markers. Those
 /// say nothing about something being packed inside, so they are counted rather than
 /// listed, and containers lead the report.
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Class {
     /// An archive or filesystem embedded in the blob. The reason carving exists.
@@ -207,7 +207,7 @@ pub fn classify(signature: &str) -> Option<Class> {
 }
 
 /// One thing carving found inside a blob.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CarvedItem {
     /// Signature name as binwalk reports it, for example `gzip` or `squashfs`.
     pub signature: String,
@@ -219,7 +219,7 @@ pub struct CarvedItem {
     pub confident: bool,
 }
 
-#[derive(Clone, Debug, Default, Serialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct CarveReport {
     pub items: Vec<CarvedItem>,
     /// Checksums, certificates, and text markers. Counted, not listed.

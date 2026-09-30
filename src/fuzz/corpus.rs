@@ -57,34 +57,40 @@ pub fn build(sample: &Path, dir: &Path, opts: &Options) -> Result<CorpusReport> 
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| "sample".to_string());
 
-    container::walk_bytes(&data, root_name, Limits::default(), &mut |member| {
-        if written >= opts.max_files {
-            return Ok(());
-        }
-        if member.data.len() as u64 > opts.max_file_bytes {
-            too_large += 1;
-            return Ok(());
-        }
-        if !opts.only_formats.is_empty() && !opts.only_formats.contains(&member.format) {
-            return Ok(());
-        }
-        // Content hash keeps the corpus free of identical seeds, which waste engine time.
-        let digest = crate::hashing::digests(member.data).sha256;
-        if !seen.insert(digest.clone()) {
-            dupes += 1;
-            return Ok(());
-        }
-        let name = format!("{}-{}", &digest[..16], safe_suffix(&member.chain_display()));
-        let path = dir.join(name);
-        std::fs::write(&path, member.data)
-            .with_context(|| format!("writing {}", path.display()))?;
-        written += 1;
-        bytes += member.data.len() as u64;
-        *formats
-            .entry(member.format.as_str().to_string())
-            .or_insert(0) += 1;
-        Ok(())
-    })?;
+    container::walk_bytes(
+        &data,
+        root_name,
+        Limits::default(),
+        &crate::observe::Null,
+        &mut |member| {
+            if written >= opts.max_files {
+                return Ok(());
+            }
+            if member.data.len() as u64 > opts.max_file_bytes {
+                too_large += 1;
+                return Ok(());
+            }
+            if !opts.only_formats.is_empty() && !opts.only_formats.contains(&member.format) {
+                return Ok(());
+            }
+            // Content hash keeps the corpus free of identical seeds, which waste engine time.
+            let digest = crate::hashing::digests(member.data).sha256;
+            if !seen.insert(digest.clone()) {
+                dupes += 1;
+                return Ok(());
+            }
+            let name = format!("{}-{}", &digest[..16], safe_suffix(&member.chain_display()));
+            let path = dir.join(name);
+            std::fs::write(&path, member.data)
+                .with_context(|| format!("writing {}", path.display()))?;
+            written += 1;
+            bytes += member.data.len() as u64;
+            *formats
+                .entry(member.format.as_str().to_string())
+                .or_insert(0) += 1;
+            Ok(())
+        },
+    )?;
 
     Ok(CorpusReport {
         dir: dir.display().to_string(),

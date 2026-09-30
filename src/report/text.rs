@@ -304,8 +304,8 @@ mod tests {
 
     fn report() -> Report {
         Report {
-            tool: "binspector",
-            tool_version: "3.0.0",
+            tool: "binspector".to_string(),
+            tool_version: "3.0.0".to_string(),
             binary: "sample.msixbundle".into(),
             project: Some("PROJ-123".into()),
             timestamp: "2026-09-30T00:00:00Z".into(),

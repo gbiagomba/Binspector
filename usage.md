@@ -6,6 +6,7 @@ Full reference. See [README.md](README.md) for the overview and quick start.
 
 - [Invocation](#invocation)
 - [Options](#options)
+- [Verbose output](#verbose-output)
 - [Exit codes](#exit-codes)
 - [Output formats](#output-formats)
 - [How findings are classified](#how-findings-are-classified)
@@ -16,6 +17,7 @@ Full reference. See [README.md](README.md) for the overview and quick start.
 - [Fuzzing](#fuzzing)
 - [Safety properties](#safety-properties)
 - [Reading a report](#reading-a-report)
+- [Browsing a report](#browsing-a-report)
 - [Build features](#build-features)
 - [Development](#development)
 
@@ -24,10 +26,15 @@ Full reference. See [README.md](README.md) for the overview and quick start.
 ```
 binspector <BINARY> [OPTIONS]
 binspector fuzz [OPTIONS]
+binspector repl <REPORT>
 ```
 
 A bare run prints a summary: metadata, coverage, findings, and occurrences. The full
 per-string dump is opt-in, because a large sample yields millions of strings.
+
+With no `-o`, output is written to `binspector_output-<YYYY.MM.DD-HH.MM.SS>.<ext>` in the
+current directory, matching the naming the original shell implementation used so output from
+either version sorts together. `-o` overrides it, and `-o -` writes to stdout.
 
 ```bash
 # Summary to the terminal
@@ -73,7 +80,7 @@ binspector --banned-filter '^str' ./app.exe
 
 | Option | Description |
 |---|---|
-| `-o, --output <FILE>` | Write to a file, or a filename stem when several formats are given |
+| `-o, --output <FILE>` | Write to a file, or a filename stem when several formats are given. `-` means stdout. Defaults to a timestamped file |
 | `--format <FORMAT>` | See [Output formats](#output-formats). Comma separated for several |
 | `--matches-only` | Report only the matches, omitting metadata and coverage |
 | `--dump` | Include every extracted string with matches highlighted |
@@ -113,6 +120,16 @@ sample cannot hide findings by tripping a limit.
 |---|---|
 | `--fail-on <SEVERITY>` | Exit 1 when a match at or above `critical`, `high`, or `medium` is found |
 
+### Diagnostics
+
+| Option | Description |
+|---|---|
+| `-v, --verbose` | Report what the scan is doing, to stderr. Repeatable, see [Verbose output](#verbose-output) |
+| `--no-banner` | Do not print the banner |
+
+The banner is written to stderr, and only when stderr is a terminal, so it never reaches a
+report, a pipe, or a log file. `--no-banner` suppresses it in an interactive session too.
+
 ## Exit codes
 
 | Code | Meaning |
@@ -143,6 +160,30 @@ a filename stem.
 
 ANSI escapes are suppressed for file output unless `--color always` is given, because
 escape sequences in a saved report are noise.
+
+## Verbose output
+
+`-v` is repeatable, and everything it emits goes to stderr. Stdout stays byte-identical to a
+non-verbose run, so `-vv --format json -o -` still pipes cleanly into `jq`.
+
+| Level | Emits |
+|---|---|
+| `-v` | Phases, each archive opened with its member count, PE parse totals, per-phase timing, final counts |
+| `-vv` | Every member with format, size, depth, and string count. Every skip and cap breach with its reason. Every occurrence, and every suppression naming the rule that fired |
+| `-vvv` | A per-string trace, including strings that matched nothing |
+
+The purpose is auditability rather than debugging. A scan of a large bundle reports tens of
+thousands of suppressed occurrences, and `-vv` is what lets a reviewer count them instead of
+trusting the total:
+
+```bash
+binspector -vv -o /dev/null ./bundle.msixbundle 2> verbose.log
+grep -c '^     drop' verbose.log     # equals low_confidence_total in the JSON report
+```
+
+`-vvv` on a large sample would emit millions of lines, so the trace stops after 100,000 and
+says so once. It does not silently truncate, and the count it reports is still complete.
+Narrow the scan with `--banned-filter` or a larger `--min-len` before reaching for it.
 
 ## How findings are classified
 
@@ -440,14 +481,61 @@ An occurrence reports the byte offset of the matched token within its member, pl
 offset of the containing string. Seek to the first to land on the token. UTF-16LE offsets
 account for the two-bytes-per-character stride, so they are directly usable.
 
+## Browsing a report
+
+Needs `--features repl`. Loads a report an earlier scan produced and answers questions about
+it:
+
+```bash
+binspector --format json,sqlite -o scan ./bundle.msixbundle
+binspector repl scan.json
+binspector repl scan.sqlite
+```
+
+The input is detected by content rather than extension, so a misnamed file still loads. A
+`--matches-only` report is a bare array rather than the full model and cannot be loaded; the
+error says so.
+
+```
+  summary                          findings by severity, with suppression totals
+  coverage                         what was opened, and the import-backed total
+  hits [fn] [--severity s]         occurrences, filterable
+       [--confidence c]            one of import, exact, symbolic, prose
+  member <fragment>                full detail for matching members, including PE analysis
+  mitigations [--missing k]        the mitigation matrix; k is aslr, dep, cfg, seh,
+                                   authenticode, or any
+  components                       third-party libraries detected
+  cves                             CVEs resolved against NVD, if --cve was used
+  iocs                             URLs, IPs, emails, registry keys, file paths
+  carved                           embedded signatures, if --carve was used
+  warnings                         coverage warnings from the scan
+  sql <query>                      raw query, SQLite reports only
+  export <format> <path>           re-render through the normal writers
+  help                             this list
+  quit                             leave
+```
+
+Two deliberate limits:
+
+- **It never scans.** It is a viewer over a finished report, which is what keeps it from ever
+  disagreeing with what the scan said. To change what is in the report, rerun the scan.
+- **`export` calls the same writers the scan calls**, so a file exported here is identical to
+  the same format written directly, timestamp aside. There is no second rendering path to
+  drift.
+
+`sql` needs a SQLite report, since a JSON report has no queryable schema. `mitigations
+--missing aslr` is the case that justifies the whole feature: it is one line here and an
+awkward `jq` expression otherwise.
+
 ## Build features
 
-Both are off by default.
+All three are off by default.
 
 ```bash
 cargo build --release                      # default
 cargo build --release --features sqlite    # binary --format sqlite output
 cargo build --release --features carve     # embedded signature carving via binwalk
+cargo build --release --features repl      # the interactive report browser
 cargo build --release --all-features
 ```
 
@@ -455,6 +543,7 @@ cargo build --release --all-features
 |---|---|---|
 | `sqlite` | `--format sqlite` | Bundles SQLite; noticeable build time and disk. The `sql` format is equivalent and needs no feature |
 | `carve` | `--carve` | Pulls the binwalk library |
+| `repl` | `binspector repl` | Pulls a line editor. Everything it shows is already in the report |
 
 ## Development
 

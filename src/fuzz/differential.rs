@@ -195,17 +195,29 @@ fn exercise(input: &[u8], target: Target) -> std::result::Result<(), String> {
         }
         Target::Container => {
             let limits = tight_limits();
-            let _ = container::walk_bytes(input, "fuzz".to_string(), limits, &mut |_| Ok(()));
+            let _ = container::walk_bytes(
+                input,
+                "fuzz".to_string(),
+                limits,
+                &crate::observe::Null,
+                &mut |_| Ok(()),
+            );
         }
         Target::All => {
             strings::extract(input, 4, true, true);
             PeAnalysis::parse(input);
             let limits = tight_limits();
-            let _ = container::walk_bytes(input, "fuzz".to_string(), limits, &mut |m| {
-                strings::extract(m.data, 4, true, true);
-                PeAnalysis::parse(m.data);
-                Ok(())
-            });
+            let _ = container::walk_bytes(
+                input,
+                "fuzz".to_string(),
+                limits,
+                &crate::observe::Null,
+                &mut |m| {
+                    strings::extract(m.data, 4, true, true);
+                    PeAnalysis::parse(m.data);
+                    Ok(())
+                },
+            );
         }
     }));
     result.map_err(|e| panic_message(&e))

@@ -4,6 +4,14 @@
 //! output, and exit codes together.
 
 use assert_cmd::Command;
+
+/// Output defaults to a timestamped file since 4.3.0, so a test that reads stdout has to
+/// ask for it with `-o -`.
+fn bin_stdout() -> Command {
+    let mut c = Command::cargo_bin("binspector").expect("binary builds");
+    c.args(["-o", "-"]);
+    c
+}
 use predicates::str::contains;
 use std::io::{Cursor, Write};
 use tempfile::TempDir;
@@ -64,7 +72,7 @@ fn fixture() -> Fixture {
 #[test]
 fn descends_nested_containers_and_reports_provenance() {
     let f = fixture();
-    bin()
+    bin_stdout()
         .arg(&f.target)
         .assert()
         .success()
@@ -77,7 +85,7 @@ fn descends_nested_containers_and_reports_provenance() {
 #[test]
 fn suppresses_namespace_and_prose_noise_by_default() {
     let f = fixture();
-    let out = bin().arg(&f.target).output().unwrap();
+    let out = bin_stdout().arg(&f.target).output().unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout);
     // System.Windows.Forms and "Gets or sets" must not become findings.
     assert!(
@@ -92,7 +100,7 @@ fn suppresses_namespace_and_prose_noise_by_default() {
 #[test]
 fn include_low_confidence_reports_the_suppressed_hits() {
     let f = fixture();
-    let out = bin()
+    let out = bin_stdout()
         .arg(&f.target)
         .arg("--include-low-confidence")
         .output()
@@ -167,7 +175,7 @@ fn format_all_writes_every_file() {
 #[test]
 fn json_output_is_machine_readable() {
     let f = fixture();
-    let out = bin()
+    let out = bin_stdout()
         .args(["--format", "json"])
         .arg(&f.target)
         .output()
@@ -230,18 +238,18 @@ fn rejects_contradictory_and_invalid_options() {
         .stderr(contains("unknown output format"));
 
     bin()
-        .args(["--format", "sqlite"])
+        .args(["--format", "sqlite", "-o", "-"])
         .arg(&f.target)
         .assert()
         .code(2)
-        .stderr(contains("needs an output path"));
+        .stderr(contains("cannot go to stdout"));
 }
 
 #[test]
 fn csv_works_without_matches_only() {
     // 2.0.0 rejected this combination outright.
     let f = fixture();
-    let out = bin()
+    let out = bin_stdout()
         .args(["--format", "csv"])
         .arg(&f.target)
         .output()
@@ -254,7 +262,7 @@ fn csv_works_without_matches_only() {
 #[test]
 fn dump_includes_every_string() {
     let f = fixture();
-    let out = bin()
+    let out = bin_stdout()
         .args(["--dump", "--format", "csv"])
         .arg(&f.target)
         .output()
@@ -272,7 +280,7 @@ fn caps_stop_a_decompression_bomb() {
     let bomb = zip_bytes(&[("big.bin", &vec![0u8; 40 * 1024 * 1024])]);
     let path = dir.path().join("bomb.zip");
     std::fs::write(&path, bomb).unwrap();
-    bin()
+    bin_stdout()
         .arg(&path)
         .assert()
         .success()
@@ -284,7 +292,7 @@ fn warns_when_no_executable_was_reached() {
     let dir = TempDir::new().unwrap();
     let path = dir.path().join("plain.txt");
     std::fs::write(&path, b"\x00strcpy\x00").unwrap();
-    bin()
+    bin_stdout()
         .arg(&path)
         .assert()
         .success()
@@ -307,7 +315,7 @@ fn scans_inside_a_gzip_stream() {
     // A PE holding a banned symbol, gzipped. Before 4.1.0 this was reported as a
     // coverage gap and its contents were never read.
     std::fs::write(&path, gz(&fake_pe(b"\x00strcpy\x00"))).unwrap();
-    bin()
+    bin_stdout()
         .arg(&path)
         .assert()
         .success()
@@ -322,7 +330,7 @@ fn scans_a_gzip_stream_nested_inside_a_zip() {
     let bundle = zip_bytes(&[("App.exe.gz", &inner)]);
     let path = dir.path().join("nested.zip");
     std::fs::write(&path, bundle).unwrap();
-    let out = bin().arg(&path).output().unwrap();
+    let out = bin_stdout().arg(&path).output().unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("gets"), "stdout:\n{}", stdout);
     // The decompressed child keeps a useful name.
@@ -334,7 +342,7 @@ fn compressed_formats_are_no_longer_reported_as_a_coverage_gap() {
     let dir = TempDir::new().unwrap();
     let path = dir.path().join("p.gz");
     std::fs::write(&path, gz(b"\x00strcpy\x00some payload here\x00")).unwrap();
-    let out = bin().arg(&path).output().unwrap();
+    let out = bin_stdout().arg(&path).output().unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(!stdout.contains("not unpacked"), "stdout:\n{}", stdout);
 }
@@ -345,7 +353,7 @@ fn a_gzip_bomb_is_capped() {
     let path = dir.path().join("bomb.gz");
     // 8 MiB of zeros compresses to a few KiB.
     std::fs::write(&path, gz(&vec![0u8; 8 * 1024 * 1024])).unwrap();
-    bin()
+    bin_stdout()
         .arg(&path)
         .args(["--max-member-bytes", "4096"])
         .assert()
@@ -358,7 +366,7 @@ fn carve_flag_is_rejected_without_the_feature() {
     // The default build has no carving, and says so rather than silently reporting
     // that nothing was embedded.
     let f = fixture();
-    let out = bin().arg("--carve").arg(&f.target).output().unwrap();
+    let out = bin_stdout().arg("--carve").arg(&f.target).output().unwrap();
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr);
         assert!(err.contains("--features carve"), "stderr: {}", err);

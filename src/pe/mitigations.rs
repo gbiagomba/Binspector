@@ -6,12 +6,12 @@
 //! them, and nothing in a string scan can tell you which you are looking at.
 
 use goblin::pe::dll_characteristic as dc;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// `IMAGE_GUARD_CF_INSTRUMENTED`: the module is built with CFG checks.
 const IMAGE_GUARD_CF_INSTRUMENTED: u32 = 0x0000_0100;
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum State {
     Enabled,
@@ -38,7 +38,7 @@ impl State {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Mitigations {
     /// ASLR. `IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE`.
     pub aslr: State,

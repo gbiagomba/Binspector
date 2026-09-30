@@ -14,6 +14,7 @@ use crate::container::{self, Limits};
 use crate::hashing;
 use crate::intel;
 use crate::model::{CarvedMember, Coverage, CoverageEntry, HitRecord, MatchSummary, Report};
+use crate::observe::{level, Event, Observer};
 use crate::pe::{ioc, PeAnalysis};
 use crate::spool::{Spool, SpoolReader};
 use banned::BannedList;
@@ -81,7 +82,11 @@ struct Agg {
     low_confidence: usize,
 }
 
-pub fn run(path: &Path, cfg: &ScanConfig) -> Result<ScanOutput> {
+pub fn run(path: &Path, cfg: &ScanConfig, observer: &dyn Observer) -> Result<ScanOutput> {
+    let started = std::time::Instant::now();
+    observer.on(&Event::Phase {
+        name: "loading banned list",
+    });
     let list = BannedList::load(cfg.banned_list.as_deref(), cfg.banned_filter.as_ref())?;
     let names = list.names();
     let matcher = Matcher::new(&names, !cfg.case_sensitive)?;
@@ -89,6 +94,7 @@ pub fn run(path: &Path, cfg: &ScanConfig) -> Result<ScanOutput> {
     // Read once: the digests and the walk share the same bytes.
     let data =
         std::fs::read(path).map_err(|e| anyhow::anyhow!("reading {}: {}", path.display(), e))?;
+    observer.on(&Event::Phase { name: "hashing" });
     let digests = hashing::digests(&data);
     let file_size = data.len() as u64;
     let root_name = path
@@ -106,10 +112,15 @@ pub fn run(path: &Path, cfg: &ScanConfig) -> Result<ScanOutput> {
     let mut components = intel::components::Detector::new(200);
     let mut spool = if cfg.dump { Some(Spool::new()?) } else { None };
 
+    observer.on(&Event::Phase {
+        name: "unpacking and scanning",
+    });
+    let walk_started = std::time::Instant::now();
     let outcome = container::walk_bytes(
         &data,
         root_name,
         cfg.limits.clone(),
+        observer,
         &mut |member| -> Result<()> {
             let member_name = member.chain_display();
             let pe = if cfg.analyze_pe && member.format == crate::container::Format::Pe {
@@ -122,6 +133,22 @@ pub fn run(path: &Path, cfg: &ScanConfig) -> Result<ScanOutput> {
             // the function, so it outranks anything inferred from embedded text. Imports
             // are recorded first, and string matches for the same function are then
             // skipped so one fact is not counted twice.
+            if let Some(a) = pe.as_ref() {
+                observer.on(&Event::Pe {
+                    member: &member_name,
+                    parsed: true,
+                    managed: a.is_managed,
+                    mitigations_off: a.mitigations.weaknesses().len(),
+                });
+            } else if member.format == crate::container::Format::Pe {
+                observer.on(&Event::Pe {
+                    member: &member_name,
+                    parsed: false,
+                    managed: false,
+                    mitigations_off: 0,
+                });
+            }
+
             let mut imported: HashSet<String> = HashSet::new();
             if let Some(analysis) = pe.as_ref() {
                 for (id, entry) in list.entries.iter().enumerate() {
@@ -137,6 +164,11 @@ pub fn run(path: &Path, cfg: &ScanConfig) -> Result<ScanOutput> {
                     });
                     agg_entry.occurrences += 1;
                     agg_entry.members.insert(member_name.clone());
+                    observer.on(&Event::Hit {
+                        function: &entry.name,
+                        member: &member_name,
+                        confidence: Confidence::Import,
+                    });
                     if hits.len() < cfg.max_hits {
                         hits.push(HitRecord {
                             function: entry.name.clone(),
@@ -184,9 +216,19 @@ pub fn run(path: &Path, cfg: &ScanConfig) -> Result<ScanOutput> {
                         if !conf.is_reportable() && !cfg.include_low_confidence {
                             entry.low_confidence += 1;
                             low_confidence_total += 1;
+                            observer.on(&Event::Suppressed {
+                                function: &be.name,
+                                member: &member_name,
+                                reason: conf.as_str(),
+                            });
                             continue;
                         }
 
+                        observer.on(&Event::Hit {
+                            function: &be.name,
+                            member: &member_name,
+                            confidence: conf,
+                        });
                         entry.occurrences += 1;
                         entry.members.insert(member_name.clone());
 
@@ -220,6 +262,14 @@ pub fn run(path: &Path, cfg: &ScanConfig) -> Result<ScanOutput> {
                         }
                     }
                 }
+                if observer.wants(level::TRACE) {
+                    observer.on(&Event::String {
+                        member: &member_name,
+                        offset: s.offset,
+                        hits: found.len(),
+                        text: &s.text,
+                    });
+                }
                 iocs.feed(&s.text);
                 if cfg.detect_components {
                     components.feed(&s.text);
@@ -231,6 +281,13 @@ pub fn run(path: &Path, cfg: &ScanConfig) -> Result<ScanOutput> {
                 }
             }
 
+            observer.on(&Event::Member {
+                chain: &member_name,
+                format: member.format,
+                size: member.data.len() as u64,
+                depth: member.chain.len().saturating_sub(1),
+                strings: extracted.len(),
+            });
             coverage_entries.push(CoverageEntry {
                 member: member_name,
                 format: member.format.as_str().to_string(),
@@ -241,6 +298,14 @@ pub fn run(path: &Path, cfg: &ScanConfig) -> Result<ScanOutput> {
             Ok(())
         },
     )?;
+
+    observer.on(&Event::Timing {
+        phase: "unpack and scan",
+        ms: walk_started.elapsed().as_millis(),
+    });
+    observer.on(&Event::Phase {
+        name: "aggregating",
+    });
 
     let mut summary: Vec<MatchSummary> = agg
         .iter()
@@ -306,8 +371,8 @@ pub fn run(path: &Path, cfg: &ScanConfig) -> Result<ScanOutput> {
         .unwrap_or_default();
 
     let report = Report {
-        tool: "binspector",
-        tool_version: env!("CARGO_PKG_VERSION"),
+        tool: "binspector".to_string(),
+        tool_version: env!("CARGO_PKG_VERSION").to_string(),
         binary: path.display().to_string(),
         project: cfg.project.clone(),
         timestamp,
@@ -359,6 +424,11 @@ pub fn run(path: &Path, cfg: &ScanConfig) -> Result<ScanOutput> {
         Some(sp) => Some(sp.finish()?),
         None => None,
     };
+
+    observer.on(&Event::Timing {
+        phase: "total",
+        ms: started.elapsed().as_millis(),
+    });
 
     Ok(ScanOutput { report, spool })
 }
@@ -415,7 +485,7 @@ mod tests {
         let (cfg, _lf) = cfg_with_list("gets\n");
         // Shaped like a real import table entry: a bare, NUL-delimited symbol.
         let target = temp_with(b"\x00gets\x00other\x00");
-        let out = run(target.path(), &cfg).unwrap();
+        let out = run(target.path(), &cfg, &crate::observe::Null).unwrap();
         assert_eq!(out.report.banned_hit_count, 1);
         assert_eq!(out.report.summary[0].function, "gets");
         assert_eq!(out.report.hits.len(), 1);
@@ -427,7 +497,7 @@ mod tests {
         let (cfg, _lf) = cfg_with_list("gets\nsystem\natoi\n");
         // Exactly the strings that produced the bogus 2.0.0 result.
         let target = temp_with(b"targetsize lightunplated_targetsize FileSystem CustomSystemFont");
-        let out = run(target.path(), &cfg).unwrap();
+        let out = run(target.path(), &cfg, &crate::observe::Null).unwrap();
         assert_eq!(
             out.report.banned_hit_count, 0,
             "summary: {:?}",
@@ -458,7 +528,7 @@ mod tests {
         };
         let (cfg, _lf) = cfg_with_list("gets\n");
         let target = temp_with(&bundle);
-        let out = run(target.path(), &cfg).unwrap();
+        let out = run(target.path(), &cfg, &crate::observe::Null).unwrap();
         assert_eq!(out.report.banned_hit_count, 1);
         let hit = &out.report.hits[0];
         assert!(hit.member.contains("app.msix"), "member: {}", hit.member);
@@ -469,7 +539,7 @@ mod tests {
     fn warns_when_no_executable_was_reached() {
         let (cfg, _lf) = cfg_with_list("gets\n");
         let target = temp_with(b"\x00gets\x00plain payload\x00");
-        let out = run(target.path(), &cfg).unwrap();
+        let out = run(target.path(), &cfg, &crate::observe::Null).unwrap();
         assert!(out
             .report
             .warnings
@@ -489,7 +559,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            run(target.path(), &insensitive)
+            run(target.path(), &insensitive, &crate::observe::Null)
                 .unwrap()
                 .report
                 .banned_hit_count,
@@ -502,7 +572,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            run(target.path(), &sensitive)
+            run(target.path(), &sensitive, &crate::observe::Null)
                 .unwrap()
                 .report
                 .banned_hit_count,
@@ -520,7 +590,7 @@ mod tests {
             banned_list: Some(lf.path().to_path_buf()),
             ..Default::default()
         };
-        let out = run(target.path(), &cfg).unwrap();
+        let out = run(target.path(), &cfg, &crate::observe::Null).unwrap();
         assert_eq!(
             out.report.banned_hit_count, 0,
             "summary: {:?}",
@@ -543,7 +613,7 @@ mod tests {
             include_low_confidence: true,
             ..Default::default()
         };
-        let out = run(target.path(), &cfg).unwrap();
+        let out = run(target.path(), &cfg, &crate::observe::Null).unwrap();
         assert_eq!(out.report.banned_hit_count, 1);
         assert_eq!(out.report.hits[0].confidence, Confidence::Prose);
         assert_eq!(out.report.low_confidence_total, 0);
@@ -558,7 +628,7 @@ mod tests {
             ..Default::default()
         };
         let target = temp_with(b"aaaa\x00bbbb\x00gets\x00");
-        let mut out = run(target.path(), &cfg).unwrap();
+        let mut out = run(target.path(), &cfg, &crate::observe::Null).unwrap();
         let mut n = 0;
         out.spool
             .as_mut()
@@ -579,7 +649,7 @@ mod tests {
             ..Default::default()
         };
         let target = temp_with(b"\x00atoi\x00atoi\x00atoi\x00strcpy\x00");
-        let out = run(target.path(), &cfg).unwrap();
+        let out = run(target.path(), &cfg, &crate::observe::Null).unwrap();
         // strcpy is critical, atoi is medium, so strcpy leads despite fewer hits.
         assert_eq!(out.report.summary[0].function, "strcpy");
     }

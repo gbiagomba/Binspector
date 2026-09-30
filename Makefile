@@ -37,7 +37,8 @@ help:
 	@echo "Features:"
 	@echo "  sqlite   binary --format sqlite output"
 	@echo "  carve    embedded signature carving via binwalk"
-	@echo "Both off by default. Use FEATURES=carve or cargo --all-features."
+	@echo "  repl     interactive browser over a saved report"
+	@echo "All off by default. Use FEATURES=carve or cargo --all-features."
 
 build:
 	cargo build $(if $(TARGET),--target $(TARGET),) $(if $(FEATURES),--features $(FEATURES),)

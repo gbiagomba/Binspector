@@ -9,6 +9,7 @@ use binspector::cli::color::{ColorChoice, Theme};
 use binspector::cli::{format, Action, Cli};
 use binspector::fuzz;
 use binspector::intel;
+use binspector::observe::{self, Observer};
 use binspector::report::{self, RenderOpts};
 use binspector::scan;
 
@@ -25,8 +26,23 @@ fn main() -> ExitCode {
 fn run() -> Result<ExitCode> {
     match Cli::parse().resolve()? {
         Action::Fuzz(args) => run_fuzz(&args),
+        Action::Repl(path) => run_repl(&path),
         Action::Scan(resolved) => run_scan(&resolved),
     }
+}
+
+#[cfg(feature = "repl")]
+fn run_repl(path: &std::path::Path) -> Result<ExitCode> {
+    binspector::repl::run(path)?;
+    Ok(ExitCode::SUCCESS)
+}
+
+#[cfg(not(feature = "repl"))]
+fn run_repl(_path: &std::path::Path) -> Result<ExitCode> {
+    anyhow::bail!(
+        "this build has no interactive browser. Rebuild with --features repl, or query the \
+         report with jq or the sqlite3 shell."
+    )
 }
 
 fn run_fuzz(args: &binspector::cli::fuzz_args::FuzzArgs) -> Result<ExitCode> {
@@ -146,6 +162,15 @@ fn run_fuzz(args: &binspector::cli::fuzz_args::FuzzArgs) -> Result<ExitCode> {
 }
 
 fn run_scan(resolved: &binspector::cli::Resolved) -> Result<ExitCode> {
+    binspector::banner::print_if_interactive(resolved.no_banner);
+
+    // Verbose output goes to stderr, so stdout stays a clean report even at -vvv.
+    let observer: Box<dyn Observer> = if resolved.verbose > 0 {
+        Box::new(observe::Stderr::new(resolved.verbose))
+    } else {
+        Box::new(observe::Null)
+    };
+
     for notice in &resolved.notices {
         eprintln!("binspector: {}", notice);
     }
@@ -155,7 +180,7 @@ fn run_scan(resolved: &binspector::cli::Resolved) -> Result<ExitCode> {
     let scan::ScanOutput {
         mut report,
         mut spool,
-    } = scan::run(&resolved.binary, &resolved.scan)?;
+    } = scan::run(&resolved.binary, &resolved.scan, observer.as_ref())?;
 
     // Network enrichment runs after the scan and never blocks the report: a failed
     // lookup is recorded in the output rather than aborting a completed analysis.
@@ -201,12 +226,20 @@ fn run_scan(resolved: &binspector::cli::Resolved) -> Result<ExitCode> {
         _ => Theme::plain(resolved.palette),
     };
 
-    let multiple = resolved.formats.len() > 1;
+    // A defaulted name carries dots in its timestamp, so its extension is appended
+    // rather than substituted.
+    let naming = if resolved.output_is_default {
+        format::Naming::Append
+    } else if resolved.formats.len() > 1 {
+        format::Naming::ReplaceExtension
+    } else {
+        format::Naming::Exact
+    };
     for fmt in &resolved.formats {
         let dump_here = resolved.dump && fmt.supports_dump();
         match &resolved.output {
             Some(base) => {
-                let path = format::destination(base, *fmt, multiple);
+                let path = format::destination(base, *fmt, naming);
                 let opts = RenderOpts {
                     theme: file_theme,
                     matches_only: resolved.matches_only,

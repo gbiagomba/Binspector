@@ -5,7 +5,7 @@
 //! know being read as a component with no vulnerabilities.
 
 use anyhow::Result;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 use super::components::Component;
@@ -15,7 +15,7 @@ use super::http;
 const TIMEOUT: Duration = Duration::from_secs(30);
 const NVD_BASE: &str = "https://services.nvd.nist.gov/rest/json/cves/2.0";
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Cve {
     pub id: String,
     pub cvss: Option<f64>,
@@ -25,7 +25,7 @@ pub struct Cve {
     pub url: String,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ComponentCves {
     pub component: Component,
     pub cves: Vec<Cve>,
@@ -33,7 +33,7 @@ pub struct ComponentCves {
     pub error: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CveReport {
     pub components: Vec<ComponentCves>,
     /// How many detectors the curated signature set contains.

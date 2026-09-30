@@ -4,12 +4,12 @@
 //! and addresses. Patterns are deliberately conservative, since a binary is full of
 //! text that merely resembles a URL.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 use regex::Regex;
 
-#[derive(Clone, Debug, Default, Serialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Iocs {
     pub urls: Vec<String>,
     pub ips: Vec<String>,

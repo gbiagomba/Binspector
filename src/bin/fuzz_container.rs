@@ -14,12 +14,18 @@ fn exercise(data: &[u8]) {
         max_members: 500,
         carve: false,
     };
-    let _ = binspector::container::walk_bytes(data, "fuzz".to_string(), limits, &mut |m| {
-        // Members must never be handed out with an empty provenance chain, since
-        // reports and SARIF locations depend on it.
-        assert!(!m.chain.is_empty(), "member with no provenance chain");
-        Ok(())
-    });
+    let _ = binspector::container::walk_bytes(
+        data,
+        "fuzz".to_string(),
+        limits,
+        &binspector::observe::Null,
+        &mut |m| {
+            // Members must never be handed out with an empty provenance chain, since
+            // reports and SARIF locations depend on it.
+            assert!(!m.chain.is_empty(), "member with no provenance chain");
+            Ok(())
+        },
+    );
 }
 
 fn main() {

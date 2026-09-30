@@ -28,6 +28,8 @@ executables/
 *_output.json
 *_output.html
 binspector_output.*
+# The 4.3.0 default output name, binspector_output-<timestamp>.<ext>
+binspector_output-*
 strings_output.txt
 *.sarif
 *.sqlite

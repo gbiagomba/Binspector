@@ -20,6 +20,8 @@ pub use carve::{CarveReport, CarvedItem};
 pub use detect::Format;
 pub use limits::{Budget, Limits};
 
+use crate::observe::{Event, Observer};
+
 /// One scannable leaf: bytes that are not themselves a container we descend into.
 pub struct Member<'a> {
     /// Provenance from the root inwards, for example
@@ -62,7 +64,7 @@ where
         .file_name()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| root.display().to_string());
-    walk_bytes(&data, root_name, limits, visit)
+    walk_bytes(&data, root_name, limits, &crate::observe::Null, visit)
 }
 
 /// Walk bytes already in hand, so the caller can hash the root without a second read.
@@ -70,6 +72,7 @@ pub fn walk_bytes<F>(
     data: &[u8],
     root_name: String,
     limits: Limits,
+    observer: &dyn Observer,
     visit: &mut F,
 ) -> Result<WalkOutcome>
 where
@@ -89,6 +92,7 @@ where
         members_scanned: &mut members_scanned,
         carved: &mut carved,
         carve_enabled,
+        observer,
     };
     descend(data, vec![root_name], 0, &mut budget, &mut ctx, visit)?;
 
@@ -109,6 +113,7 @@ struct Ctx<'a> {
     members_scanned: &'a mut usize,
     carved: &'a mut Vec<(String, CarveReport)>,
     carve_enabled: bool,
+    observer: &'a dyn Observer,
 }
 
 fn descend<F>(
@@ -127,6 +132,10 @@ where
 
     if format.is_walkable_archive() {
         if budget.check_depth(depth + 1, &at).is_some() {
+            ctx.observer.on(&Event::Skipped {
+                chain: &at,
+                reason: "nesting depth cap reached, scanned as a leaf instead",
+            });
             return visit_leaf(data, chain, format, budget, ctx, visit);
         }
         let mut entries: Vec<(String, Vec<u8>)> = Vec::new();
@@ -143,6 +152,13 @@ where
         match result {
             Ok(()) => {
                 let opened_any = !entries.is_empty();
+                ctx.observer.on(&Event::Container {
+                    chain: &at,
+                    format,
+                    size: data.len() as u64,
+                    depth,
+                    members: entries.len(),
+                });
                 for (name, bytes) in entries {
                     let mut child = chain.clone();
                     child.push(name);
@@ -156,6 +172,10 @@ where
                 // A corrupt or password-protected archive still gets scanned raw, so a
                 // parse failure degrades coverage instead of losing the member.
                 budget.warn(format!("{}: {:#}; scanning raw bytes instead", at, e));
+                ctx.observer.on(&Event::Skipped {
+                    chain: &at,
+                    reason: "archive could not be opened, scanning raw bytes",
+                });
             }
         }
         return visit_leaf(data, chain, format, budget, ctx, visit);
@@ -163,12 +183,23 @@ where
 
     if format.is_single_stream() {
         if budget.check_depth(depth + 1, &at).is_some() {
+            ctx.observer.on(&Event::Skipped {
+                chain: &at,
+                reason: "nesting depth cap reached, scanned compressed",
+            });
             return visit_leaf(data, chain, format, budget, ctx, visit);
         }
         let limit = budget.limits().max_member_bytes;
         match compressed::decompress(data, format, limit, &at, budget) {
             Ok(payload) if !payload.is_empty() => {
                 budget.commit(payload.len() as u64);
+                ctx.observer.on(&Event::Container {
+                    chain: &at,
+                    format,
+                    size: payload.len() as u64,
+                    depth,
+                    members: 1,
+                });
                 let last = chain.last().cloned().unwrap_or_default();
                 let mut child = chain.clone();
                 child.push(compressed::inner_name(&last, format));
@@ -179,6 +210,10 @@ where
             }
             Err(e) => {
                 budget.warn(format!("{}: {:#}; scanning raw bytes instead", at, e));
+                ctx.observer.on(&Event::Skipped {
+                    chain: &at,
+                    reason: "stream could not be decompressed, scanning raw bytes",
+                });
             }
         }
         return visit_leaf(data, chain, format, budget, ctx, visit);

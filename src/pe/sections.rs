@@ -4,7 +4,7 @@
 //! encrypted payloads approach 8 bits per byte, and a section that is both writable
 //! and executable is a red flag in a normally-built binary.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Section characteristic bits used here.
 const IMAGE_SCN_CNT_CODE: u32 = 0x0000_0020;
@@ -12,7 +12,7 @@ const IMAGE_SCN_MEM_EXECUTE: u32 = 0x2000_0000;
 const IMAGE_SCN_MEM_READ: u32 = 0x4000_0000;
 const IMAGE_SCN_MEM_WRITE: u32 = 0x8000_0000;
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SectionInfo {
     pub name: String,
     pub virtual_size: u32,

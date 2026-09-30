@@ -92,10 +92,18 @@ binspector --reputation --cve ./app.exe
 
 # Fuzz Binspector's own parsers against a sample. Never executes the sample
 binspector fuzz --differential ./app.exe --iterations 20000
+
+# Watch the scan decide. Verbose goes to stderr, so the report stays clean
+binspector -vv ./app.exe 2> decisions.log
+
+# Browse a finished report instead of grepping it (needs --features repl)
+binspector --format json -o scan.json ./app.exe
+binspector repl scan.json
 ```
 
 Nine output formats: `text`, `json`, `csv`, `html`, `markdown`, `sarif`, `sqlite`, `sql`,
-and `all`. Run `binspector -h` for every flag.
+and `all`. With no `-o`, output goes to `binspector_output-<timestamp>.<ext>` in the current
+directory. Run `binspector -h` for every flag.
 
 **[usage.md](usage.md) is the full reference**: every option, the severity and confidence
 tiers, container support, PE analysis, reputation and CVE details, carving, fuzzing, the
@@ -112,6 +120,13 @@ safety properties, and how to read a report.
 | **Components and CVEs** | Third-party libraries detected offline, resolved against NVD on request |
 | **Reputation** | VirusTotal and MetaDefender, by hash only |
 | **Coverage** | What was actually opened, and an explicit warning when no executable image was reached |
+
+Two surfaces exist for checking the tool rather than the sample. `-v` reports what the scan
+is doing, up to `-vv` which names the rule behind every suppressed occurrence, so a
+suppression total can be counted instead of trusted. `binspector repl <report>` browses a
+finished report read-only, which is worth it for the cross-cutting questions `jq` handles
+worst, such as which images lack ASLR. Both are described in
+[usage.md](usage.md#verbose-output).
 
 ## Safety
 

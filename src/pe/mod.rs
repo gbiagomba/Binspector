@@ -10,19 +10,19 @@ pub mod mitigations;
 pub mod packer;
 pub mod sections;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 pub use ioc::Iocs;
 pub use mitigations::Mitigations;
 pub use sections::SectionInfo;
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ImportRef {
     pub dll: String,
     pub name: String,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PeAnalysis {
     pub machine: String,
     pub is_dll: bool,

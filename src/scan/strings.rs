@@ -4,9 +4,9 @@
 //! need to point a reviewer at a real position inside a real file. The previous
 //! implementation discarded position entirely.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Encoding {
     Ascii,

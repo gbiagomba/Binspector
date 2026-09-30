@@ -6,7 +6,7 @@
 
 use anyhow::{Context, Result};
 use regex::Regex;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
@@ -14,7 +14,7 @@ use std::path::Path;
 /// Compiled-in default list.
 pub static DEFAULT_LIST: &str = include_str!("../../rsc/sdl_banned_funct.list");
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Severity {
     /// Unbounded write with no caller-supplied length. Memory corruption by design.
@@ -44,7 +44,7 @@ impl Severity {
     }
 }
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Category {
     BufferOverflow,
@@ -72,7 +72,7 @@ impl Category {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BannedEntry {
     pub name: String,
     pub severity: Severity,
