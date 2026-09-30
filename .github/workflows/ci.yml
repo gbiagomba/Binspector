@@ -28,6 +28,14 @@ jobs:
         run: cargo test --all
       - name: Tests with all features
         run: cargo test --all --all-features
+      - name: Fuzz harnesses build
+        run: cd fuzz && cargo build --release
+      - name: Short differential fuzz campaign
+        run: |
+          cargo build --release
+          # A fixed seed keeps this reproducible; a finding fails the build.
+          ./target/release/binspector fuzz --differential rsc/sdl_banned_funct.list \
+            --iterations 2000 --seed 20260930 --fail-on-finding
 
   linux:
     name: Linux (${{ matrix.target }})

@@ -2,6 +2,90 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.0.0] - 2026-09-30
+
+Delivers the three phases the 3.0.0 roadmap listed as 3.1.0, 3.2.0, and 3.3.0. They
+land together in one MAJOR release because `--ignore-case` is removed, which is a
+breaking change, and shipping them behind it would have meant three tags in a row that
+each broke the same thing.
+
+### Breaking
+- **`--ignore-case` is removed.** It has had no effect since matching became case
+  insensitive by default in 3.0.0, and it now fails as an unknown argument rather than
+  being silently accepted. Use `--case-sensitive` for the opposite behavior.
+- The positional target is now optional, because `binspector fuzz ...` takes no target.
+  A bare `binspector` with no argument and no subcommand is an error that points at
+  `binspector fuzz --help`.
+
+### Added: PE analysis (the peframe mirror)
+- New `src/pe/`, built on `goblin`: headers, per-section Shannon entropy, imports and
+  exports, TLS callbacks, overlay detection, packer heuristics, indicator extraction
+  (URLs, IPs, emails, registry keys, file paths), and **exploit mitigation state**
+  (ASLR, high-entropy VA, DEP, Control Flow Guard, SafeSEH, Authenticode, relocations).
+- **Findings are now confirmed from the import table.** A string match is
+  circumstantial: the name could be documentation, a namespace, or dead data. An entry
+  in the import directory is a linker-recorded dependency, so it is direct evidence the
+  binary calls the function. A new `import` confidence tier outranks `exact`, and a
+  string match is skipped when an import already proved the same function.
+- Mitigation analysis surfaces findings a string scan cannot reach. On the reference
+  sample: ASLR missing on `render.dll`, `renderutils.dll`, and `fontengine.dll`, and
+  Authenticode missing on 179 of 441 images.
+- `--no-pe` skips PE parsing, `--ioc-cap` bounds indicator collection.
+
+### Added: reputation and CVE enrichment
+- `--reputation` queries VirusTotal and MetaDefender **by hash only**. No file content
+  is ever transmitted. An unknown hash is reported as "not known to the service, which
+  is not evidence that it is safe".
+- `--cve` detects third-party components from strings and resolves them against NVD
+  2.0. The report states its own coverage: 20 curated signatures, and a component with
+  no detector produces no CVEs, which is not the same as having none.
+- Credentials come from the environment or `~/.config/binspector/credentials`, never
+  from a command line argument, since arguments are visible through `ps` and recorded
+  in shell history. A credentials file readable by group or others is refused with a
+  `chmod` hint. Keys also stay out of the argument list at request time, because HTTP
+  runs through curl with headers supplied on its stdin.
+
+### Added: fuzzing, in three modes
+- **Self-fuzzing.** A separate `fuzz/` crate with AFL, honggfuzz, and plain harnesses
+  for the string extractor, the container walker, and the PE parser, using `arbitrary`
+  so the option space is explored alongside the byte space. Each target asserts a real
+  invariant rather than only looking for crashes.
+- **Parser-differential.** `binspector fuzz --differential <FILE>` mutates a sample and
+  feeds the mutants to Binspector's own parsers, reporting panics and hangs with a
+  reproducing artifact. Deterministic from the seed, works on any host, and never
+  executes the sample. This replaces the legacy `zzuf ... objdump -x` approach.
+- **External engine orchestration.** `binspector fuzz --engine afl++|honggfuzz|libfuzzer|winafl`
+  prepares and drives an engine against a harness you supply, seeded by
+  `--corpus-from`, and parses the crash directory afterwards. The boundary is stated
+  plainly in both the code and the help text: these engines drive an instrumented
+  harness, so none of them can blackbox-fuzz an arbitrary bundle with no harness and no
+  entry point, and WinAFL additionally needs a Windows host with DynamoRIO.
+- CI now builds the harnesses and runs a short fixed-seed differential campaign, so a
+  parser regression fails the build.
+
+### Fixed
+- Packer heuristics no longer fire on ordinary structure. Managed .NET assemblies are
+  exempt from import-table heuristics (383 of 441 images on the reference sample are
+  managed, and the CLR resolves their dependencies), resource-only DLLs are exempt too,
+  and `.rsrc` is exempt from the high-entropy check because it holds already-compressed
+  icons and images. Code and data sections are still checked.
+- The curl config path escapes control characters using curl's own escapes. Wrapping a
+  value in quotes is not sufficient on its own: curl parses its config line by line, so
+  a literal newline would have ended the value and the remainder would have been read
+  as a fresh directive.
+
+### Verified on `SampleApp_1.0.0_x64.msixbundle`
+- 441 PE images parsed, 11,870 imports read, 210 of 301 reported occurrences carrying
+  import-table evidence rather than inference.
+- 8 third-party components detected offline, including four bundled zlib versions
+  (1.2.11, 1.2.12, 1.2.13, 1.3.1).
+- NVD lookup verified live for OpenSSL 1.1.1k:
+  [CVE-2021-3450](https://nvd.nist.gov/vuln/detail/CVE-2021-3450) (CVSS 7.4) and
+  [CVE-2021-3449](https://nvd.nist.gov/vuln/detail/CVE-2021-3449), ranked by severity
+  with citable URLs.
+- 300 differential iterations against the full 256 MiB sample: no panics, no hangs.
+- All three harnesses run clean over 40 real corpus members.
+
 ## [3.0.1] - 2026-09-30
 
 Release engineering only. No change to scanning behavior or output; the binary is

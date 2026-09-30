@@ -43,3 +43,4 @@ fuzz/corpus/
 hfuzz_target/
 hfuzz_workspace/
 .greprules/
+fuzz/Cargo.lock

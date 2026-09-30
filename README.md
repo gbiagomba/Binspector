@@ -1,9 +1,10 @@
 # Binspector
 
-Binspector is a fast, cross-platform Rust CLI that scans binaries for banned and
-dangerous C/C++ functions by extracting embedded strings (ASCII and UTF-16LE).
+Binspector is a fast, cross-platform Rust CLI for reviewing binaries. It finds banned and
+dangerous C/C++ functions, reads PE headers and exploit mitigations, detects third-party
+components and their known CVEs, and fuzzes its own parsers.
 
-Two properties make its output trustworthy:
+Three properties make its output trustworthy:
 
 **It opens containers.** A `.msixbundle` is a ZIP of `.msix` files holding the real PE
 binaries. A scanner that reads the outer file byte by byte sees only compressed data and
@@ -15,8 +16,13 @@ finding carries the full path to the file it came from.
 identifier boundaries, then scores what survives: an import-table symbol is not the same
 evidence as the word `Gets` in an XML doc comment, and the two are reported differently.
 
+**It prefers evidence over inference.** When a member parses as a PE, the import
+directory is read directly. An import is a linker-recorded dependency, so it is proof the
+binary calls the function, unlike a name that merely appears in its bytes.
+
 On a 256 MiB Windows application bundle this is the difference between 3 findings that
-were all false, and 39 real ones traceable to a named DLL and a byte offset.
+were all false, and 39 real ones traceable to a named DLL and a byte offset, 210 of them
+backed by an import table entry.
 
 ## Install
 
@@ -107,6 +113,12 @@ binspector --include-low-confidence ./app.exe
 | `--color <WHEN>` | `auto` (default), `always`, `never` |
 | `--palette <NAME>` | `default`, or `colorblind` for Okabe-Ito colors |
 | `--no-ascii`, `--no-utf16` | Disable an extraction source (not both) |
+| `--reputation` | Look the hash up with VirusTotal and MetaDefender. Sends only the SHA-256 |
+| `--cve` | Resolve detected components against NVD for known CVEs |
+| `--no-components` | Skip third-party component detection (offline, on by default) |
+| `--cve-limit <N>` | Maximum CVEs per component (default 10) |
+| `--no-pe` | Skip PE parsing (headers, sections, imports, mitigations) |
+| `--ioc-cap <N>` | Maximum indicators of each kind to collect (default 500) |
 | `--fail-on <SEVERITY>` | Exit 1 when a match at or above `critical`, `high`, or `medium` is found |
 | `--max-depth <N>` | Container nesting depth (default 4) |
 | `--max-unpacked-bytes <N>` | Total unpacked byte cap (default 2 GiB) |
@@ -133,12 +145,94 @@ real import from text that merely contains the word.
 
 | Confidence | Meaning | Example | Reported by default |
 |---|---|---|---|
+| `import` | Present in the PE import directory, so the binary demonstrably calls it | an entry in `msvcrt.dll` | yes |
 | `exact` | The whole string is the name, allowing compiler decoration | `strcpy`, `__imp__strcpy`, `strcpy@8` | yes |
 | `symbolic` | A symbol or path, no whitespace | `?sprintf@WRStrSafe@@SAHPEAD_KPEBDZZ` | yes |
 | `prose` | Natural language, or a case mismatch on a lowercase name | `System.Windows.Forms`, `"Gets or sets the..."` | no |
 
 Suppressed counts are always disclosed in the report, with the largest contributors
 named, so filtering stays auditable. `--include-low-confidence` reports them.
+
+## Executable analysis
+
+When a member is a PE, Binspector reads it rather than guessing from strings. This is
+what mirrors peframe, and it surfaces problems a string scan cannot see at all.
+
+| Area | Reported |
+|---|---|
+| Mitigations | ASLR, high-entropy VA, DEP, Control Flow Guard, SafeSEH, Authenticode, relocations |
+| Sections | Name, virtual and raw size, per-section Shannon entropy, `rwx` permissions |
+| Imports | Every imported function and its DLL, cross-referenced against the banned list |
+| Structure | Exports, TLS callbacks, overlay size, managed (.NET) detection, debug info |
+| Packers | UPX, ASPack, Themida, VMProtect, Enigma, MPRESS, and generic entropy and layout signals |
+| Indicators | URLs, IPs, emails, registry keys, file paths |
+
+Heuristics are tuned against real applications rather than against ideal ones. Managed
+.NET assemblies and resource-only DLLs are exempt from import-table heuristics, because
+neither legitimately has a native import directory, and `.rsrc` is exempt from the
+entropy check because icons and images are already compressed. Without those exemptions
+the reference sample produced hundreds of hints describing ordinary structure.
+
+## Reputation and CVEs
+
+Both are opt-in. Binspector is offline by default.
+
+```bash
+export VT_API_KEY=...        # or MD_API_KEY, or ~/.config/binspector/credentials
+binspector --reputation ./app.exe
+
+export NVD_API_KEY=...       # optional, raises the rate limit
+binspector --cve ./app.exe
+```
+
+**No file content is ever transmitted.** Reputation is looked up by the SHA-256 the scan
+already computed, and CVE lookup sends only a detected component name and version. The
+legacy shell implementation ran `vt scan $bin`, which uploads the sample and publishes it
+to a third party permanently; on an unreleased binary that is a disclosure event, so it
+is deliberately not reproduced. An unknown hash reports that it is unknown, never that it
+is clean.
+
+API keys are never accepted as command line arguments, because arguments are visible
+through `ps` and recorded in shell history. A credentials file that group or others can
+read is refused. Keys also stay out of the argument list at request time.
+
+Component detection uses 20 curated signatures anchored on library banner text, not bare
+version numbers. It is not cve-bin-tool's roughly 380 checkers, and the report says so:
+a component with no detector produces no CVEs, which is not the same as having none.
+
+## Fuzzing
+
+Three modes, because they solve different problems.
+
+```bash
+# Mutate a sample and feed the mutants to Binspector's own parsers.
+# Deterministic from the seed, runs anywhere, never executes the sample.
+binspector fuzz --differential ./sample.msixbundle --iterations 20000 --seed 1
+
+# Unpack a sample into a seed corpus of its real members.
+binspector fuzz --corpus-from ./sample.msixbundle
+
+# Drive an external engine against a harness you supply.
+binspector fuzz --engine afl++ --harness ./fuzz/target/release/fuzz_pe \
+  --corpus fuzz/corpus/sample --run-secs 3600
+
+# Coverage-guided self-fuzzing (needs cargo-afl or cargo-hfuzz).
+make fuzz-afl TARGET=fuzz_pe
+```
+
+**What these engines can and cannot do.** AFL++, honggfuzz, and libFuzzer drive an
+instrumented *harness*: a program that reads an input and feeds it to the code under
+test. WinAFL instead instruments a Windows binary through DynamoRIO and needs a target
+module plus a function offset. None of them can blackbox-fuzz an arbitrary
+`.msixbundle` with no harness and no entry point. Binspector prepares and drives the
+campaign, builds the corpus, and parses the crash directory; running it still needs the
+engine installed, and WinAFL needs a Windows host. The differential mode is the one that
+works everywhere with no setup.
+
+The self-fuzzing targets live in `fuzz/` and use `arbitrary`, so the option space is
+explored alongside the byte space. Each asserts a real invariant rather than only waiting
+for a crash: offsets stay inside the input, provenance chains are never empty, and
+section entropy stays within 0 to 8.
 
 ## Safety
 
@@ -167,14 +261,19 @@ ZIP family, unpacked recursively: `.zip`, `.msixbundle`, `.msix`, `.appx`, `.jar
 `.nupkg`, and any other ZIP-based format, detected by magic bytes rather than extension.
 
 Recognised but not yet unpacked, and reported as a coverage gap: gzip, bzip2, xz, 7z,
-and cab. Executables (PE, ELF, Mach-O) are identified and scanned directly.
+and cab. Executables (PE, ELF, Mach-O) are identified and scanned directly, and PE images
+are parsed in full.
 
 ## Project structure
 
 - `src/cli/`: command line surface, format resolution, color and palette handling
 - `src/container/`: magic detection, ZIP recursion, resource caps
 - `src/scan/`: string extraction, Aho-Corasick matching, banned list, confidence scoring
+- `src/pe/`: PE headers, sections and entropy, imports, mitigations, packers, indicators
+- `src/intel/`: reputation, CVE enrichment, component detection, credentials
+- `src/fuzz/`: differential fuzzer, mutation engine, corpus builder, engine orchestration
 - `src/report/`: one module per output format
+- `fuzz/`: separate crate holding the coverage-guided self-fuzzing targets
 - `rsc/`: banned function lists and references. `rsc/sdl_banned_funct.list` is compiled
   in by default and overridable with `--banned-list`
 - `scripts/`: installers and utilities, see `scripts/README.md`
@@ -187,18 +286,18 @@ No `.rs` file exceeds 1500 lines; `make loc-check` enforces it and CI runs it.
 ```bash
 make check        # fmt-check + clippy + loc-check + tests
 make test-all     # tests with every feature enabled
+make fuzz-build   # build the plain fuzz harnesses
 make help         # all targets
 ```
 
+CI runs the same gate, plus a short fixed-seed differential campaign, so a parser
+regression fails the build.
+
 ## Roadmap
 
-- **3.1.0** peframe capability mirror: PE headers, sections and entropy, imports and
-  exports, TLS callbacks, resources, Authenticode, packer heuristics, IoC extraction
-- **3.2.0** Reputation lookups (VirusTotal, MetaDefender) by hash only, never uploading
-  file content, plus CVE enrichment via NVD
-- **3.3.0** Fuzzing: self-fuzzing harnesses for Binspector's own parsers,
-  parser-differential mode against a review sample, and external engine orchestration
-  (AFL++, honggfuzz, WinAFL)
+- **4.1.0** binwalk carving for embedded data in unrecognised formats, plus gzip, bzip2,
+  xz, 7z, and cab unpacking. These are currently detected and reported as a coverage gap
+  rather than opened.
 
 ## References
 

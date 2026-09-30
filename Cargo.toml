@@ -1,8 +1,8 @@
 [package]
 name = "binspector"
-version = "3.0.1"
+version = "4.0.0"
 edition = "2021"
-description = "Inspect binaries for banned C/C++ functions, unpacking nested containers and reporting token-accurate matches"
+description = "Inspect binaries for banned C/C++ functions and exploit mitigations, unpacking nested containers, with PE analysis, reputation and CVE enrichment, and fuzzing"
 license = "MIT"
 repository = "https://github.com/gbiagomba/Binspector"
 readme = "README.md"

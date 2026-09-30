@@ -6,6 +6,7 @@
 
 pub mod cli;
 pub mod container;
+pub mod fuzz;
 pub mod hashing;
 pub mod intel;
 pub mod model;

@@ -6,7 +6,8 @@ use std::io::{self, IsTerminal, Write};
 use std::process::ExitCode;
 
 use binspector::cli::color::{ColorChoice, Theme};
-use binspector::cli::{format, Cli};
+use binspector::cli::{format, Action, Cli};
+use binspector::fuzz;
 use binspector::intel;
 use binspector::report::{self, RenderOpts};
 use binspector::scan;
@@ -22,8 +23,129 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<ExitCode> {
-    let resolved = Cli::parse().resolve()?;
+    match Cli::parse().resolve()? {
+        Action::Fuzz(args) => run_fuzz(&args),
+        Action::Scan(resolved) => run_scan(&resolved),
+    }
+}
 
+fn run_fuzz(args: &binspector::cli::fuzz_args::FuzzArgs) -> Result<ExitCode> {
+    let mut found_something = false;
+
+    if let Some(sample) = &args.corpus_from {
+        let dir = args
+            .corpus
+            .clone()
+            .unwrap_or_else(|| fuzz::corpus::default_dir(sample));
+        let r = fuzz::corpus::build(sample, &dir, &fuzz::corpus::Options::default())?;
+        if args.json {
+            println!("{}", serde_json::to_string_pretty(&r)?);
+        } else {
+            println!(
+                "Corpus: {} files, {} bytes into {}",
+                r.files_written, r.bytes_written, r.dir
+            );
+            if r.skipped_duplicates > 0 || r.skipped_too_large > 0 {
+                println!(
+                    "  skipped {} duplicate(s) and {} oversized member(s)",
+                    r.skipped_duplicates, r.skipped_too_large
+                );
+            }
+            for (fmt, n) in &r.formats {
+                println!("  {:<10} {}", fmt, n);
+            }
+        }
+    }
+
+    if let Some(sample) = &args.differential {
+        let seed_input = fuzz::differential::read_seed(sample)?;
+        let opts = args.differential_options();
+        let campaign = fuzz::differential::run(&seed_input, &opts)?;
+        if args.json {
+            println!("{}", serde_json::to_string_pretty(&campaign)?);
+        } else {
+            println!(
+                "Differential campaign: target {}, {} executions in {:.1}s, seed {}",
+                campaign.target.name(),
+                campaign.executions,
+                campaign.elapsed_secs,
+                campaign.seed
+            );
+            println!("  slowest execution: {} ms", campaign.slowest_ms);
+            if campaign.is_clean() {
+                println!("  no panics or hangs found");
+            } else {
+                println!("  {} finding(s):", campaign.findings.len());
+                for f in &campaign.findings {
+                    println!(
+                        "    {} via {} at iteration {} ({} bytes): {}",
+                        f.kind, f.mutation, f.iteration, f.input_len, f.detail
+                    );
+                    if let Some(a) = &f.artifact {
+                        println!("      reproducer: {}", a);
+                    }
+                }
+            }
+        }
+        found_something |= !campaign.is_clean();
+    }
+
+    if let Some(engine) = args.engine {
+        let harness = args
+            .harness
+            .clone()
+            .expect("validated: --engine requires --harness");
+        let corpus = args
+            .corpus
+            .clone()
+            .unwrap_or_else(|| std::path::PathBuf::from("fuzz/corpus"));
+        let plan = fuzz::engine::Plan {
+            engine,
+            harness,
+            corpus,
+            output: args.output.clone(),
+            timeout_secs: args.run_secs,
+            target_module: args.target_module.clone(),
+            target_offset: args.target_offset.clone(),
+            extra_args: vec![],
+        };
+        let cmd = fuzz::engine::plan(&plan)?;
+        for note in &cmd.notes {
+            eprintln!("binspector: {}", note);
+        }
+        println!("{}", cmd.display);
+        if !args.dry_run {
+            if !fuzz::engine::is_installed(engine) {
+                eprintln!(
+                    "binspector: {} is not on PATH, so the command above was not run. Install it, \
+                     or keep --dry-run.",
+                    engine.name()
+                );
+            } else {
+                let code = fuzz::engine::execute(&cmd)?;
+                eprintln!("binspector: {} exited with {}", engine.name(), code);
+                let crashes = fuzz::engine::collect_crashes(engine, &args.output)?;
+                println!(
+                    "  {} crashing input(s) in {}",
+                    crashes.crashes.len(),
+                    crashes.crash_dir
+                );
+                for c in crashes.crashes.iter().take(20) {
+                    println!("    {}", c);
+                }
+                found_something |= !crashes.crashes.is_empty();
+            }
+        }
+    }
+
+    Ok(if args.fail_on_finding && found_something {
+        ExitCode::from(1)
+    } else {
+        ExitCode::SUCCESS
+    })
+}
+
+fn run_scan(resolved: &binspector::cli::Resolved) -> Result<ExitCode> {
     for notice in &resolved.notices {
         eprintln!("binspector: {}", notice);
     }
@@ -109,7 +231,7 @@ fn run() -> Result<ExitCode> {
         }
     }
 
-    Ok(exit_code(&resolved, &report))
+    Ok(exit_code(resolved, &report))
 }
 
 /// Rewind the spool so each format streams it from the start.

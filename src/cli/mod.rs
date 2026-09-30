@@ -2,6 +2,7 @@
 
 pub mod color;
 pub mod format;
+pub mod fuzz_args;
 
 use anyhow::{bail, Result};
 use clap::Parser;
@@ -12,6 +13,7 @@ use crate::container::Limits;
 use crate::scan::banned::Severity;
 use crate::scan::ScanConfig;
 use color::{ColorChoice, Palette};
+use fuzz_args::FuzzArgs;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -25,9 +27,12 @@ use color::{ColorChoice, Palette};
                   substring such as 'targetsize' is not reported as 'gets'."
 )]
 pub struct Cli {
-    /// Path to the target binary or archive
+    #[command(subcommand)]
+    pub command: Option<Commands>,
+
+    /// Path to the target binary or archive. Required unless a subcommand is used
     #[arg(value_name = "BINARY")]
-    pub binary: PathBuf,
+    pub binary: Option<PathBuf>,
 
     /// Project name for output labeling
     #[arg(short, long)]
@@ -151,6 +156,18 @@ pub struct Cli {
     pub fail_on: Option<FailOn>,
 }
 
+#[derive(clap::Subcommand, Debug)]
+pub enum Commands {
+    /// Fuzz Binspector's parsers, or drive an external engine
+    Fuzz(FuzzArgs),
+}
+
+/// What the invocation asked for.
+pub enum Action {
+    Scan(Box<Resolved>),
+    Fuzz(Box<FuzzArgs>),
+}
+
 #[derive(Copy, Clone, Debug, Eq, PartialEq, clap::ValueEnum)]
 pub enum FailOn {
     Critical,
@@ -190,7 +207,18 @@ pub struct Resolved {
 }
 
 impl Cli {
-    pub fn resolve(self) -> Result<Resolved> {
+    pub fn resolve(self) -> Result<Action> {
+        if let Some(Commands::Fuzz(args)) = self.command {
+            args.validate()?;
+            return Ok(Action::Fuzz(Box::new(args)));
+        }
+        let binary = match self.binary {
+            Some(b) => b,
+            None => bail!(
+                "no target given. Pass a binary to scan, or use `binspector fuzz --help` for \
+                 the fuzzing modes."
+            ),
+        };
         let mut notices = Vec::new();
 
         if self.no_ascii && self.no_utf16 {
@@ -275,8 +303,8 @@ impl Cli {
             bail!("--cve needs component detection; remove --no-components");
         }
 
-        Ok(Resolved {
-            binary: self.binary,
+        Ok(Action::Scan(Box::new(Resolved {
+            binary,
             reputation: self.reputation,
             cve: self.cve,
             cve_limit: self.cve_limit,
@@ -289,7 +317,7 @@ impl Cli {
             palette: self.palette,
             fail_on: self.fail_on,
             notices,
-        })
+        })))
     }
 }
 
@@ -301,7 +329,10 @@ mod tests {
     fn parse(args: &[&str]) -> Result<Resolved> {
         let mut full = vec!["binspector"];
         full.extend_from_slice(args);
-        Cli::try_parse_from(full)?.resolve()
+        match Cli::try_parse_from(full)?.resolve()? {
+            Action::Scan(r) => Ok(*r),
+            Action::Fuzz(_) => anyhow::bail!("expected a scan, got the fuzz subcommand"),
+        }
     }
 
     #[test]
