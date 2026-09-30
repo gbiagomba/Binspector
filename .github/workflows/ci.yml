@@ -30,6 +30,14 @@ jobs:
         run: cargo test --all --all-features
       - name: Clippy with all features
         run: cargo clippy --all-targets --all-features -- -D warnings
+      # Every optional feature is on by default since 4.4.0, so the cfg-gated code paths
+      # are no longer exercised by an ordinary build. Without this the fallbacks rot: the
+      # "no SQLite support" message, `--format all` skipping what it cannot write, and the
+      # --carve rejection all live behind #[cfg(not(feature = ...))].
+      - name: Tests without default features
+        run: cargo test --all --no-default-features
+      - name: Clippy without default features
+        run: cargo clippy --all-targets --no-default-features -- -D warnings
       - name: Fuzz harnesses build
         run: cargo build --release --bins
       - name: Short differential fuzz campaign
