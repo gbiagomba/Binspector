@@ -115,7 +115,11 @@ pub fn mitigations(r: &Report, missing: Option<&str>) -> String {
             Some("cfg") => off(m.cfg),
             Some("authenticode") => off(m.authenticode),
             Some("seh") => off(m.seh),
-            Some("any") => !m.weaknesses().is_empty(),
+            // Not a header flag like the others: the verdict comes from the image's loader
+            // imports and its strings, so it is carried on the loader surface rather than
+            // duplicated into Mitigations.
+            Some("dll-search") => a.loader.verdict.is_weak(),
+            Some("any") => !m.weaknesses().is_empty() || a.loader.verdict.is_weak(),
             Some(_) => true,
         };
         if !keep {
@@ -128,16 +132,28 @@ pub fn mitigations(r: &Report, missing: Option<&str>) -> String {
             m.cfg.as_str().to_string(),
             m.seh.as_str().to_string(),
             m.authenticode.as_str().to_string(),
+            a.loader.verdict.as_str().to_string(),
             if a.is_managed { "managed" } else { "native" }.to_string(),
         ]);
     }
     let header = match missing {
+        // `dll-search` is a verdict rather than an on/off flag, so "disabled" would be wrong.
+        Some("dll-search") => format!("  PE images loading modules unsafely: {}\n\n", rows.len()),
         Some(k) => format!("  PE images with {} disabled: {}\n\n", k, rows.len()),
         None => format!("  {} PE image(s)\n\n", rows.len()),
     };
     header
         + &table(
-            &["image", "aslr", "dep", "cfg", "seh", "authenticode", "kind"],
+            &[
+                "image",
+                "aslr",
+                "dep",
+                "cfg",
+                "seh",
+                "authenticode",
+                "dll-search",
+                "kind",
+            ],
             &rows,
         )
 }

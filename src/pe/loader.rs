@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use super::ImportRef;
 
 /// How much evidence there is that an image constrains its own search order.
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Verdict {
     /// Imports one of the search-path hardening APIs, so the search order was thought about.
@@ -29,6 +29,7 @@ pub enum Verdict {
     /// The strongest signal available without a disassembler, and still not proof.
     Unqualified,
     /// No dynamic loading imports at all.
+    #[default]
     None,
 }
 
@@ -138,8 +139,12 @@ impl LoaderSurface {
     /// and the point is to give a reviewer a place to start, not an inventory.
     pub fn note_strings(&mut self, found: Vec<UnqualifiedModule>, cap: usize) {
         self.unqualified_modules = found;
-        self.unqualified_modules.sort_by(|a, b| a.name.cmp(&b.name));
-        self.unqualified_modules.dedup_by(|a, b| a.name == b.name);
+        // Case-insensitive, because an image commonly carries both `KernelBase.dll` and
+        // `kernelbase.dll` and listing each is noise for one module.
+        self.unqualified_modules
+            .sort_by_key(|m| m.name.to_ascii_lowercase());
+        self.unqualified_modules
+            .dedup_by(|a, b| a.name.eq_ignore_ascii_case(&b.name));
         self.unqualified_modules.truncate(cap);
         self.verdict = self.decide();
     }
@@ -157,6 +162,50 @@ impl LoaderSurface {
             return Verdict::Unqualified;
         }
         Verdict::Unhardened
+    }
+}
+
+/// Decides which bare module names are actually `LoadLibrary` candidates for one image.
+///
+/// The syntactic check alone is far too generous. Every PE carries the names of the DLLs it
+/// imports statically as strings, because they are in the import directory, so `KERNEL32.dll`
+/// and `api-ms-win-crt-convert-l1-1-0.dll` appear in almost every image. Those are resolved
+/// by the loader from the import table, not by a `LoadLibrary` call, and reporting them
+/// turned 27 of 41 images into a warning that said nothing.
+///
+/// What remains after excluding them is the interesting set: a module named in the image's
+/// text that it does *not* statically import, which is what a runtime load looks like.
+pub struct ModuleFilter {
+    static_libs: std::collections::BTreeSet<String>,
+    self_name: String,
+}
+
+impl ModuleFilter {
+    pub fn new(static_libs: &[String], self_name: &str) -> Self {
+        Self {
+            static_libs: static_libs.iter().map(|l| l.to_ascii_lowercase()).collect(),
+            self_name: self_name.to_ascii_lowercase(),
+        }
+    }
+
+    pub fn is_candidate(&self, s: &str) -> bool {
+        if !is_bare_module_name(s) {
+            return false;
+        }
+        let lower = s.to_ascii_lowercase();
+        // Statically imported: the loader resolves it from the import directory.
+        if self.static_libs.contains(&lower) {
+            return false;
+        }
+        // API sets are resolved through the OS schema, not a filesystem search.
+        if lower.starts_with("api-ms-win-") || lower.starts_with("ext-ms-") {
+            return false;
+        }
+        // An image naming itself is a version or resource string, not a load.
+        if lower == self.self_name {
+            return false;
+        }
+        true
     }
 }
 
@@ -219,7 +268,8 @@ mod tests {
 
     #[test]
     fn hardening_imports_win_the_verdict() {
-        let s = LoaderSurface::from_imports(&imports(&["LoadLibraryW", "SetDefaultDllDirectories"]));
+        let s =
+            LoaderSurface::from_imports(&imports(&["LoadLibraryW", "SetDefaultDllDirectories"]));
         assert_eq!(s.verdict, Verdict::Hardened);
         assert_eq!(s.hardening, vec!["SetDefaultDllDirectories"]);
         assert!(!s.verdict.is_weak());
@@ -282,6 +332,28 @@ mod tests {
     }
 
     #[test]
+    fn statically_imported_names_are_not_load_candidates() {
+        // The exact noise this filter exists to remove: these appear as strings in almost
+        // every PE because they are in its import directory.
+        let f = ModuleFilter::new(
+            &["KERNEL32.dll".to_string(), "ADVAPI32.dll".to_string()],
+            "foo.dll",
+        );
+        assert!(!f.is_candidate("KERNEL32.dll"), "statically imported");
+        assert!(!f.is_candidate("kernel32.dll"), "case must not matter");
+        assert!(!f.is_candidate("advapi32.dll"));
+        assert!(
+            !f.is_candidate("api-ms-win-crt-convert-l1-1-0.dll"),
+            "API sets resolve through the OS schema"
+        );
+        assert!(!f.is_candidate("ext-ms-win-foo-l1-1-0.dll"));
+        assert!(!f.is_candidate("foo.dll"), "an image naming itself");
+        // Not statically imported, so this is what a runtime load looks like.
+        assert!(f.is_candidate("version.dll"));
+        assert!(f.is_candidate("plugin_helper.dll"));
+    }
+
+    #[test]
     fn bare_module_names_are_recognised() {
         assert!(is_bare_module_name("version.dll"));
         assert!(is_bare_module_name("libssl-3.so"));
@@ -318,6 +390,10 @@ mod tests {
                 UnqualifiedModule {
                     name: "a.dll".to_string(),
                     offset: 9,
+                },
+                UnqualifiedModule {
+                    name: "A.dll".to_string(),
+                    offset: 7,
                 },
                 UnqualifiedModule {
                     name: "c.dll".to_string(),

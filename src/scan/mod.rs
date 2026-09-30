@@ -15,11 +15,15 @@ use crate::hashing;
 use crate::intel;
 use crate::model::{CarvedMember, Coverage, CoverageEntry, HitRecord, MatchSummary, Report};
 use crate::observe::{level, Event, Observer};
-use crate::pe::{ioc, PeAnalysis};
+use crate::pe::{ioc, loader as pe_loader, PeAnalysis};
 use crate::spool::{Spool, SpoolReader};
 use banned::BannedList;
 use confidence::Confidence;
 use matcher::Matcher;
+
+/// Bare module-name strings kept per image. Enough to give a reviewer a place to start;
+/// a large image can carry hundreds and an inventory is not the point.
+const UNQUALIFIED_MODULE_CAP: usize = 20;
 
 #[derive(Clone, Debug)]
 pub struct ScanConfig {
@@ -123,7 +127,7 @@ pub fn run(path: &Path, cfg: &ScanConfig, observer: &dyn Observer) -> Result<Sca
         observer,
         &mut |member| -> Result<()> {
             let member_name = member.chain_display();
-            let pe = if cfg.analyze_pe && member.format == crate::container::Format::Pe {
+            let mut pe = if cfg.analyze_pe && member.format == crate::container::Format::Pe {
                 PeAnalysis::parse(member.data)
             } else {
                 None
@@ -192,6 +196,28 @@ pub fn run(path: &Path, cfg: &ScanConfig, observer: &dyn Observer) -> Result<Sca
 
             let extracted = strings::extract(member.data, cfg.min_len, cfg.ascii, cfg.utf16);
             strings_total += extracted.len();
+
+            // A module named without a path is the one thing about a LoadLibrary call that
+            // is visible without a disassembler, so it is collected here where the strings
+            // already are. Only for an image that actually loads dynamically: bare module
+            // names in anything else are just text.
+            if let Some(a) = pe.as_mut() {
+                if a.loader.loads_dynamically() {
+                    let filter = pe_loader::ModuleFilter::new(
+                        &a.libraries,
+                        crate::report::pe_section::short_name(&member_name),
+                    );
+                    let found: Vec<pe_loader::UnqualifiedModule> = extracted
+                        .iter()
+                        .filter(|s| filter.is_candidate(&s.text))
+                        .map(|s| pe_loader::UnqualifiedModule {
+                            name: s.text.clone(),
+                            offset: s.offset,
+                        })
+                        .collect();
+                    a.loader.note_strings(found, UNQUALIFIED_MODULE_CAP);
+                }
+            }
 
             for s in &extracted {
                 let found = matcher.find(&s.text);

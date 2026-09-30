@@ -116,6 +116,7 @@ safety properties, and how to read a report.
 | **Banned functions** | Boundary-verified matches, tiered `critical`/`high`/`medium`, each with a member path and byte offset |
 | **Confidence** | `import`, `exact`, `symbolic`, or `prose`. Namespace and documentation noise is excluded by default and disclosed |
 | **Exploit mitigations** | ASLR, DEP, Control Flow Guard, SafeSEH, Authenticode, relocations, per PE image |
+| **Dynamic loading** | Which loader APIs each image imports, whether it restricts its search path, and which modules it names without one. Reported as a surface, because an import table does not record what `LoadLibrary` was called with |
 | **PE structure** | Sections with entropy and permissions, imports and exports, TLS callbacks, overlay, packer signals |
 | **Components and CVEs** | Third-party libraries detected offline, resolved against NVD on request |
 | **Reputation** | VirusTotal and MetaDefender, by hash only |

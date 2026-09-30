@@ -89,7 +89,10 @@ pub fn parse(line: &str) -> Result<Option<Command>> {
             let missing = match rest.first() {
                 Some(&"--missing") => match rest.get(1) {
                     Some(k) => Some(k.to_ascii_lowercase()),
-                    None => bail!("--missing needs one of: aslr, dep, cfg, seh, authenticode, any"),
+                    None => bail!(
+                        "--missing needs one of: aslr, dep, cfg, seh, authenticode, \
+                             dll-search, any"
+                    ),
                 },
                 Some(other) => bail!(
                     "unknown option {}. Try: mitigations [--missing aslr]",
@@ -132,7 +135,7 @@ pub const HELP: &str = "\
        [--confidence c]            one of import, exact, symbolic, prose
   member <fragment>                full detail for matching members, including PE analysis
   mitigations [--missing k]        the mitigation matrix; k is aslr, dep, cfg, seh,
-                                   authenticode, or any
+                                   authenticode, dll-search, or any
   components                       third-party libraries detected
   cves                             CVEs resolved against NVD, if --cve was used
   iocs                             URLs, IPs, emails, registry keys, file paths

@@ -2,6 +2,86 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.4.0] - 2026-09-30
+
+Windows DLL search-order coverage, every optional feature in a default build, and a
+`--format all` fix. Additive, apart from one category rename noted below.
+
+### Fixed
+- **`--format all` wrote six files, printed an error, and exited 2.** Reported from a real
+  run. `OutputFormat::all()` listed `sqlite` unconditionally, `render_to_path` bails for it
+  without the cargo feature, and the output loop propagated that with `?`, so the `.sql`
+  dump ordered after it was never written.
+
+  Three parts to the fix. `all` now means every format this build can write. `Sql` is
+  ordered before `Sqlite`, because the text dump is the documented fallback for a build
+  without SQLite and must never be the casualty of the binary writer failing. And with
+  several formats requested, a failing writer no longer aborts the loop: failures are
+  collected, everything writable is written, each failure is reported, and the run still
+  exits 2. That last part also covers a disk filling up on file five of eight.
+
+  Naming `--format sqlite` explicitly is still an error, because that request was specific.
+
+  The bug was untested. `format_all_writes_every_file` listed seven formats by hand and
+  never passed `all`. There is now a test that does.
+
+### Changed
+- **`sqlite`, `carve`, and `repl` are compiled into a default build.** CI release-builds
+  with plain `cargo build --release`, so these were absent from every published binary and
+  the documentation described formats the shipped tool could not produce. The `--carve` flag
+  stays opt-in at runtime; only the build gate is gone. `--no-default-features` remains a
+  full escape hatch and is covered by the test suite.
+
+  Cost: a default build now compiles the bundled SQLite C amalgamation and the binwalk
+  library. All six release targets were confirmed green before anything was built on top of
+  this, including `aarch64-pc-windows-msvc`, which had not cross-compiled C at this scale
+  before.
+- **`system` moves from category `other` to `process-creation`.** Same severity, so exit
+  codes are unaffected, but the category string in output differs. It accounts for 67 of the
+  97 occurrences now in the new categories on the reference bundle.
+
+### Added
+- **Dynamic loading and process creation in the default banned list.** Two new categories,
+  `dll-hijacking` and `process-creation`, and 29 names, following Microsoft's
+  dynamic-link-library-security guidance. `SearchPath*` is high because that guidance names
+  it outright as the wrong way to locate a module; `WinExec`, `LoadModule`, `ShellExecute*`,
+  `system`, and `popen` are high because they have no way to qualify the image path;
+  `SetDllDirectory*`, `CreateProcess*`, `dlopen`, `dlsym`, `NSAddImage`, and `_dyld_*` are
+  medium because each can be called correctly.
+
+  Measured on the reference bundle: occurrences 301 to 331, distinct functions 39 to 46.
+  No explosion, which was the risk.
+
+- **`LoadLibrary`, `LoadLibraryEx`, and `GetProcAddress` are deliberately not findings**, and
+  a test pins that. `LoadLibrary` with a fully qualified path is correct code, the argument
+  is not recorded in an import table, and 78 of the 441 images in the reference bundle import
+  the family. Reporting those as defective would be inference presented as evidence, which is
+  the mistake 3.0.0 existed to correct.
+
+- **A per-image dynamic loading surface instead** (`src/pe/loader.rs`), reporting what is
+  actually knowable without a disassembler: whether the image imports a search-path hardening
+  API, whether it uses plain `LoadLibrary` (which cannot constrain the search at all) or
+  `LoadLibraryEx` (which can take `LOAD_LIBRARY_SEARCH_*` flags), and which modules it names
+  with no path at all, each with a byte offset so it is checkable by hand. Those combine into
+  a `hardened`, `unhardened`, or `unqualified` verdict.
+
+  The bare-name evidence excludes what the loader already resolves: an image's own statically
+  imported DLLs, the `api-ms-win-*` and `ext-ms-*` API sets, and the image naming itself.
+  Without that filter the section flagged 27 of 41 images with `KERNEL32.dll` and friends and
+  said nothing useful; with it, what remains is modules an image names but does not statically
+  import, which is what a runtime load looks like. On the reference bundle: 41 of 441 images
+  load dynamically, 1 is hardened, 24 name a module with no path.
+
+  Stated limit, in the report itself and in usage.md: this cannot prove a call site is wrong,
+  and `hardened` does not mean every load is safe. It narrows 78 images to the handful worth
+  reading.
+
+- **A `dll-search` column in the REPL mitigation matrix**, plus
+  `mitigations --missing dll-search`, alongside the existing ASLR, DEP, CFG, SafeSEH, and
+  Authenticode columns. The verdict lives on the loader surface rather than in `Mitigations`,
+  because it is derived from imports and strings while `Mitigations::from_pe` sees only
+  headers; duplicating it would mean two sources of truth.
+
 ## [4.3.0] - 2026-09-30
 
 Two additive surfaces for inspecting the tool rather than the sample, plus a default output

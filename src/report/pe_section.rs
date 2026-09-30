@@ -5,6 +5,7 @@ use std::io::Write;
 
 use super::thousands;
 use crate::model::Report;
+use crate::pe::loader::Verdict;
 use crate::pe::mitigations::State;
 
 /// Write the PE analysis summary. Silent when no member parsed as a PE.
@@ -113,6 +114,7 @@ pub fn write_text(w: &mut dyn Write, r: &Report) -> Result<()> {
             thousands(r.definitive_hits() as u64)
         )?;
     }
+    write_loader_text(w, r)?;
     writeln!(w)?;
 
     if !r.iocs.is_empty() {
@@ -124,6 +126,76 @@ pub fn write_text(w: &mut dyn Write, r: &Report) -> Result<()> {
         emit_list(w, "File paths", &r.iocs.file_paths)?;
         writeln!(w)?;
     }
+    Ok(())
+}
+
+/// Dynamic loading surface.
+///
+/// Reported as a surface rather than as findings, because `LoadLibrary` with a fully
+/// qualified path is correct code and an import table does not record the argument. What can
+/// be said is whether an image hardened its search path, whether it uses the plain call that
+/// cannot restrict the search at all, and whether it carries module names with no path. Each
+/// of those is stated, and the conclusion is left to a reviewer.
+pub fn write_loader_text(w: &mut dyn Write, r: &Report) -> Result<()> {
+    let loaders: Vec<_> = r
+        .pe_members()
+        .into_iter()
+        .filter(|e| e.pe.as_ref().is_some_and(|a| a.loader.loads_dynamically()))
+        .collect();
+    if loaders.is_empty() {
+        return Ok(());
+    }
+
+    let mut hardened = 0usize;
+    let mut unqualified: Vec<&crate::model::CoverageEntry> = Vec::new();
+    let mut unhardened = 0usize;
+    for e in &loaders {
+        match e.pe.as_ref().expect("filtered").loader.verdict {
+            Verdict::Hardened => hardened += 1,
+            Verdict::Unqualified => unqualified.push(e),
+            _ => unhardened += 1,
+        }
+    }
+
+    writeln!(
+        w,
+        "  Dynamic loading: {} of {} image(s) load modules at runtime",
+        loaders.len(),
+        r.pe_members().len()
+    )?;
+    writeln!(
+        w,
+        "    {} hardened (restrict the search path), {} unhardened, {} naming a module with no path",
+        hardened,
+        unhardened,
+        unqualified.len()
+    )?;
+    // The evidence, so the count above is checkable rather than taken on trust.
+    for e in unqualified.iter().take(10) {
+        let a = e.pe.as_ref().expect("filtered");
+        let names: Vec<String> = a
+            .loader
+            .unqualified_modules
+            .iter()
+            .take(4)
+            .map(|m| format!("{} @ 0x{:x}", m.name, m.offset))
+            .collect();
+        writeln!(
+            w,
+            "    !! {}: {} plain LoadLibrary call(s), no search-path hardening, names {}",
+            short_name(&e.member),
+            a.loader.load_library,
+            names.join(", ")
+        )?;
+    }
+    if unqualified.len() > 10 {
+        writeln!(w, "    ... and {} more", unqualified.len() - 10)?;
+    }
+    writeln!(
+        w,
+        "    A surface, not a defect: the module argument is not recoverable without \
+         disassembly, so verify at the offsets above"
+    )?;
     Ok(())
 }
 

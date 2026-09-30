@@ -6,6 +6,7 @@
 //! direct evidence that the binary calls the function.
 
 pub mod ioc;
+pub mod loader;
 pub mod mitigations;
 pub mod packer;
 pub mod sections;
@@ -13,6 +14,7 @@ pub mod sections;
 use serde::{Deserialize, Serialize};
 
 pub use ioc::Iocs;
+pub use loader::LoaderSurface;
 pub use mitigations::Mitigations;
 pub use sections::SectionInfo;
 
@@ -41,6 +43,10 @@ pub struct PeAnalysis {
     pub tls_callbacks: usize,
     pub has_debug_info: bool,
     pub mitigations: Mitigations,
+    /// Which loader APIs the image imports, and whether it shows any sign of constraining
+    /// the search order. A surface, not a set of findings: see `loader`.
+    #[serde(default)]
+    pub loader: LoaderSurface,
     pub packer_hints: Vec<String>,
     /// Bytes appended after the last section, a common payload hiding place.
     pub overlay_size: u64,
@@ -63,6 +69,7 @@ impl PeAnalysis {
             .collect();
         let is_managed = pe.clr_data.is_some();
         let packer_hints = packer::hints(&sections, imports.len(), is_managed);
+        let loader = LoaderSurface::from_imports(&imports);
 
         let (subsystem, image_base) = match pe.header.optional_header {
             Some(oh) => (
@@ -99,6 +106,7 @@ impl PeAnalysis {
             tls_callbacks,
             has_debug_info: pe.debug_data.is_some(),
             mitigations: Mitigations::from_pe(&pe),
+            loader,
             packer_hints,
             overlay_size,
         })
@@ -244,6 +252,7 @@ mod tests {
                 authenticode: mitigations::State::Enabled,
                 relocations: mitigations::State::Enabled,
             },
+            loader: LoaderSurface::default(),
             packer_hints: vec![],
             overlay_size: 0,
         }

@@ -14,7 +14,7 @@ binspector <binary> --banned-list rsc/<file>
 
 | File | Lines | What it actually holds |
 |---|---:|---|
-| `sdl_banned_funct.list` | 197 | The default list, compiled in. Windows API and CRT names, alphabetically sorted. |
+| `sdl_banned_funct.list` | 226 | The default list, compiled in. Windows API and CRT names, alphabetically sorted. 29 dynamic-loading and process-creation names were added in 4.4.0. |
 | `banner_h.list` | 168 | The `strcpy` / `strcat` / `sprintf` families, derived from Microsoft's `Banned.h`. 156 of its entries are already in the default list. |
 | `sql_extended.list` | 198 | Despite the name, this is **not** SQL. It is another banned function list, starting with `gets`, `_getts`, `_gettws`, and `IsBadWritePtr`. 144 of its entries are already in the default list. The name is historical and misleading. |
 | `banned.h` | 68 | The reference header collected from public sources. Not a list format; kept for provenance. |
@@ -27,8 +27,8 @@ than a merge. They are kept separate rather than consolidated so that an existin
 ## Severity and category are not stored here
 
 The lists are flat names. Binspector derives severity (`critical`, `high`, `medium`) and
-category (`buffer-overflow`, `format-string`, and so on) from the function family at
-scan time, in `src/scan/banned.rs`. A custom list supplied with `--banned-list` therefore
+category (`buffer-overflow`, `format-string`, `dll-hijacking`, `process-creation`, and so
+on) from the function family at scan time, in `src/scan/banned.rs`. A custom list supplied with `--banned-list` therefore
 gets the same tiering with no extra annotation, and a name the classifier does not
 recognise defaults to `high` rather than being dropped.
 

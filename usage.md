@@ -12,6 +12,7 @@ Full reference. See [README.md](README.md) for the overview and quick start.
 - [How findings are classified](#how-findings-are-classified)
 - [Containers](#containers)
 - [Executable analysis](#executable-analysis)
+- [Dynamic loading](#dynamic-loading)
 - [Reputation and CVEs](#reputation-and-cves)
 - [Carving](#carving)
 - [Fuzzing](#fuzzing)
@@ -198,6 +199,22 @@ names default to `high` rather than being dropped.
 | `high` | Bounded but routinely misused, or a weak primitive | `memcpy`, `snprintf`, `getenv`, `IsBadWritePtr` |
 | `medium` | Weak error handling or predictability | `atoi`, `strtok`, `rand` |
 
+Since 4.4.0 the list also covers dynamic loading and process creation, which is where
+Windows DLL search-order hijacking lives:
+
+| Category | Severity | Names | Why |
+|---|---|---|---|
+| `dll-hijacking` | `high` | `SearchPath*` | Microsoft's guidance names it outright as the wrong way to locate a module |
+| `dll-hijacking` | `medium` | `SetDllDirectory*`, `dlopen`, `dlmopen`, `dlsym`, `NSAddImage`, `_dyld_*` | Dangerous only when the module is named without a qualified path |
+| `process-creation` | `high` | `WinExec`, `LoadModule`, `ShellExecute*`, `system`, `popen` | Legacy launchers with no way to qualify the image path; the shell or the working directory resolves the name |
+| `process-creation` | `medium` | `CreateProcess*` | Safe with a quoted, fully qualified path; the classic bug is an unquoted or relative one |
+
+`LoadLibrary`, `LoadLibraryEx`, and `GetProcAddress` are deliberately **not** findings.
+`LoadLibrary` with a qualified path is correct code, the argument is not recorded in an
+import table, and 78 of the 441 images in the reference bundle import the family. Calling
+those defective on the strength of a name would be inference presented as evidence. See
+[Dynamic loading](#dynamic-loading) for what is reported instead.
+
 ### Confidence
 
 How the token sits in its string. This is what separates a real reference from text that
@@ -275,6 +292,44 @@ Without those exemptions, a real 441-image application bundle produced hundreds 
 describing ordinary structure.
 
 `--no-pe` skips this entirely.
+
+## Dynamic loading
+
+Reported per PE image whenever it imports the loader family. A surface, not a set of
+findings, and the distinction is the point.
+
+`LoadLibrary("version.dll")` is a DLL preloading vulnerability. `LoadLibrary("C:\\Windows\\
+System32\\version.dll")` is correct code. The difference is the argument, and an import table
+records only that the function is called, never with what. There is no disassembler here, so
+three things that *are* knowable are reported instead:
+
+| Signal | What it means |
+|---|---|
+| Hardening imports | `SetDefaultDllDirectories`, `AddDllDirectory`, or `RemoveDllDirectory`. Importing any of them means the search path was deliberately restricted |
+| Plain `LoadLibrary` versus `LoadLibraryEx` | The plain call has no parameter that can constrain the search, so a qualified path is its only defence. `LoadLibraryEx` accepts `LOAD_LIBRARY_SEARCH_*` flags and so can be called safely |
+| Bare module-name strings | A string such as `version.dll` with no path, drive, or environment prefix, in an image that loads dynamically, is a module named without a location. Reported with its byte offset, so it is checkable by hand |
+
+Those combine into one of three verdicts, shown in the report and in the REPL's
+`mitigations` matrix as the `dll-search` column:
+
+| Verdict | Rule |
+|---|---|
+| `hardened` | A hardening API is imported |
+| `unqualified` | Plain `LoadLibrary`, no hardening import, and at least one bare module-name string |
+| `unhardened` | Loads dynamically, but neither of the above applies |
+
+Filter to the images worth reading with `mitigations --missing dll-search` in the browser.
+
+**The bare-name evidence excludes what the loader already resolves.** Every PE carries the
+names of the DLLs it statically imports as strings, because they sit in the import directory,
+so `KERNEL32.dll` appears in nearly every image. Those, the `api-ms-win-*` and `ext-ms-*` API
+sets, and an image naming itself are all excluded. Without that filter the section flagged 27
+of 41 images and said nothing; with it, what remains is modules an image names but does not
+statically import, which is what a runtime load looks like.
+
+**The stated limit.** This cannot prove a call site is wrong, and `hardened` does not mean
+every load in the image is safe. It narrows 78 images to the handful worth reading, and every
+claim it makes carries an offset you can verify.
 
 ## Reputation and CVEs
 
@@ -500,7 +555,7 @@ error says so.
        [--confidence c]            one of import, exact, symbolic, prose
   member <fragment>                full detail for matching members, including PE analysis
   mitigations [--missing k]        the mitigation matrix; k is aslr, dep, cfg, seh,
-                                   authenticode, or any
+                                   authenticode, dll-search, or any
   components                       third-party libraries detected
   cves                             CVEs resolved against NVD, if --cve was used
   iocs                             URLs, IPs, emails, registry keys, file paths
