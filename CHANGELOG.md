@@ -2,6 +2,33 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.1.2] - 2026-09-30
+
+Second attempt at the 4.1.x build fix. v4.1.0 and v4.1.1 both published **no release
+assets**; this is the release to use. No change to scanning behavior or output.
+
+### Fixed
+- **The fuzz harnesses could not be linked by an ordinary build.** 4.1.1 moved them into
+  this crate behind `afl-target` and `hfuzz-target` features, which used the engines'
+  persistent-mode macros. Those macros reference runtime symbols the engine provides only
+  through `cargo afl build`, so `cargo test --all --all-features` failed to link with
+  `undefined symbol: __afl_persistent_loop`. It passed on macOS and failed on Linux,
+  which is why the local gate missed it a second time.
+
+  The features and the `afl` and `honggfuzz` dependencies are gone. Each harness is now a
+  plain program that reads one file, which is exactly what AFL's `@@` and honggfuzz's
+  `___FILE___` substitute, and what `binspector fuzz --engine` already emits. Persistent
+  mode was an optimization, not a requirement, and it was the only thing coupling the
+  build to an engine runtime. Instrument the same binary with `cargo afl build --bin
+  fuzz_pe` for a coverage-guided run.
+- Removed two stray feature entries left behind by dependency edits: `ureq`, whose
+  dependency no longer exists, and `binwalk-ng`, which duplicated `carve`.
+
+### Process
+Every step of the CI quality gate is now run locally before tagging, and a tag is cut only
+after CI reports green on `dev`. Both empty releases came from tagging on the strength of
+`make check` alone, while the failing step was one `make check` did not cover.
+
 ## [4.1.1] - 2026-09-30
 
 Fixes a build break that made v4.1.0 publish no release assets, and moves the fuzz

@@ -1,6 +1,6 @@
 [package]
 name = "binspector"
-version = "4.1.1"
+version = "4.1.2"
 edition = "2021"
 description = "Inspect binaries for banned C/C++ functions and exploit mitigations, unpacking nested containers, with PE analysis, reputation and CVE enrichment, and fuzzing"
 license = "MIT"
@@ -31,8 +31,6 @@ sevenz-rust2 = "0.23.0"
 cab = "0.6.0"
 binwalk-ng = { version = "4.0.0", default-features = false, optional = true }
 arbitrary = { version = "1.4.2", features = ["derive"] }
-afl = { version = "0.18.2", optional = true }
-honggfuzz = { version = "0.5.62", optional = true }
 
 [[bin]]
 name = "binspector"
@@ -75,15 +73,6 @@ sqlite = ["dep:rusqlite"]
 # and archive formats above already cover ordinary application bundles, and carving
 # is a firmware-analysis tool that produces a lot of output on other input.
 carve = ["dep:binwalk-ng"]
-# Coverage-guided instrumentation for the src/bin/fuzz_* harnesses. Without either
-# feature the harnesses still build as plain file-reading programs, which is what
-# `binspector fuzz --engine` drives and what CI compiles.
-afl-target = ["dep:afl"]
-hfuzz-target = ["dep:honggfuzz"]
-ureq = []
-binwalk-ng = ["dep:binwalk-ng"]
-afl = ["dep:afl"]
-honggfuzz = ["dep:honggfuzz"]
 
 [profile.release]
 lto = true

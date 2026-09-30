@@ -90,11 +90,11 @@ fuzz-corpus:
 
 fuzz-afl:
 	@if [ -z "$(TARGET)" ]; then echo "Usage: make fuzz-afl TARGET=fuzz_pe"; exit 1; fi
-	cargo afl build --features afl-target --release --bin $(TARGET)
+	cargo afl build --release --bin $(TARGET)
 
 fuzz-hfuzz:
 	@if [ -z "$(TARGET)" ]; then echo "Usage: make fuzz-hfuzz TARGET=fuzz_pe"; exit 1; fi
-	cargo hfuzz build --features hfuzz-target --bin $(TARGET)
+	cargo hfuzz build --bin $(TARGET)
 
 clean:
 	cargo clean

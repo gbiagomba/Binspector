@@ -55,8 +55,8 @@ cargo build --release --features carve    # embedded signature carving via binwa
 cargo build --release --all-features
 
 # Coverage-guided instrumentation for the fuzz harnesses
-cargo afl build --features afl-target --release --bin fuzz_pe
-cargo hfuzz build --features hfuzz-target --bin fuzz_pe
+cargo afl build --release --bin fuzz_pe
+cargo hfuzz build --bin fuzz_pe
 ```
 
 Via Docker:
@@ -239,7 +239,13 @@ works everywhere with no setup.
 The self-fuzzing harnesses live in `src/bin/fuzz_*.rs` and use `arbitrary`, so the option
 space is explored alongside the byte space. They are binaries of this crate rather than a
 separate one, so a plain `cargo build` compiles them and a change to a library type cannot
-break them unnoticed. Each asserts a real invariant rather than only waiting
+break them unnoticed.
+
+Each harness reads one file, which is what AFL's `@@` and honggfuzz's `___FILE___`
+substitute. They deliberately do not use the engines' persistent-mode macros: those need
+the engine's runtime symbols at link time, so an ordinary `cargo build` could not link the
+binary at all. Instrument the same binary with `cargo afl build --bin fuzz_pe` for a
+coverage-guided run. Each asserts a real invariant rather than only waiting
 for a crash: offsets stay inside the input, provenance chains are never empty, and
 section entropy stays within 0 to 8.
 

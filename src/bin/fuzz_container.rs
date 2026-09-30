@@ -1,9 +1,9 @@
 //! Fuzz the container parser.
 //!
-//! A plain build produces a file-reading harness, which is what AFL's `@@` and
-//! honggfuzz's `___FILE___` placeholders substitute. Instrumented builds:
-//!   cargo afl build --features afl-target --release --bin fuzz_container
-//!   cargo hfuzz build --features hfuzz-target --bin fuzz_container
+//! A file-reading harness, which is what AFL's `@@` and honggfuzz's `___FILE___`
+//! placeholders substitute. For coverage-guided runs, instrument this same binary:
+//!   cargo afl build --release --bin fuzz_container
+//!   cargo hfuzz build --bin fuzz_container
 
 fn exercise(data: &[u8]) {
     let limits = binspector::container::Limits {
@@ -22,24 +22,18 @@ fn exercise(data: &[u8]) {
     });
 }
 
-#[cfg(feature = "afl-target")]
 fn main() {
-    afl::fuzz!(|data: &[u8]| {
-        exercise(data);
-    });
-}
-
-#[cfg(all(feature = "hfuzz-target", not(feature = "afl-target")))]
-fn main() {
-    loop {
-        honggfuzz::fuzz!(|data: &[u8]| {
-            exercise(data);
-        });
-    }
-}
-
-#[cfg(not(any(feature = "afl-target", feature = "hfuzz-target")))]
-fn main() {
+    // A file-reading harness. AFL++ substitutes the path for `@@` and honggfuzz for
+    // `___FILE___`, which is how both drive a non-persistent target, and what
+    // `binspector fuzz --engine` emits.
+    //
+    // For coverage-guided runs, instrument this same binary:
+    //   cargo afl build --release --bin fuzz_container
+    //   cargo hfuzz build --bin fuzz_container
+    //
+    // The afl and honggfuzz persistent-mode macros are deliberately not used. They
+    // require the engine's runtime symbols at link time, so a plain `cargo build` or
+    // `cargo test --all-features` could not link the binary at all.
     let mut args = std::env::args_os().skip(1);
     match args.next() {
         Some(path) => match std::fs::read(&path) {
