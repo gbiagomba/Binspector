@@ -4,6 +4,7 @@ pub mod csv;
 pub mod html;
 pub mod json;
 pub mod markdown;
+pub mod pe_section;
 pub mod sarif;
 pub mod sql;
 pub mod text;
@@ -206,8 +207,10 @@ pub(crate) mod tests_support {
                     format: "pe".into(),
                     size: 1000,
                     strings: 10,
+                    pe: None,
                 }],
             },
+            iocs: Default::default(),
             warnings: vec!["a coverage warning".into()],
         }
     }

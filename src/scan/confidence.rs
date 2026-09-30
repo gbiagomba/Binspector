@@ -17,8 +17,11 @@ use serde::Serialize;
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Confidence {
+    /// The name appears in the PE import directory. This is a linker-recorded
+    /// dependency, so it is direct evidence that the binary calls the function,
+    /// not an inference from embedded text.
+    Import,
     /// The whole string is the function name, allowing for compiler decoration.
-    /// This is what an import or export table entry looks like.
     Exact,
     /// The string looks like a symbol or path rather than a sentence: no whitespace,
     /// and the token is delimited by punctuation.
@@ -31,6 +34,7 @@ pub enum Confidence {
 impl Confidence {
     pub fn as_str(self) -> &'static str {
         match self {
+            Confidence::Import => "import",
             Confidence::Exact => "exact",
             Confidence::Symbolic => "symbolic",
             Confidence::Prose => "prose",
@@ -39,7 +43,15 @@ impl Confidence {
 
     /// Whether a hit at this confidence is reported by default.
     pub fn is_reportable(self) -> bool {
-        matches!(self, Confidence::Exact | Confidence::Symbolic)
+        matches!(
+            self,
+            Confidence::Import | Confidence::Exact | Confidence::Symbolic
+        )
+    }
+
+    /// True when the evidence is a recorded import rather than embedded text.
+    pub fn is_definitive(self) -> bool {
+        matches!(self, Confidence::Import)
     }
 }
 

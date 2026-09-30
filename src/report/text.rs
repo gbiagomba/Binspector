@@ -48,6 +48,7 @@ pub fn write(
     writeln!(w)?;
 
     write_coverage(w, r)?;
+    super::pe_section::write_text(w, r)?;
     write_warnings(w, r, opts)?;
     write_summary(w, r, opts)?;
     write_occurrences(w, r, opts)?;
@@ -336,8 +337,10 @@ mod tests {
                     format: "pe".into(),
                     size: 1000,
                     strings: 10,
+                    pe: None,
                 }],
             },
+            iocs: Default::default(),
             warnings: vec!["a warning".into()],
         }
     }

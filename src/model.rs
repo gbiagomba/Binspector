@@ -3,6 +3,7 @@
 use serde::Serialize;
 
 use crate::container::Format;
+use crate::pe::PeAnalysis;
 use crate::scan::banned::{Category, Severity};
 use crate::scan::confidence::Confidence;
 use crate::scan::strings::Encoding;
@@ -51,6 +52,9 @@ pub struct CoverageEntry {
     pub format: String,
     pub size: u64,
     pub strings: usize,
+    /// Present when the member parsed as a PE image.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pe: Option<PeAnalysis>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -86,6 +90,8 @@ pub struct Report {
     /// Whether low-confidence hits were included in `summary` and `hits`.
     pub include_low_confidence: bool,
     pub coverage: Coverage,
+    /// Indicators aggregated across every member.
+    pub iocs: crate::pe::Iocs,
     pub warnings: Vec<String>,
 }
 
@@ -102,6 +108,23 @@ impl Report {
             }
         }
         (crit, high, med)
+    }
+
+    /// Members that parsed as a PE, with their analysis.
+    pub fn pe_members(&self) -> Vec<&CoverageEntry> {
+        self.coverage
+            .entries
+            .iter()
+            .filter(|e| e.pe.is_some())
+            .collect()
+    }
+
+    /// Occurrences backed by a recorded PE import rather than embedded text.
+    pub fn definitive_hits(&self) -> usize {
+        self.hits
+            .iter()
+            .filter(|h| h.confidence.is_definitive())
+            .count()
     }
 
     /// True when the walk reached at least one executable image. A clean result on

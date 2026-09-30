@@ -75,10 +75,6 @@ pub struct Cli {
     #[arg(long = "case-sensitive")]
     pub case_sensitive: bool,
 
-    /// Deprecated: matching is case insensitive by default
-    #[arg(long = "ignore-case", hide = true)]
-    pub ignore_case: bool,
-
     /// Consider only banned function names matching this regex
     #[arg(long = "banned-filter", value_name = "REGEX")]
     pub banned_filter: Option<String>,
@@ -123,6 +119,14 @@ pub struct Cli {
     /// System.Windows, and documentation prose such as "Gets or sets"
     #[arg(long = "include-low-confidence")]
     pub include_low_confidence: bool,
+
+    /// Skip PE parsing (headers, sections, imports, mitigations)
+    #[arg(long = "no-pe")]
+    pub no_pe: bool,
+
+    /// Maximum indicators of each kind (URL, IP, email, registry, path) to collect
+    #[arg(long = "ioc-cap", default_value_t = 500, value_name = "N")]
+    pub ioc_cap: usize,
 
     /// Exit non-zero when a match at or above this severity is found
     #[arg(long, value_name = "SEVERITY")]
@@ -175,17 +179,6 @@ impl Cli {
         }
         if self.min_len == 0 {
             bail!("--min-len must be at least 1");
-        }
-
-        if self.ignore_case {
-            notices.push(
-                "--ignore-case is deprecated and has no effect: matching is case insensitive by \
-                 default. Use --case-sensitive for the opposite behavior."
-                    .to_string(),
-            );
-        }
-        if self.ignore_case && self.case_sensitive {
-            bail!("--ignore-case and --case-sensitive contradict each other");
         }
 
         // The deprecated --json flag only applies when --format was left at its default.
@@ -251,6 +244,8 @@ impl Cli {
             max_hits: self.max_hits,
             context_window: self.context,
             include_low_confidence: self.include_low_confidence,
+            analyze_pe: !self.no_pe,
+            ioc_cap: self.ioc_cap,
         };
 
         Ok(Resolved {
@@ -294,27 +289,20 @@ mod tests {
     }
 
     #[test]
-    fn deprecated_ignore_case_is_accepted_with_a_notice() {
-        // The command line from the original failing run must keep working.
-        let r = parse(&[
-            "-p",
-            "PROJ-123",
-            "-o",
-            "out.txt",
-            "--ignore-case",
-            "file.bin",
-        ])
-        .unwrap();
-        assert!(!r.scan.case_sensitive);
-        assert!(r
-            .notices
-            .iter()
-            .any(|n| n.contains("--ignore-case is deprecated")));
+    fn removed_ignore_case_flag_is_rejected() {
+        // Removed in 4.0.0. Matching is case insensitive by default, so the flag had
+        // no effect; clap now reports it as unknown rather than silently accepting it.
+        let err = Cli::try_parse_from(["binspector", "--ignore-case", "file.bin"])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("--ignore-case"), "{}", err);
     }
 
     #[test]
-    fn ignore_case_conflicts_with_case_sensitive() {
-        assert!(parse(&["file.bin", "--ignore-case", "--case-sensitive"]).is_err());
+    fn the_original_command_line_still_works_without_that_flag() {
+        let r = parse(&["-p", "PROJ-123", "-o", "out.txt", "file.bin"]).unwrap();
+        assert!(!r.scan.case_sensitive);
+        assert_eq!(r.scan.project.as_deref(), Some("PROJ-123"));
     }
 
     #[test]

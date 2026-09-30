@@ -13,8 +13,10 @@ use std::path::{Path, PathBuf};
 use crate::container::{self, Limits};
 use crate::hashing;
 use crate::model::{Coverage, CoverageEntry, HitRecord, MatchSummary, Report};
+use crate::pe::{ioc, PeAnalysis};
 use crate::spool::{Spool, SpoolReader};
 use banned::BannedList;
+use confidence::Confidence;
 use matcher::Matcher;
 
 #[derive(Clone, Debug)]
@@ -35,6 +37,10 @@ pub struct ScanConfig {
     pub context_window: usize,
     /// Report low-confidence hits (namespace segments, documentation prose) too.
     pub include_low_confidence: bool,
+    /// Parse PE members for headers, sections, imports, and mitigations.
+    pub analyze_pe: bool,
+    /// Maximum indicators of each kind to collect.
+    pub ioc_cap: usize,
 }
 
 impl Default for ScanConfig {
@@ -52,6 +58,8 @@ impl Default for ScanConfig {
             max_hits: 100_000,
             context_window: 120,
             include_low_confidence: false,
+            analyze_pe: true,
+            ioc_cap: 500,
         }
     }
 }
@@ -90,6 +98,7 @@ pub fn run(path: &Path, cfg: &ScanConfig) -> Result<ScanOutput> {
     let mut coverage_entries: Vec<CoverageEntry> = Vec::new();
     let mut hit_cap_reached = false;
     let mut low_confidence_total = 0usize;
+    let mut iocs = ioc::Extractor::new(cfg.ioc_cap);
     let mut spool = if cfg.dump { Some(Spool::new()?) } else { None };
 
     let outcome = container::walk_bytes(
@@ -98,6 +107,52 @@ pub fn run(path: &Path, cfg: &ScanConfig) -> Result<ScanOutput> {
         cfg.limits.clone(),
         &mut |member| -> Result<()> {
             let member_name = member.chain_display();
+            let pe = if cfg.analyze_pe && member.format == crate::container::Format::Pe {
+                PeAnalysis::parse(member.data)
+            } else {
+                None
+            };
+
+            // An entry in the import directory is direct evidence that the binary calls
+            // the function, so it outranks anything inferred from embedded text. Imports
+            // are recorded first, and string matches for the same function are then
+            // skipped so one fact is not counted twice.
+            let mut imported: HashSet<String> = HashSet::new();
+            if let Some(analysis) = pe.as_ref() {
+                for (id, entry) in list.entries.iter().enumerate() {
+                    let dll = match analysis.importing_dll(&entry.name) {
+                        Some(d) => d.to_string(),
+                        None => continue,
+                    };
+                    imported.insert(entry.name.to_ascii_lowercase());
+                    let agg_entry = agg.entry(id).or_insert_with(|| Agg {
+                        occurrences: 0,
+                        members: HashSet::new(),
+                        low_confidence: 0,
+                    });
+                    agg_entry.occurrences += 1;
+                    agg_entry.members.insert(member_name.clone());
+                    if hits.len() < cfg.max_hits {
+                        hits.push(HitRecord {
+                            function: entry.name.clone(),
+                            severity: entry.severity,
+                            category: entry.category,
+                            member: member_name.clone(),
+                            offset: 0,
+                            token_len: entry.name.len(),
+                            string_offset: 0,
+                            encoding: strings::Encoding::Ascii,
+                            confidence: Confidence::Import,
+                            context: format!("imported from {}", dll),
+                            context_start: 0,
+                            context_end: 0,
+                        });
+                    } else {
+                        hit_cap_reached = true;
+                    }
+                }
+            }
+
             let extracted = strings::extract(member.data, cfg.min_len, cfg.ascii, cfg.utf16);
             strings_total += extracted.len();
 
@@ -109,6 +164,11 @@ pub fn run(path: &Path, cfg: &ScanConfig) -> Result<ScanOutput> {
                             Some(be) => be,
                             None => continue,
                         };
+                        // Already proven by the import table; counting the string too
+                        // would inflate the occurrence count for the same fact.
+                        if imported.contains(&be.name.to_ascii_lowercase()) {
+                            continue;
+                        }
                         let conf = confidence::score(&s.text, h.start, h.end, &be.name);
                         let entry = agg.entry(h.pattern_id).or_insert_with(|| Agg {
                             occurrences: 0,
@@ -155,6 +215,7 @@ pub fn run(path: &Path, cfg: &ScanConfig) -> Result<ScanOutput> {
                         }
                     }
                 }
+                iocs.feed(&s.text);
                 if let Some(sp) = spool.as_mut() {
                     let ranges: Vec<(usize, usize)> =
                         found.iter().map(|h| (h.start, h.end)).collect();
@@ -167,6 +228,7 @@ pub fn run(path: &Path, cfg: &ScanConfig) -> Result<ScanOutput> {
                 format: member.format.as_str().to_string(),
                 size: member.data.len() as u64,
                 strings: extracted.len(),
+                pe,
             });
             Ok(())
         },
@@ -255,6 +317,7 @@ pub fn run(path: &Path, cfg: &ScanConfig) -> Result<ScanOutput> {
         low_confidence_total,
         low_confidence_top: low_top,
         include_low_confidence: cfg.include_low_confidence,
+        iocs: iocs.finish(),
         coverage: Coverage {
             root_format: outcome.root_format.as_str().to_string(),
             members_scanned: outcome.members_scanned,

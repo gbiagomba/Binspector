@@ -103,18 +103,27 @@ fn include_low_confidence_reports_the_suppressed_hits() {
 }
 
 #[test]
-fn deprecated_ignore_case_still_works_and_warns() {
-    // The exact shape of the original failing command line.
+fn removed_ignore_case_flag_is_rejected() {
+    // Removed in 4.0.0; it had no effect once matching became case insensitive.
+    let f = fixture();
+    bin()
+        .arg("--ignore-case")
+        .arg(&f.target)
+        .assert()
+        .failure()
+        .stderr(contains("--ignore-case"));
+}
+
+#[test]
+fn project_and_output_flags_work_together() {
     let f = fixture();
     let report = f.out.join("r.txt");
     bin()
         .args(["-p", "PROJ-1", "-o"])
         .arg(&report)
-        .arg("--ignore-case")
         .arg(&f.target)
         .assert()
-        .success()
-        .stderr(contains("--ignore-case is deprecated"));
+        .success();
     let body = std::fs::read_to_string(&report).unwrap();
     assert!(body.contains("Project: PROJ-1"));
 }
