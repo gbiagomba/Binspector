@@ -1,6 +1,6 @@
 [package]
 name = "binspector"
-version = "3.0.0"
+version = "3.0.1"
 edition = "2021"
 description = "Inspect binaries for banned C/C++ functions, unpacking nested containers and reporting token-accurate matches"
 license = "MIT"

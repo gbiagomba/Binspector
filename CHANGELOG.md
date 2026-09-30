@@ -2,6 +2,37 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.0.1] - 2026-09-30
+
+Release engineering only. No change to scanning behavior or output; the binary is
+functionally identical to 3.0.0. This exists because two long-standing CI faults meant
+v3.0.0 published only 4 of the 6 platform assets the README advertises.
+
+### Fixed
+- **aarch64 Linux never built.** The cross-compile step wrote its linker config with
+  `echo "[target...]\nlinker = ..."`, relying on `\n` being interpreted. `/bin/sh` does
+  not do that, so a literal backslash-n landed in `~/.cargo/config.toml` and cargo failed
+  to parse it. This job had failed on every run since it was introduced in `3a787aa`
+  (2025-10-01). The linker, `CC`, and `AR` are now exported through `GITHUB_ENV`, which
+  removes the quoting problem entirely.
+- **The x86_64 macOS asset was never published.** The matrix used the deprecated
+  `macos-13` runner for that architecture and its queue never started. Both macOS targets
+  are now cross-compiled from one Apple silicon runner with an explicit `--target`,
+  matching the Linux and Windows jobs.
+- **macOS archives were missing `README.md` and `LICENSE`.** The packaging command ran
+  `tar -C $(dirname "$BIN")`, changing into `target/release` where neither file exists, so
+  its `||` fallback chain silently produced an archive containing only the binary.
+  Packaging now stages the files first.
+
+### Documentation
+- `rsc/README.md` corrected: it listed `sdl_banned_funct.old`, which was deleted in
+  `b2c2f21`, and described `sql_extended.list` as "extra SQL-related strings" when the
+  file contains no SQL at all (0 matches for select/insert/drop/union/xp_/sp_/exec). It is
+  another banned function list. Measured line counts and the overlap between lists were
+  added, along with why they are kept separate rather than merged.
+- `.version-tracking.md` records what was deferred from 3.0.0 (binwalk carving, and
+  gzip/bzip2/xz/7z/cab unpacking) rather than leaving it implicit.
+
 ## [3.0.0] - 2026-09-30
 
 Correctness release. 2.0.0 reported findings that were all false and missed everything
