@@ -48,6 +48,14 @@ pub struct PeAnalysis {
     /// the search order. A surface, not a set of findings: see `loader`.
     #[serde(default)]
     pub loader: LoaderSurface,
+    /// Hardened CRT variants the image imports, such as `strcpy_s`.
+    ///
+    /// Reported because the absence of this was a real complaint about the tool: an image can
+    /// import 23 `strcpy_s` beside 5 `strcpy`, and a report that mentions only the five
+    /// inverts the hygiene signal. This changes no severity. It is context a reviewer needs
+    /// in order not to misread a finding.
+    #[serde(default)]
+    pub safe_variants: Vec<String>,
     pub packer_hints: Vec<String>,
     /// Bytes appended after the last section, a common payload hiding place.
     pub overlay_size: u64,
@@ -71,6 +79,7 @@ impl PeAnalysis {
         let is_managed = pe.clr_data.is_some();
         let packer_hints = packer::hints(&sections, imports.len(), is_managed);
         let loader = LoaderSurface::from_imports(&imports);
+        let safe_variants = collect_safe_variants(&imports);
 
         let (subsystem, image_base) = match pe.header.optional_header {
             Some(oh) => (
@@ -108,6 +117,7 @@ impl PeAnalysis {
             has_debug_info: pe.debug_data.is_some(),
             mitigations: Mitigations::from_pe(&pe),
             loader,
+            safe_variants,
             packer_hints,
             overlay_size,
         })
@@ -190,6 +200,24 @@ fn subsystem_name(s: u16) -> String {
     .to_string()
 }
 
+/// Hardened CRT variants an image imports, sorted and deduplicated.
+///
+/// The `_s` suffix is Microsoft's secure-CRT convention (`strcpy_s`, `sprintf_s`). The
+/// `__stdio_common_*_s` entries are the UCRT's internal targets for the `printf_s` family and
+/// count as the same signal. `rand_s` and `gets_s` are included: they are the hardened
+/// replacements for names the banned list flags.
+fn collect_safe_variants(imports: &[ImportRef]) -> Vec<String> {
+    let mut out: Vec<String> = imports
+        .iter()
+        .map(|i| i.name.as_str())
+        .filter(|n| n.ends_with("_s") || n.ends_with("_s_l"))
+        .map(|n| n.to_string())
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
 /// Shared fixtures for tests in sibling modules, which cannot reach a private test module.
 #[cfg(test)]
 pub(crate) mod tests_support {
@@ -227,6 +255,7 @@ pub(crate) mod tests_support {
                 cet: mitigations::State::Enabled,
             },
             loader: LoaderSurface::default(),
+            safe_variants: vec![],
             packer_hints: vec![],
             overlay_size: 0,
         }
@@ -300,6 +329,7 @@ mod tests {
                 cet: mitigations::State::Unknown,
             },
             loader: LoaderSurface::default(),
+            safe_variants: vec![],
             packer_hints: vec![],
             overlay_size: 0,
         }

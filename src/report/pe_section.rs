@@ -111,6 +111,26 @@ pub fn write_text(w: &mut dyn Write, r: &Report) -> Result<()> {
         writeln!(w, "  No packer or section anomalies detected")?;
     }
 
+    // String hygiene, which the banned-function list alone reports upside down: an image can
+    // import 23 hardened variants beside 5 unsafe ones, and naming only the five misleads.
+    let hardened: usize = pes
+        .iter()
+        .filter(|e| !e.pe.as_ref().unwrap().safe_variants.is_empty())
+        .count();
+    if hardened > 0 {
+        let total: usize = pes
+            .iter()
+            .map(|e| e.pe.as_ref().unwrap().safe_variants.len())
+            .sum();
+        writeln!(
+            w,
+            "  String hygiene: {} hardened CRT import(s) across {} of {} image(s)",
+            thousands(total as u64),
+            hardened,
+            pes.len()
+        )?;
+    }
+
     let total_imports: usize = pes
         .iter()
         .map(|e| e.pe.as_ref().unwrap().imports.len())
