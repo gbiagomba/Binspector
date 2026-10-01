@@ -31,6 +31,7 @@ pub fn run_many(
         // One target produces output byte-identical to a single-target scan, which is what
         // keeps every existing report, test, and downstream consumer working unchanged.
         [only] => run_labeled(&only.path, &only.label, &only.selected_by, cfg, observer),
+        many if cfg.threads > 1 && many.len() > 1 => run_parallel(many, cfg, observer),
         many => {
             let total = many.len();
             let mut merged: Option<ScanOutput> = None;
@@ -69,6 +70,100 @@ pub fn run_many(
             Ok(out)
         }
     }
+}
+
+/// Scan several targets at once, then fold them in target order.
+///
+/// The seam is the one this module already documents: per-target scans are independent, every cap in
+/// `Limits` is per target, and `merge` is the fold. Nothing inside a single target is parallelised,
+/// because the walk's visitor is `FnMut` over about a dozen accumulators and sharding those is a
+/// different change with a different risk profile.
+///
+/// **Output is identical to a sequential run.** Results are collected into a slot per target and
+/// merged in index order, never in completion order, so the report does not depend on which thread
+/// finished first. That is the property the test asserts, and it is the reason this is worth doing
+/// at all: a faster scan that produced a different report each run would be useless for diffing.
+///
+/// Observation is the one casualty. `Observer` is `&dyn` and not `Sync`, so the workers cannot call
+/// it. Per-target progress events are emitted from this thread before the work starts rather than as
+/// each target completes, and the per-member verbose stream is unavailable under `--threads` above
+/// one. A caller who wants that detail passes `--threads 1`, which is also what `-vv` implies they
+/// want.
+fn run_parallel(
+    many: &[crate::select::Target],
+    cfg: &ScanConfig,
+    observer: &dyn Observer,
+) -> Result<ScanOutput> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Mutex;
+
+    let total = many.len();
+    for (i, t) in many.iter().enumerate() {
+        observer.on(&Event::Target {
+            label: &t.label,
+            index: i + 1,
+            total,
+            size: t.size,
+        });
+    }
+
+    let slots: Vec<Mutex<Option<Result<ScanOutput>>>> =
+        (0..total).map(|_| Mutex::new(None)).collect();
+    let next = AtomicUsize::new(0);
+    let workers = cfg.threads.min(total);
+
+    std::thread::scope(|scope| {
+        for _ in 0..workers {
+            scope.spawn(|| loop {
+                let i = next.fetch_add(1, Ordering::Relaxed);
+                if i >= total {
+                    break;
+                }
+                let t = &many[i];
+                // `Null` because `Observer` is not `Sync`. Events for this target were already
+                // emitted above.
+                let out = run_labeled(
+                    &t.path,
+                    &t.label,
+                    &t.selected_by,
+                    cfg,
+                    &crate::observe::Null,
+                );
+                *slots[i].lock().expect("slot mutex") = Some(out);
+            });
+        }
+    });
+
+    // Fold in target order, which is what keeps the output independent of scheduling.
+    let mut merged: Option<ScanOutput> = None;
+    let mut dump: Option<crate::spool::Spool> = None;
+    for slot in slots {
+        let mut one = slot
+            .into_inner()
+            .expect("slot mutex")
+            .expect("every slot is filled before the scope ends")?;
+        if let Some(mut reader) = one.spool.take() {
+            let sink = match dump.as_mut() {
+                Some(s) => s,
+                None => {
+                    dump = Some(crate::spool::Spool::new()?);
+                    dump.as_mut().expect("just created")
+                }
+            };
+            sink.absorb(&mut reader)?;
+        }
+        merged = Some(match merged {
+            None => one,
+            Some(acc) => merge(acc, one),
+        });
+    }
+    let mut out = merged.expect("at least two targets");
+    finish_aggregate(&mut out.report);
+    out.spool = match dump {
+        Some(s) => Some(s.finish()?),
+        None => None,
+    };
+    Ok(out)
 }
 
 /// Fold one target's report into the accumulated one.

@@ -377,6 +377,45 @@ fn a_multi_target_report_names_its_digest_instead_of_printing_empty_fields() {
 }
 
 #[test]
+fn thread_count_changes_the_speed_and_nothing_else() {
+    // The property that makes --threads worth having: a faster scan producing a different report
+    // each run would be useless for diffing two builds. Results are merged in target order rather
+    // than completion order, so scheduling cannot reach the output.
+    let dir = TempDir::new().unwrap();
+    let tree = dir.path().join("tree");
+    std::fs::create_dir_all(&tree).unwrap();
+    for (name, body) in [
+        ("a.exe", &b"\x00strcpy\x00"[..]),
+        ("b.exe", &b"\x00gets\x00"[..]),
+        ("c.exe", &b"\x00system\x00"[..]),
+        ("d.exe", &b"\x00memcpy\x00"[..]),
+        ("e.exe", &b"\x00atoi\x00"[..]),
+        ("f.exe", &b"\x00sprintf\x00"[..]),
+    ] {
+        std::fs::write(tree.join(name), fake_pe(body)).unwrap();
+    }
+
+    let run = |n: &str| -> String {
+        let out = bin_stdout()
+            .args(["--format", "json", "--threads", n])
+            .arg(&tree)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "--threads {} failed", n);
+        let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        // The scan timestamp differs between any two runs, threaded or not.
+        let mut v = v;
+        v.as_object_mut().unwrap().remove("timestamp");
+        serde_json::to_string(&v).unwrap()
+    };
+
+    let one = run("1");
+    for n in ["2", "4", "16"] {
+        assert_eq!(one, run(n), "--threads {} changed the report", n);
+    }
+}
+
+#[test]
 fn extract_cannot_be_talked_into_writing_outside_its_directory() {
     // Member names in an archive are attacker-controlled. Rather than filter traversal, the output
     // name is built from a content hash plus a sanitised leaf, so no component of the member's own

@@ -113,6 +113,7 @@ binspector --banned-filter '^str' ./app.exe
 | `--no-pe` | Alias for `--no-exe`, kept because it was the name before 5.2.0 |
 | `--carve` | Scan every member for embedded file signatures. Opt-in at runtime, not a build gate |
 | `--extract <DIR>` | Write every unpacked member into `DIR`. The only thing that makes a scan write bytes from the target |
+| `--threads <N>` | Targets to scan at once. Defaults to the number of CPU cores |
 | `--ioc-cap <N>` | Maximum indicators of each kind to collect (default 500) |
 | `--reputation` | Look the hash up with VirusTotal and MetaDefender |
 | `--cve` | Resolve detected components against NVD for known CVEs |
@@ -698,6 +699,27 @@ Detection uses 20 curated signatures anchored on library banner text, not bare v
 numbers, so `1.2.3` alone is never a detection. It is not cve-bin-tool's roughly 380
 checkers, and the report says so: a component with no detector produces no CVEs, which is
 not the same as having none.
+
+## Parallelism
+
+`--threads <N>` scans several targets at once, defaulting to the core count that
+`available_parallelism` reports, which respects cgroup and affinity limits so a one-core container
+does not spawn sixteen threads.
+
+**Across targets, never within one.** Every cap in the limit set is defined per target, so a shared
+byte budget would let the first target consume the four hundredth's coverage. A single large target
+therefore sees no speedup, and the ceiling on any run is set by its biggest member: on a 553 MB
+ten-target set whose largest target is 47% of the bytes, the measured improvement is 17.5s to 6.7s.
+
+**Output is byte-identical regardless of thread count.** Results are collected per target and merged
+in target order, never in completion order, so two runs over the same input produce the same report
+and a diff between two builds shows real changes only. That is asserted by a test across 1, 2, 4 and
+16 threads.
+
+The trade is observation. The observer is not shareable across threads, so per-target progress is
+emitted before the work starts rather than as each target finishes, and the per-member `-vv` stream
+is unavailable above one thread. Pass `--threads 1` when you want to watch the scan decide, which is
+what `-vv` implies anyway.
 
 ## Extraction
 

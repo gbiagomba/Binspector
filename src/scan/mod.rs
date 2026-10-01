@@ -38,6 +38,11 @@ pub struct ScanConfig {
     /// `None` for every ordinary run, which is what keeps "nothing from the target is written to
     /// disk" true by default rather than by convention.
     pub extract: Option<PathBuf>,
+    /// How many targets to scan at once. Always at least 1.
+    ///
+    /// Parallelism is across targets only. Every cap in `Limits` is defined per target, so a shared
+    /// budget would let the first target consume the last one's coverage.
+    pub threads: usize,
     pub project: Option<String>,
     pub min_len: usize,
     pub ascii: bool,
@@ -68,6 +73,7 @@ impl Default for ScanConfig {
     fn default() -> Self {
         Self {
             extract: None,
+            threads: 1,
             project: None,
             min_len: 4,
             ascii: true,

@@ -154,6 +154,10 @@ pub struct Cli {
     #[arg(long, value_name = "DIR")]
     pub extract: Option<PathBuf>,
 
+    /// Targets to scan in parallel. Defaults to the number of CPU cores
+    #[arg(long, value_name = "N")]
+    pub threads: Option<usize>,
+
     /// Skip executable parsing (headers, sections, imports, mitigations) for PE, ELF, and Mach-O
     #[arg(long = "no-exe", alias = "no-pe", visible_alias = "no-pe")]
     pub no_pe: bool,
@@ -274,6 +278,12 @@ pub struct Resolved {
     /// The only thing that makes a scan write anything from the target. Absent by default, which is
     /// what keeps the in-memory guarantee true for every ordinary run.
     pub extract: Option<PathBuf>,
+    /// How many targets to scan at once.
+    ///
+    /// Always at least 1. Parallelism is across targets, never within one, because every resource
+    /// cap in `Limits` is defined per target and a shared budget would let the first target eat the
+    /// four hundredth's coverage.
+    pub threads: usize,
     /// Network enrichment requested by the caller.
     pub reputation: bool,
     pub cve: bool,
@@ -298,6 +308,17 @@ pub struct Resolved {
 fn has_trailing_separator(p: &std::path::Path) -> bool {
     let s = p.as_os_str().to_string_lossy();
     s.ends_with('/') || (cfg!(windows) && s.ends_with('\\'))
+}
+
+/// Default parallelism: the number of cores the process may use.
+///
+/// `available_parallelism` respects cgroup and affinity limits, so a container with one core does
+/// not spawn sixteen threads. Falls back to 1 when the platform cannot say, which is the safe
+/// direction: sequential output is always correct.
+fn default_threads() -> usize {
+    std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
 }
 
 impl Cli {
@@ -453,6 +474,7 @@ impl Cli {
         };
         let scan = ScanConfig {
             extract: self.extract.clone(),
+            threads: self.threads.unwrap_or_else(default_threads).max(1),
             first_party,
             project: self.project,
             min_len: self.min_len,
@@ -505,6 +527,7 @@ impl Cli {
             // `ReplaceExtension` treat `2026.10.01-15.34.50` as an extension to replace.
             output_is_default: (self.output.is_none() || given_is_dir) && !to_stdout,
             extract: self.extract.clone(),
+            threads: self.threads.unwrap_or_else(default_threads).max(1),
             reputation: self.reputation,
             cve: self.cve,
             cve_limit: self.cve_limit,

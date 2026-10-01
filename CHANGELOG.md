@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.5.0] - 2026-10-01
+
+### Added
+- **`--threads <N>`, defaulting to the core count.** Targets are scanned in parallel, and the output
+  is byte-identical to a single-threaded run because results are merged in target order rather than
+  completion order. A faster scan that produced a different report each run would be useless for
+  diffing two builds. Measured on a 553 MB ten-target set: 17.5s to 6.7s.
+
+  Across targets, never within one. Every cap in the limit set is per target, so a shared budget
+  would let the first target consume the last one's coverage. The trade is that the observer is not
+  shareable across threads, so the per-member `-vv` stream is unavailable above one thread.
+- **`--extract <DIR>` writes unpacked members to disk**, which is the only part of a scan that
+  writes bytes from the target. Names are flattened rather than mirrored: each file is a content-hash
+  prefix plus a sanitised leaf, so no component of a member's own path reaches the filesystem and an
+  entry named `../../etc/passwd` cannot write outside the directory. Traversal is not filtered, it is
+  structurally impossible. Verified against a hostile archive carrying traversal, absolute paths and
+  a reserved device name.
+
+### Changed
+- The in-memory claims in four places said nothing is written to disk. True before `--extract`, and
+  now qualified rather than quietly falsified. `container::limits` mattered most: it described
+  member-name sanitising as defence in depth *because* nothing was written, and that reasoning is
+  load-bearing once extraction exists.
+
 ## [5.4.0] - 2026-10-01
 
 ### Added

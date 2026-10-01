@@ -90,6 +90,7 @@ The legacy shell version is still in the tree under [legacy/](legacy/), kept for
 - ✅ **Remediation on every finding**, not just the mitigations: what to replace a banned call with, and why the obvious replacement is wrong for the handful whose failure mode is not their family's
 - ✅ **Build provenance**: developer-home paths in a shipped artifact, which disclose a username, show the build did not come from CI, and often name a statically linked dependency absent from any manifest
 - ✅ **It tells you what it did not do**: coverage gaps, suppressed findings and the rule that suppressed them, indicators dropped at the cap, and analysis that was available and did not run
+- ✅ **Parallel across targets**, defaulting to your core count, with output byte-identical to a single-threaded run because results merge in target order rather than completion order
 - ✅ **Docker support**
 
 ---
@@ -178,6 +179,7 @@ cargo build --release --no-default-features
     --dump                        Include every extracted string, matches highlighted
     --carve                       Scan members for embedded file signatures
     --extract <DIR>               Write every unpacked member into DIR, flat and hash-named
+    --threads <N>                 Targets to scan at once. Defaults to CPU cores
     --no-exe                      Skip PE, ELF and Mach-O parsing
     --reputation                  VirusTotal and MetaDefender lookup (hash only)
     --cve                         Resolve detected components against NVD
