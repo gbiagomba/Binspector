@@ -170,6 +170,9 @@ pub fn write(
     }
     writeln!(w)?;
 
+    // Remediation belongs with Findings, not with the analysis sections.
+    super::analysis::write_remediation_markdown(w, r)?;
+
     // Every analysis section, in the same order the text report uses. Before this, markdown
     // carried Findings, Coverage, Warnings and Occurrences only, so a reader of the .md saw no
     // mitigations, no certificates, no DLL search order and no indicators at all.

@@ -2,7 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
-## [5.4.0] - unreleased
+## [5.4.0] - 2026-10-01
+
+### Added
+- **Markdown and HTML carry every analysis section.** They rendered Findings, Coverage, Warnings and
+  Occurrences only, so a reader of the `.md` saw no mitigations, no certificates, no DLL search
+  order and no indicators, and reasonably concluded the tool had not looked. Six sections were
+  text-only for three releases because nothing tested it.
+- **Remediation for banned-function findings**, in the report and in SARIF `help`. One entry per
+  category, plus overrides for the functions whose failure mode is not their family's: `strncpy`
+  does not NUL-terminate, `strncat` bounds the source rather than the destination, `PathCombineW`
+  documents a `MAX_PATH` destination with no parameter to enforce it.
+- **A build-provenance section.** Developer-home paths in a shipped artifact disclose a username,
+  show the build did not come from CI, and frequently name a statically linked dependency that
+  appears in no manifest. On the reference bundle this recovers the exact path an adversarial review
+  had to find by hand, plus a second vendored OpenCV at another version that the review missed.
+- **Indicator truncation is disclosed.** Each kind counts what it saw after `--ioc-cap` and the
+  report says so. On the reference bundle that is 11,147 indicators previously discarded in silence.
+- **Analysis that did not run is named.** A default run lists `--carve`, `--reputation` and `--cve`
+  and states that their absence is not a finding about the target.
+
+### Changed
+- **Occurrences are ordered worst-first**, then by confidence. They were in scan order, so on a
+  ten-target run the first 812 of 1,355 rows were low-severity matches inside a symbol package and
+  the first critical sat at index 812.
+- Certificate and chain reporting no longer depends on banned-function findings existing.
 
 ### Fixed
 - **`-o` naming a directory wrote the files beside it.** `format::destination` derives a stem
@@ -25,10 +49,21 @@ All notable changes to this project will be documented in this file.
   filtered elsewhere, but carved descriptions, loader module names, IPC strings, section names and
   component names were not, and they reach HTML under the format-parity work.
 
-### Changed
+- **Certificate reporting was gated on findings.** `write_signature_caveat` and `write_chain_text`
+  were tail calls of the findings-by-origin block, which returns early when no occurrence is
+  attributable to a parsed PE, so a clean scan of 441 verified signatures printed nothing about any
+  of them.
+- **The indicator cap dropped the one path that mattered.** It stops collecting in scan order, so a
+  thousand near-identical compiler header paths reached it before the single developer path that was
+  the only trace of a vendored dependency. An adversarial review attributed this to the 5.0.0
+  evidence rules; comparing both scans showed the path was never in the indicator list in either
+  version, so the fix is here rather than in the filtering, which would have reintroduced the false
+  positives that review credited 5.0.0 for removing.
 - README restructured, with six false claims corrected after an adversarial fact-check against the
   source. `pe::authenticode` also claimed a differential test that does not exist; it now states
   that the comparison was a one-off local run and is not committed.
+- Retroactive tags for 5.1.1 and 5.2.0, which were released as commits only, and a CI change so
+  GitHub picks the latest release by version rather than by publish order.
 
 ## [5.3.0] - 2026-10-01
 

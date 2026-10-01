@@ -183,6 +183,7 @@ pub fn write(
         }
         writeln!(w, "</tbody></table>")?;
 
+        super::analysis::write_remediation_html(w, r)?;
         // Every analysis section, in the same order the text report uses. HTML carried only
         // Findings, Coverage, Warnings and Occurrences before this.
         super::analysis::write_html(w, r, opts)?;

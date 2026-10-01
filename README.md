@@ -87,6 +87,9 @@ The legacy shell version is still in the tree under [legacy/](legacy/), kept for
 - ✅ **Hash-only reputation** via VirusTotal and MetaDefender. File content is never transmitted
 - ✅ **Fuzzes its own parsers** differentially and in-process, and prepares and drives an AFL++, honggfuzz, libFuzzer or WinAFL campaign against an instrumented harness you build
 - ✅ **Six platform targets**: Linux, macOS and Windows, on x64 and ARM64
+- ✅ **Remediation on every finding**, not just the mitigations: what to replace a banned call with, and why the obvious replacement is wrong for the handful whose failure mode is not their family's
+- ✅ **Build provenance**: developer-home paths in a shipped artifact, which disclose a username, show the build did not come from CI, and often name a statically linked dependency absent from any manifest
+- ✅ **It tells you what it did not do**: coverage gaps, suppressed findings and the rule that suppressed them, indicators dropped at the cap, and analysis that was available and did not run
 - ✅ **Docker support**
 
 ---
@@ -100,12 +103,12 @@ Each release ships a bare binary and an archive for every target.
 
 | Platform | Architecture | Binary |
 |----------|-------------|--------|
-| Linux | x64 | `binspector-x86_64-unknown-linux-gnu-v5.3.0` |
-| Linux | ARM64 | `binspector-aarch64-unknown-linux-gnu-v5.3.0` |
-| macOS | x64 | `binspector-x86_64-apple-darwin-v5.3.0` |
-| macOS | ARM64 | `binspector-aarch64-apple-darwin-v5.3.0` |
-| Windows | x64 | `binspector-x86_64-pc-windows-msvc-v5.3.0.exe` |
-| Windows | ARM64 | `binspector-aarch64-pc-windows-msvc-v5.3.0.exe` |
+| Linux | x64 | `binspector-x86_64-unknown-linux-gnu-v5.4.0` |
+| Linux | ARM64 | `binspector-aarch64-unknown-linux-gnu-v5.4.0` |
+| macOS | x64 | `binspector-x86_64-apple-darwin-v5.4.0` |
+| macOS | ARM64 | `binspector-aarch64-apple-darwin-v5.4.0` |
+| Windows | x64 | `binspector-x86_64-pc-windows-msvc-v5.4.0.exe` |
+| Windows | ARM64 | `binspector-aarch64-pc-windows-msvc-v5.4.0.exe` |
 
 **Install (Linux/macOS):**
 
@@ -120,7 +123,7 @@ sudo mv binspector-* /usr/local/bin/binspector
 # A per-user location on PATH, rather than a Windows-owned directory
 $dir = "$env:LOCALAPPDATA\Programs\binspector"
 New-Item -ItemType Directory -Force -Path $dir | Out-Null
-Move-Item .\binspector-x86_64-pc-windows-msvc-v5.3.0.exe "$dir\binspector.exe"
+Move-Item .\binspector-x86_64-pc-windows-msvc-v5.4.0.exe "$dir\binspector.exe"
 ```
 
 ---

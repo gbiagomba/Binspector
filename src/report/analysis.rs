@@ -73,10 +73,31 @@ fn split(text: &str) -> Vec<Section<'_>> {
     out
 }
 
+/// Render just the remediation block, which belongs after Findings rather than with the analysis
+/// sections and so is emitted separately by the markdown and HTML writers.
+fn render_remediation(r: &Report) -> Result<String> {
+    let mut buf: Vec<u8> = Vec::new();
+    super::text::write_remediation(&mut buf, r)?;
+    Ok(String::from_utf8(buf)?)
+}
+
+/// Write the remediation block as markdown.
+pub fn write_remediation_markdown(w: &mut dyn Write, r: &Report) -> Result<()> {
+    emit_markdown(w, &render_remediation(r)?)
+}
+
+/// Write the remediation block as HTML.
+pub fn write_remediation_html(w: &mut dyn Write, r: &Report) -> Result<()> {
+    emit_html(w, &render_remediation(r)?)
+}
+
 /// Write the analysis sections as markdown: a real heading per section, the aligned body fenced.
 pub fn write_markdown(w: &mut dyn Write, r: &Report, opts: &RenderOpts) -> Result<()> {
-    let text = render(r, opts)?;
-    for s in split(&text) {
+    emit_markdown(w, &render(r, opts)?)
+}
+
+fn emit_markdown(w: &mut dyn Write, text: &str) -> Result<()> {
+    for s in split(text) {
         // Not `md_cell`: a heading is not a table cell, and escaping its angle brackets would
         // mangle counts like "(10, 1,355 occurrence(s))". Headings here are tool-generated text,
         // never attacker-controlled; every member name and signer reaches the fenced body, which
@@ -98,8 +119,11 @@ pub fn write_markdown(w: &mut dyn Write, r: &Report, opts: &RenderOpts) -> Resul
 
 /// Write the analysis sections as HTML, escaping every body line.
 pub fn write_html(w: &mut dyn Write, r: &Report, opts: &RenderOpts) -> Result<()> {
-    let text = render(r, opts)?;
-    for s in split(&text) {
+    emit_html(w, &render(r, opts)?)
+}
+
+fn emit_html(w: &mut dyn Write, text: &str) -> Result<()> {
+    for s in split(text) {
         writeln!(w, "<h2>{}</h2>", html_escape(s.heading))?;
         if s.body.is_empty() {
             continue;

@@ -50,6 +50,29 @@ Container format `zip`, 6 members, 2.2 MiB unpacked, 11,200 strings.
 | `Microsoft.VCLibs.ARM64.14.00.Desktop.appx :: Bridge.dll` | pe | 128.0 KiB | 900 |
 | `Payload.msix :: Contents :: MacOS :: Helper` | macho | 96.0 KiB | 800 |
 
+## Remediation
+
+```text
+  - getenv
+      review the call site: confirm the destination size is known and enforced, and that every input is validated after canonicalisation
+  ! atoi
+      use a conversion that reports failure (`strtol` with `errno`, `strtonum`, Rust's `parse`) rather than one that returns zero for both a valid zero and an error
+  - memcpy
+      the call itself is ordinary; the defect is always the length. Confirm the length is derived from the *destination* size rather than the source, and that it cannot be influenced by input
+  !! sprintf
+      never pass caller-influenced data as the format argument. Use a literal format and pass the data as a parameter, and prefer the `_s` or `n` variant that takes the destination size
+  - memset
+      check the allocation result, and compute the size with a checked multiply so an integer overflow cannot produce an undersized buffer
+  ! ShellExecuteW
+      pass a fully qualified, quoted application path rather than a bare name, so the executable cannot be resolved out of a directory an attacker can write to
+  !! LoadLibraryExW
+      load by a fully qualified path, and call `SetDefaultDllDirectories` with `LOAD_LIBRARY_SEARCH_SYSTEM32` at startup so an attacker-writable directory is never searched
+  !!! strcpy
+      replace with a bounded variant that takes the destination size and guarantees termination (`strcpy_s`, `strlcpy`, `snprintf`), or use a type that owns its buffer. A length check beside the call is not equivalent: it has to be right at every call site
+  !!! gets
+      `gets` cannot be used safely and was removed from C in C11. Use `fgets` with an explicit size, or `gets_s`
+```
+
 ## Targets (3, 9 occurrence(s), 6 member(s) scanned, 3 of 3 reached an executable image)
 
 ```text

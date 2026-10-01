@@ -186,7 +186,7 @@ fn write_summary(w: &mut dyn Write, r: &Report, opts: &RenderOpts) -> Result<()>
 /// Grouped by function rather than repeated per occurrence, because the advice is a property of the
 /// function and 1,355 occurrences of the same ten names would otherwise print the same ten
 /// paragraphs 1,355 times.
-fn write_remediation(w: &mut dyn Write, r: &Report) -> Result<()> {
+pub(super) fn write_remediation(w: &mut dyn Write, r: &Report) -> Result<()> {
     if r.summary.is_empty() {
         return Ok(());
     }
