@@ -472,8 +472,16 @@ impl Cli {
             max_input_bytes: self.max_input_bytes,
             ..Default::default()
         };
+        // Created once here, before any scanning, so an unwritable directory fails immediately and
+        // so every target shares one extractor and one set of already-written digests.
+        let extractor = match self.extract.as_deref() {
+            Some(dir) => Some(std::sync::Arc::new(
+                crate::container::extract::Extractor::new(dir)?,
+            )),
+            None => None,
+        };
         let scan = ScanConfig {
-            extract: self.extract.clone(),
+            extract: extractor,
             threads: self.threads.unwrap_or_else(default_threads).max(1),
             first_party,
             project: self.project,

@@ -19,6 +19,7 @@
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use anyhow::{Context, Result};
 
@@ -37,11 +38,27 @@ pub struct ExtractReport {
 }
 
 /// Collects members to disk as the walk visits them.
+///
+/// Shared across every target in a run, and across threads, which is why the state is behind a
+/// mutex rather than owned per scan. One extractor per target would report a partial count per
+/// target (sixteen lines on a sixteen-target run) and would deduplicate only within a target, so the
+/// same runtime DLL shipped for four architectures counted as four writes rather than one and three
+/// duplicates.
+///
+/// Concurrent writes to the same path are safe by construction rather than by locking: the filename
+/// is derived from the content hash, so two threads racing on one path are writing identical bytes
+/// and any interleaving produces the same file. The mutex guards the bookkeeping, not the write.
+#[derive(Debug)]
 pub struct Extractor {
     dir: PathBuf,
+    state: Mutex<State>,
+    max_files: usize,
+}
+
+#[derive(Debug, Default)]
+struct State {
     seen: BTreeSet<String>,
     report: ExtractReport,
-    max_files: usize,
 }
 
 /// Upper bound on files written in one run.
@@ -58,11 +75,13 @@ impl Extractor {
             .with_context(|| format!("creating extraction directory {}", dir.display()))?;
         Ok(Self {
             dir: dir.to_path_buf(),
-            seen: BTreeSet::new(),
-            report: ExtractReport {
-                dir: dir.to_path_buf(),
-                ..ExtractReport::default()
-            },
+            state: Mutex::new(State {
+                seen: BTreeSet::new(),
+                report: ExtractReport {
+                    dir: dir.to_path_buf(),
+                    ..ExtractReport::default()
+                },
+            }),
             max_files: MAX_FILES,
         })
     }
@@ -72,29 +91,40 @@ impl Extractor {
     /// Never returns an error for a member: a file that cannot be written is counted and the scan
     /// continues, because losing the whole analysis to one unwritable name would be a worse
     /// outcome than an incomplete extraction.
-    pub fn take(&mut self, member: &Member) {
-        if self.report.written >= self.max_files {
-            self.report.skipped += 1;
-            return;
-        }
+    pub fn take(&self, member: &Member) {
         let digest = crate::hashing::digests(member.data).sha256;
-        if !self.seen.insert(digest.clone()) {
-            self.report.duplicates += 1;
-            return;
-        }
-        let name = format!("{}-{}", &digest[..16], safe_leaf(&member.chain_display()));
-        let path = self.dir.join(name);
-        match std::fs::write(&path, member.data) {
-            Ok(()) => {
-                self.report.written += 1;
-                self.report.bytes += member.data.len() as u64;
+        let path = {
+            let mut st = self.state.lock().expect("extractor state");
+            if st.report.written >= self.max_files {
+                st.report.skipped += 1;
+                return;
             }
-            Err(_) => self.report.skipped += 1,
+            if !st.seen.insert(digest.clone()) {
+                st.report.duplicates += 1;
+                return;
+            }
+            self.dir.join(format!(
+                "{}-{}",
+                &digest[..16],
+                safe_leaf(&member.chain_display())
+            ))
+        };
+        // Written outside the lock: the bytes are large and the path is unique to this member, so
+        // holding the mutex across the write would serialise every thread on disk I/O.
+        let outcome = std::fs::write(&path, member.data);
+        let mut st = self.state.lock().expect("extractor state");
+        match outcome {
+            Ok(()) => {
+                st.report.written += 1;
+                st.report.bytes += member.data.len() as u64;
+            }
+            Err(_) => st.report.skipped += 1,
         }
     }
 
-    pub fn finish(self) -> ExtractReport {
-        self.report
+    /// A snapshot of what has been written so far.
+    pub fn report(&self) -> ExtractReport {
+        self.state.lock().expect("extractor state").report.clone()
     }
 }
 
@@ -178,6 +208,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let mut e = Extractor::new(dir.path()).expect("create");
         e.max_files = 2;
+        let e = e;
 
         let data = b"the same bytes".to_vec();
         for name in ["a.dll", "b.dll"] {
@@ -200,7 +231,7 @@ mod tests {
             format: crate::container::Format::Unknown,
         });
 
-        let r = e.finish();
+        let r = e.report();
         assert_eq!(r.written, 2, "identical bytes are written once");
         assert_eq!(r.duplicates, 1);
         assert_eq!(r.skipped, 1, "and the cap is reported, not silent");

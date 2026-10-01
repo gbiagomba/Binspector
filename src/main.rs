@@ -161,6 +161,27 @@ fn run_fuzz(args: &binspector::cli::fuzz_args::FuzzArgs) -> Result<ExitCode> {
     })
 }
 
+/// One line describing what `--extract` wrote, or nothing when it was not asked for.
+///
+/// Reported rather than silent, because writing files is a side effect the caller should see
+/// accounted for, and it states what was *not* written as well as what was.
+fn extraction_note(cfg: &scan::ScanConfig) -> Option<String> {
+    let x = cfg.extract.as_ref()?.report();
+    let mut note = format!(
+        "extracted {} member(s), {} to {}",
+        x.written,
+        binspector::report::human_bytes(x.bytes),
+        x.dir.display()
+    );
+    if x.duplicates > 0 {
+        note.push_str(&format!("; {} duplicate(s) written once", x.duplicates));
+    }
+    if x.skipped > 0 {
+        note.push_str(&format!("; {} not written (cap or write error)", x.skipped));
+    }
+    Some(note)
+}
+
 fn run_scan(resolved: &binspector::cli::Resolved) -> Result<ExitCode> {
     binspector::banner::print_if_interactive(resolved.no_banner);
 
@@ -193,6 +214,11 @@ fn run_scan(resolved: &binspector::cli::Resolved) -> Result<ExitCode> {
         mut report,
         mut spool,
     } = scan::run_many(&plan.targets, &resolved.scan, observer.as_ref())?;
+    // One extraction line for the whole run, not one per target. The extractor is shared, so this
+    // is the complete count and cross-target duplicates have already collapsed.
+    if let Some(note) = extraction_note(&resolved.scan) {
+        report.warnings.push(note);
+    }
     // Selection warnings belong in the report, not only on stderr, so a reader of the file
     // knows what was filtered.
     for w in &plan.warnings {

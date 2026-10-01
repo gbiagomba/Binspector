@@ -37,7 +37,9 @@ pub struct ScanConfig {
     ///
     /// `None` for every ordinary run, which is what keeps "nothing from the target is written to
     /// disk" true by default rather than by convention.
-    pub extract: Option<PathBuf>,
+    /// Shared across every target in the run, so the count is one number and a member that appears
+    /// in several targets is written once.
+    pub extract: Option<std::sync::Arc<crate::container::extract::Extractor>>,
     /// How many targets to scan at once. Always at least 1.
     ///
     /// Parallelism is across targets only. Every cap in `Limits` is defined per target, so a shared
@@ -161,10 +163,6 @@ pub fn run_labeled(
     let mut spool = if cfg.dump { Some(Spool::new()?) } else { None };
     // The only thing in a scan that writes bytes from the target. Created before the walk so an
     // unwritable directory fails immediately rather than after several minutes of analysis.
-    let mut extractor = match cfg.extract.as_deref() {
-        Some(dir) => Some(crate::container::extract::Extractor::new(dir)?),
-        None => None,
-    };
 
     observer.on(&Event::Phase {
         name: "unpacking and scanning",
@@ -176,7 +174,7 @@ pub fn run_labeled(
         cfg.limits.clone(),
         observer,
         &mut |member| -> Result<()> {
-            if let Some(e) = extractor.as_mut() {
+            if let Some(e) = cfg.extract.as_ref() {
                 e.take(member);
             }
             let member_name = member.chain_display();
@@ -580,24 +578,6 @@ pub fn run_labeled(
     });
 
     let mut warnings = outcome.warnings.clone();
-    // Extraction is a side effect the caller asked for, so it is reported rather than silent, and
-    // the counts say what was not written as well as what was.
-    if let Some(e) = extractor {
-        let x = e.finish();
-        let mut note = format!(
-            "extracted {} member(s), {} to {}",
-            x.written,
-            crate::report::human_bytes(x.bytes),
-            x.dir.display()
-        );
-        if x.duplicates > 0 {
-            note.push_str(&format!("; {} duplicate(s) written once", x.duplicates));
-        }
-        if x.skipped > 0 {
-            note.push_str(&format!("; {} not written (cap or write error)", x.skipped));
-        }
-        warnings.push(note);
-    }
     if hit_cap_reached {
         warnings.push(format!(
             "occurrence detail capped at {} records; aggregate counts remain complete",
