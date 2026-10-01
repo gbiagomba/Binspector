@@ -377,6 +377,55 @@ fn a_multi_target_report_names_its_digest_instead_of_printing_empty_fields() {
 }
 
 #[test]
+fn extract_cannot_be_talked_into_writing_outside_its_directory() {
+    // Member names in an archive are attacker-controlled. Rather than filter traversal, the output
+    // name is built from a content hash plus a sanitised leaf, so no component of the member's own
+    // path reaches the filesystem at all and every file lands directly in the named directory.
+    let dir = TempDir::new().unwrap();
+    let out = dir.path().join("extracted");
+    let canary = dir.path().join("CANARY_MUST_NOT_EXIST");
+
+    let evil = dir.path().join("evil.zip");
+    let escape = format!("../../{}", canary.file_name().unwrap().to_string_lossy());
+    std::fs::write(
+        &evil,
+        zip_bytes(&[
+            (escape.as_str(), &fake_pe(b"\x00strcpy\x00")),
+            ("..\\..\\win_escape.dll", &fake_pe(b"\x00gets\x00")),
+            ("/absolute/escape.dll", &fake_pe(b"\x00system\x00")),
+            ("CON", &fake_pe(b"\x00atoi\x00")),
+            ("ordinary.dll", &fake_pe(b"\x00memcpy\x00")),
+        ]),
+    )
+    .unwrap();
+
+    bin_stdout()
+        .args(["--extract"])
+        .arg(&out)
+        .arg(&evil)
+        .assert()
+        .success();
+
+    assert!(
+        !canary.exists(),
+        "a member escaped the extraction directory"
+    );
+    for entry in std::fs::read_dir(&out).unwrap() {
+        let p = entry.unwrap().path();
+        assert_eq!(
+            p.parent(),
+            Some(out.as_path()),
+            "{} is not directly inside the extraction directory",
+            p.display()
+        );
+        assert!(p.is_file(), "{} is not a plain file", p.display());
+        let name = p.file_name().unwrap().to_string_lossy().to_string();
+        assert!(!name.contains(".."), "{} keeps a traversal sequence", name);
+        assert!(!name.starts_with('.'), "{} is hidden", name);
+    }
+}
+
+#[test]
 fn many_targets_write_one_combined_report_unless_split_is_asked_for() {
     // The property that must never regress: how many files appear is decided by the format list
     // and by --split, never by how many targets were scanned. A directory of four hundred images

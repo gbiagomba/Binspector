@@ -160,8 +160,9 @@ impl Budget {
 
 /// Reject archive member names that could escape an extraction root.
 ///
-/// Nothing is written to disk during a scan, so this is defence in depth rather
-/// than the only guard, and it also keeps hostile names out of report output.
+/// An ordinary scan writes nothing to disk, so this is defence in depth there, and it keeps
+/// hostile names out of report output. Under `--extract` it is one of two guards: the other is
+/// `container::extract`, which never uses a member's own path for a filename at all.
 pub fn is_safe_member_name(name: &str) -> bool {
     if name.is_empty() {
         return false;

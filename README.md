@@ -177,6 +177,7 @@ cargo build --release --no-default-features
     --matches-only                Report only the matches, omitting metadata and coverage
     --dump                        Include every extracted string, matches highlighted
     --carve                       Scan members for embedded file signatures
+    --extract <DIR>               Write every unpacked member into DIR, flat and hash-named
     --no-exe                      Skip PE, ELF and Mach-O parsing
     --reputation                  VirusTotal and MetaDefender lookup (hash only)
     --cve                         Resolve detected components against NVD
@@ -355,7 +356,7 @@ Binspector is pointed at files that may be hostile, so these are properties, not
 
 - **The sample is never executed.** There is no execution path: the only subprocesses the tool ever spawns are `curl`, for the two opt-in network lookups, and an external fuzzing engine you asked for.
 - **File content is never transmitted.** Reputation sends the SHA-256 in a GET path and nothing else, which matters because an unreleased binary uploaded to a third party is a disclosure event.
-- **No container member is ever written to disk:** containers are unpacked in memory, which removes extraction as an attack surface. The only files a scan creates are the report you asked for with `-o` and, under `--dump`, a temporary string spool that is deleted when the scan ends.
+- **No container member is written to disk unless you ask:** containers are unpacked in memory, so extraction is off the attack surface of an ordinary run. The only files a scan creates are the report you asked for with `-o`, a temporary string spool under `--dump` that is deleted when the scan ends, and the members `--extract` writes. Those are named from a content hash plus a sanitised leaf, never from the member's own path, so an archive entry called `../../etc/passwd` cannot write outside the directory you named.
 - **Parsers are bounds-checked and fuzzed:** four harnesses cover the string, container, PE and ELF/Mach-O readers. Where an upstream parser raw-indexed attacker-controlled header fields or honoured an attacker-chosen repeat count, the walk was reimplemented locally with checked arithmetic and checked for agreement with the original on real system binaries. Carving runs third-party code and is not covered by the container harness.
 - **Resource caps on everything**: nesting depth, unpacked bytes, expansion ratio, member count, recorded hits. A decompression bomb degrades to a warning and partial results, never to an abort.
 - **Revocation is deliberately not checked:** OCSP and CRL fetch a URL taken from the certificate under examination, which is attacker-controlled outbound traffic from the scanning host.

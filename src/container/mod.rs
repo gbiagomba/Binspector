@@ -2,13 +2,16 @@
 //!
 //! The walk hands each leaf member's bytes to a visitor and drops them again, so
 //! peak memory tracks the largest single member rather than the whole expanded
-//! tree. Nothing is written to disk, which keeps a scan safe to run on a host with
-//! little free space and removes extraction as an attack surface entirely.
+//! tree. Nothing is written to disk unless `--extract` asks for it, which keeps a
+//! scan safe to run on a host with little free space and keeps extraction off the
+//! attack surface of an ordinary run. See `container::extract` for why the one path
+//! that does write uses flattened, hashed names rather than the member's own.
 
 pub mod archives;
 pub mod carve;
 pub mod compressed;
 pub mod detect;
+pub mod extract;
 pub mod limits;
 pub mod zip;
 

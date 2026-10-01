@@ -150,6 +150,10 @@ pub struct Cli {
     #[arg(long)]
     pub carve: bool,
 
+    /// Write every unpacked member into this directory, under a hashed, sanitised name
+    #[arg(long, value_name = "DIR")]
+    pub extract: Option<PathBuf>,
+
     /// Skip executable parsing (headers, sections, imports, mitigations) for PE, ELF, and Mach-O
     #[arg(long = "no-exe", alias = "no-pe", visible_alias = "no-pe")]
     pub no_pe: bool,
@@ -265,6 +269,11 @@ pub struct Resolved {
     /// Also true when `-o` named a directory, because the stem inside it is that same timestamped
     /// default and needs the same naming mode.
     pub output_is_default: bool,
+    /// Where to write unpacked members, when the caller asked for them.
+    ///
+    /// The only thing that makes a scan write anything from the target. Absent by default, which is
+    /// what keeps the in-memory guarantee true for every ordinary run.
+    pub extract: Option<PathBuf>,
     /// Network enrichment requested by the caller.
     pub reputation: bool,
     pub cve: bool,
@@ -443,6 +452,7 @@ impl Cli {
             ..Default::default()
         };
         let scan = ScanConfig {
+            extract: self.extract.clone(),
             first_party,
             project: self.project,
             min_len: self.min_len,
@@ -494,6 +504,7 @@ impl Cli {
             // get `Naming::Append` and keep the dots in the stamp rather than having
             // `ReplaceExtension` treat `2026.10.01-15.34.50` as an extension to replace.
             output_is_default: (self.output.is_none() || given_is_dir) && !to_stdout,
+            extract: self.extract.clone(),
             reputation: self.reputation,
             cve: self.cve,
             cve_limit: self.cve_limit,

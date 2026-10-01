@@ -3,7 +3,7 @@
 //! Both were previously detected and reported as a coverage gap. They share ZIP's
 //! contract here: each readable member is handed to a callback, unsafe names and
 //! oversized members are skipped with a warning rather than aborting, and nothing is
-//! written to disk.
+//! written to disk unless `--extract` asks for it.
 
 use anyhow::{Context, Result};
 use std::io::{Cursor, Read};

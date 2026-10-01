@@ -112,6 +112,7 @@ binspector --banned-filter '^str' ./app.exe
 | `--no-exe` | Skip executable parsing for all three formats (headers, sections, imports, mitigations) |
 | `--no-pe` | Alias for `--no-exe`, kept because it was the name before 5.2.0 |
 | `--carve` | Scan every member for embedded file signatures. Opt-in at runtime, not a build gate |
+| `--extract <DIR>` | Write every unpacked member into `DIR`. The only thing that makes a scan write bytes from the target |
 | `--ioc-cap <N>` | Maximum indicators of each kind to collect (default 500) |
 | `--reputation` | Look the hash up with VirusTotal and MetaDefender |
 | `--cve` | Resolve detected components against NVD for known CVEs |
@@ -697,6 +698,25 @@ Detection uses 20 curated signatures anchored on library banner text, not bare v
 numbers, so `1.2.3` alone is never a detection. It is not cve-bin-tool's roughly 380
 checkers, and the report says so: a component with no detector produces no CVEs, which is
 not the same as having none.
+
+## Extraction
+
+`--extract <DIR>` writes every unpacked member to disk. It is the only part of a scan that writes
+anything from the target, which is why it is opt-in: without it the in-memory guarantee holds for the
+whole run.
+
+**Names are flattened, never mirrored.** Each file is `<sha256[..16]>-<sanitised leaf>`, where the
+leaf keeps only `[A-Za-z0-9._-]` and is capped at 48 characters. No component of the member's own
+path reaches the filesystem, so a member called `../../etc/passwd` cannot write outside `DIR`.
+Traversal is not filtered here, it is structurally impossible: the output is always exactly one file
+directly inside the directory you named.
+
+The hash leads the name so that two members sharing a leaf cannot collide, and so a duplicate is
+written once. On a bundle shipping the same runtime for four architectures that matters: a real
+2,967-member bundle extracts to 2,859 files with 108 duplicates collapsed.
+
+A cap of 10,000 files applies, and the report states what was written, what was deduplicated, and
+what was skipped.
 
 ## Carving
 
