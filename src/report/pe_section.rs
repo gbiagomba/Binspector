@@ -164,8 +164,62 @@ pub fn write_text(w: &mut dyn Write, r: &Report) -> Result<()> {
         emit_list(w, "Emails", &r.iocs.emails)?;
         emit_list(w, "Registry keys", &r.iocs.registry_keys)?;
         emit_list(w, "File paths", &r.iocs.file_paths)?;
+        let d = &r.iocs.dropped;
+        if d.total() > 0 {
+            // Collection truncation, not display truncation: these were seen and never recorded, so
+            // the counts above are a scan-order artifact rather than a total. Saying so is the same
+            // obligation `excluded_by_rule` meets for suppressed findings.
+            writeln!(
+                w,
+                "  {} further indicator(s) were seen after --ioc-cap ({}) was reached and not \
+                 collected: {} URL(s), {} IP(s), {} email(s), {} registry key(s), {} path(s)",
+                thousands(d.total() as u64),
+                thousands(r.iocs.cap as u64),
+                d.urls,
+                d.ips,
+                d.emails,
+                d.registry_keys,
+                d.file_paths
+            )?;
+        }
         writeln!(w)?;
     }
+    write_build_provenance(w, r)?;
+    Ok(())
+}
+
+/// Paths rooted in a developer's home directory, which are three findings in one.
+///
+/// Reported as their own section rather than as rows in a 1,950-entry path dump, because that is
+/// where this evidence went to die: an adversarial review had to recover a vendored OpenCV by
+/// grepping the binaries, since the only trace of it was one build path that the indicator cap had
+/// dropped in favour of a thousand near-identical compiler header paths.
+fn write_build_provenance(w: &mut dyn Write, r: &Report) -> Result<()> {
+    if r.iocs.build_paths.is_empty() {
+        return Ok(());
+    }
+    writeln!(
+        w,
+        "Build provenance ({} developer path(s) in shipped binaries)",
+        r.iocs.build_paths.len()
+    )?;
+    for p in r.iocs.build_paths.iter().take(12) {
+        writeln!(w, "  !! {}", truncate(p, 110))?;
+    }
+    if r.iocs.build_paths.len() > 12 {
+        writeln!(w, "  ... and {} more", r.iocs.build_paths.len() - 12)?;
+    }
+    writeln!(
+        w,
+        "  Each of these discloses a username, shows the artifact was built outside CI rather than \
+         reproducibly, and names directories that frequently identify a statically linked \
+         dependency absent from any manifest."
+    )?;
+    writeln!(
+        w,
+        "  fix: build in CI, and strip or remap source paths (`-fdebug-prefix-map`, `/PATHMAP`)."
+    )?;
+    writeln!(w)?;
     Ok(())
 }
 

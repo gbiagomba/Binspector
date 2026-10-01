@@ -41,6 +41,7 @@ const SECTIONS: &[&str] = &[
     "Carving",
     "Third-party components",
     "Indicators",
+    "Build provenance",
     "Findings",
     "Coverage",
     "Occurrences",

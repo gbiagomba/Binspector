@@ -418,6 +418,16 @@ fn item(sig: &str, desc: &str, class: Class, offset: u64, confident: bool) -> Ca
 /// desktop layout into a shipped binary.
 fn iocs() -> Iocs {
     Iocs {
+        // A developer-home path, which is the shape the build-provenance section reports and the
+        // one an adversarial review had to find by hand because the ordinary cap dropped it.
+        build_paths: strs(&[
+            r"C:\Users\Eric\Desktop\ocv43\opencv-4.3.0\modules\core\src\system.cpp",
+        ]),
+        cap: 500,
+        dropped: crate::pe::ioc::Dropped {
+            file_paths: 1_450,
+            ..Default::default()
+        },
         urls: vec![
             "https://update.example.com/v1/manifest.json".into(),
             "http://192.0.2.44/beacon".into(),

@@ -160,6 +160,14 @@ fn merge_iocs(acc: &mut crate::pe::Iocs, next: crate::pe::Iocs) {
     fold(&mut acc.ips, next.ips);
     fold(&mut acc.emails, next.emails);
     fold(&mut acc.registry_keys, next.registry_keys);
+    fold(&mut acc.build_paths, next.build_paths);
+    // Caps are per target, so the drop counts add and the cap itself is the same number on each.
+    acc.cap = acc.cap.max(next.cap);
+    acc.dropped.urls += next.dropped.urls;
+    acc.dropped.ips += next.dropped.ips;
+    acc.dropped.emails += next.dropped.emails;
+    acc.dropped.registry_keys += next.dropped.registry_keys;
+    acc.dropped.file_paths += next.dropped.file_paths;
     fold(&mut acc.file_paths, next.file_paths);
 }
 

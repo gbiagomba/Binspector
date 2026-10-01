@@ -161,7 +161,7 @@ Container format `zip`, 6 members, 2.2 MiB unpacked, 11,200 strings.
   5 occurrence(s) confirmed by the import table rather than inferred from text
 ```
 
-## Indicators (10 total)
+## Indicators (11 total)
 
 ```text
   URLs (2)
@@ -179,6 +179,15 @@ Container format `zip`, 6 members, 2.2 MiB unpacked, 11,200 strings.
   File paths (2)
     C:\Users\Eric\Desktop\ocv43\opencv-4.3.0\modules\core\src\system.cpp
     C:\Program Files\Example\bin\
+  1,450 further indicator(s) were seen after --ioc-cap (500) was reached and not collected: 0 URL(s), 0 IP(s), 0 email(s), 0 registry key(s), 1450 path(s)
+```
+
+## Build provenance (1 developer path(s) in shipped binaries)
+
+```text
+  !! C:\Users\Eric\Desktop\ocv43\opencv-4.3.0\modules\core\src\system.cpp
+  Each of these discloses a username, shows the artifact was built outside CI rather than reproducibly, and names directories that frequently identify a statically linked dependency absent from any manifest.
+  fix: build in CI, and strip or remap source paths (`-fdebug-prefix-map`, `/PATHMAP`).
 ```
 
 ## DLL search order

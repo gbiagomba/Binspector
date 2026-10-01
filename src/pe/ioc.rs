@@ -16,6 +16,42 @@ pub struct Iocs {
     pub emails: Vec<String>,
     pub registry_keys: Vec<String>,
     pub file_paths: Vec<String>,
+    /// Paths rooted in a developer's home directory, kept apart from `file_paths` and under their
+    /// own cap.
+    ///
+    /// These are three findings in one: a username disclosed in a shipped binary, a build that did
+    /// not come from CI, and often the only evidence of a statically linked dependency. They are
+    /// collected separately because they must not compete for the ordinary path budget. On a real
+    /// bundle the 500-path cap filled with a thousand near-identical MSVC header paths and dropped
+    /// the single developer path that was the only trace of a vendored OpenCV, which an adversarial
+    /// review then had to find by hand.
+    #[serde(default)]
+    pub build_paths: Vec<String>,
+    /// The per-target cap that was in force, so the disclosure line can name it.
+    #[serde(default)]
+    pub cap: usize,
+    /// How many of each kind were seen after the cap was reached and therefore not collected.
+    ///
+    /// Without this a count reads as a total when it is an artifact of scan order. The project
+    /// already refuses to suppress findings silently; the same applies to indicators.
+    #[serde(default)]
+    pub dropped: Dropped,
+}
+
+/// Per-kind count of indicators discarded because the cap was already reached.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
+pub struct Dropped {
+    pub urls: usize,
+    pub ips: usize,
+    pub emails: usize,
+    pub registry_keys: usize,
+    pub file_paths: usize,
+}
+
+impl Dropped {
+    pub fn total(&self) -> usize {
+        self.urls + self.ips + self.emails + self.registry_keys + self.file_paths
+    }
 }
 
 impl Iocs {
@@ -25,14 +61,20 @@ impl Iocs {
             && self.emails.is_empty()
             && self.registry_keys.is_empty()
             && self.file_paths.is_empty()
+            && self.build_paths.is_empty()
     }
 
+    /// The cap that was in force, recovered for the report's disclosure line.
+    ///
+    /// Derived rather than stored: every kind stops at the same cap, so the largest collected list
+    /// is it whenever anything was dropped at all.
     pub fn total(&self) -> usize {
         self.urls.len()
             + self.ips.len()
             + self.emails.len()
             + self.registry_keys.len()
             + self.file_paths.len()
+            + self.build_paths.len()
     }
 }
 
@@ -47,8 +89,20 @@ pub struct Extractor {
     emails: BTreeSet<String>,
     registry_keys: BTreeSet<String>,
     file_paths: BTreeSet<String>,
+    build_paths: BTreeSet<String>,
+    dropped: Dropped,
     cap: usize,
 }
+
+/// Cap on developer-home paths, separate from and far below the ordinary indicator cap.
+///
+/// Small on purpose: a handful names the machines and the vendored trees, and anything beyond that
+/// is the same few roots repeated. Separate on purpose: these must never lose a slot to boilerplate.
+const BUILD_PATH_CAP: usize = 64;
+
+/// Paths kept per home root. Two is enough to show the shape of a tree without letting one
+/// developer's deep dependency directory crowd out every other root.
+const PER_ROOT_CAP: usize = 2;
 
 impl Extractor {
     pub fn new(cap: usize) -> Self {
@@ -70,6 +124,8 @@ impl Extractor {
             emails: BTreeSet::new(),
             registry_keys: BTreeSet::new(),
             file_paths: BTreeSet::new(),
+            build_paths: BTreeSet::new(),
+            dropped: Dropped::default(),
             cap,
         }
     }
@@ -79,19 +135,21 @@ impl Extractor {
         if text.len() < 4 {
             return;
         }
-        if self.urls.len() < self.cap && (text.contains("://")) {
+        if text.contains("://") {
             for m in self.url.find_iter(text) {
-                self.urls.insert(m.as_str().to_string());
-                if self.urls.len() >= self.cap {
-                    break;
+                if self.urls.len() < self.cap {
+                    self.urls.insert(m.as_str().to_string());
+                } else {
+                    self.dropped.urls += 1;
                 }
             }
         }
-        if self.emails.len() < self.cap && text.contains('@') {
+        if text.contains('@') {
             for m in self.email.find_iter(text) {
-                self.emails.insert(m.as_str().to_string());
-                if self.emails.len() >= self.cap {
-                    break;
+                if self.emails.len() < self.cap {
+                    self.emails.insert(m.as_str().to_string());
+                } else {
+                    self.dropped.emails += 1;
                 }
             }
         }
@@ -99,17 +157,40 @@ impl Extractor {
             && (text.contains("HKEY_") || text.contains("HKLM") || text.contains("HKCU"))
         {
             for m in self.registry.find_iter(text) {
-                self.registry_keys.insert(m.as_str().to_string());
-                if self.registry_keys.len() >= self.cap {
-                    break;
+                if self.registry_keys.len() < self.cap {
+                    self.registry_keys.insert(m.as_str().to_string());
+                } else {
+                    self.dropped.registry_keys += 1;
                 }
             }
         }
-        if self.file_paths.len() < self.cap && text.contains(":\\") {
+        if text.contains(":\\") || text.contains('/') {
             for m in self.path.find_iter(text) {
-                self.file_paths.insert(m.as_str().to_string());
-                if self.file_paths.len() >= self.cap {
-                    break;
+                let p = m.as_str();
+                // A developer-home path is taken whatever the ordinary budget is doing. This is the
+                // whole fix: the interesting path is rare and arrives late, and the boilerplate is
+                // common and arrives early, so a first-come cap keeps exactly the wrong ones.
+                if is_build_path(p) {
+                    // Per-root quota, not just a total. Without it one noisy tree fills the budget:
+                    // nine Rust registry paths under a single CI account consumed the slots and
+                    // dropped the one developer path that identified a vendored dependency, which
+                    // is the same first-come failure this whole section exists to fix, one level
+                    // down. The roots are what matter; two examples each are plenty.
+                    let root = home_root(p);
+                    let per_root = self
+                        .build_paths
+                        .iter()
+                        .filter(|q| home_root(q) == root)
+                        .count();
+                    if per_root < PER_ROOT_CAP && self.build_paths.len() < BUILD_PATH_CAP {
+                        self.build_paths.insert(p.to_string());
+                    }
+                    continue;
+                }
+                if self.file_paths.len() < self.cap {
+                    self.file_paths.insert(p.to_string());
+                } else {
+                    self.dropped.file_paths += 1;
                 }
             }
         }
@@ -129,6 +210,9 @@ impl Extractor {
 
     pub fn finish(self) -> Iocs {
         Iocs {
+            build_paths: self.build_paths.into_iter().collect(),
+            dropped: self.dropped,
+            cap: self.cap,
             urls: self.urls.into_iter().collect(),
             ips: self.ips.into_iter().collect(),
             emails: self.emails.into_iter().collect(),
@@ -139,6 +223,65 @@ impl Extractor {
 }
 
 /// `1.0.0.0` and `6.9.0.0` are version numbers, not addresses.
+/// Whether a path is rooted in a developer's home directory rather than a system or install tree.
+///
+/// Three facts in one string, which is why these are pulled out rather than left in the general
+/// path list. The username is disclosed in a shipped artifact. The build did not come from CI, so
+/// it is not reproducible and the toolchain is whatever that machine had. And the directory names
+/// along the way frequently identify a statically linked dependency that appears in no manifest:
+/// `C:\Users\<name>\Desktop\ocv43\opencv-4.3.0\...` is the only trace of a vendored OpenCV in a
+/// bundle whose component list does not mention it.
+///
+/// Matched on the shape rather than on a username list, so it works for any developer. The two
+/// Windows system accounts are excluded because services legitimately run under them and their
+/// paths say nothing about who built anything.
+/// The `<drive>:\\Users\\<name>` or `/home/<name>` prefix of a path, used to spread the build-path
+/// budget across people and machines rather than across directories.
+fn home_root(p: &str) -> String {
+    let lower = p.to_ascii_lowercase().replace('\\', "/");
+    let parts: Vec<&str> = lower.split('/').filter(|s| !s.is_empty()).collect();
+    for (i, part) in parts.iter().enumerate() {
+        if (*part == "users" || *part == "home") && i + 1 < parts.len() {
+            return format!("{}/{}", part, parts[i + 1]);
+        }
+    }
+    lower
+}
+
+fn is_build_path(p: &str) -> bool {
+    let lower = p.to_ascii_lowercase();
+    let home = ["\\users\\", "/users/", "/home/"];
+    let system = [
+        "\\users\\public\\",
+        "\\users\\default\\",
+        "\\users\\all users\\",
+    ];
+    if system.iter().any(|s| lower.contains(s)) {
+        return false;
+    }
+    // Hosted CI accounts. A path under one of these is evidence the build *did* come from CI, so
+    // reporting it as "built outside CI" states the opposite of the truth. The username is still
+    // not a person's, so there is no disclosure to report either.
+    const CI_ACCOUNTS: &[&str] = &[
+        "runneradmin",
+        "runner",
+        "vsts",
+        "vssadministrator",
+        "azdevops",
+        "buildbot",
+        "jenkins",
+        "gitlab-runner",
+        "teamcity",
+    ];
+    let root = home_root(p);
+    if let Some(user) = root.rsplit('/').next() {
+        if CI_ACCOUNTS.contains(&user) {
+            return false;
+        }
+    }
+    home.iter().any(|h| lower.contains(h))
+}
+
 fn is_probably_version(s: &str) -> bool {
     let parts: Vec<&str> = s.split('.').collect();
     if parts.len() != 4 {
@@ -147,6 +290,71 @@ fn is_probably_version(s: &str) -> bool {
     // A trailing pair of zeroes is overwhelmingly a version, and a leading 0 is
     // never a routable first octet.
     (parts[2] == "0" && parts[3] == "0") || parts[0] == "0"
+}
+
+#[cfg(test)]
+mod build_path_tests {
+    use super::*;
+
+    #[test]
+    fn a_developer_home_is_a_build_path_on_either_platform() {
+        for p in [
+            r"C:\Users\Eric\Desktop\ocv43\opencv-4.3.0\modules\core\src\system.cpp",
+            "/Users/alice/src/thing/build/x.c",
+            "/home/bob/work/lib/y.c",
+        ] {
+            assert!(is_build_path(p), "{} should be a build path", p);
+        }
+    }
+
+    #[test]
+    fn install_and_system_trees_are_not() {
+        for p in [
+            r"C:\Program Files\Microsoft Visual Studio\2022\VC\include\atlbase.h",
+            r"C:\Windows\System32\kernel32.dll",
+            r"C:\Users\Public\Documents\shared.txt",
+            r"C:\Users\Default\NTUSER.DAT",
+            "/usr/include/stdio.h",
+        ] {
+            assert!(!is_build_path(p), "{} must not be a build path", p);
+        }
+    }
+
+    /// The defect this exists to fix: the ordinary cap filled with boilerplate and dropped the one
+    /// path that mattered, because it arrived late and the cap is first-come.
+    #[test]
+    fn a_developer_path_survives_a_full_indicator_budget() {
+        let mut e = Extractor::new(4);
+        for i in 0..50 {
+            e.feed(&format!(r"C:\Program Files\Vendor\inc\header{}.h", i));
+        }
+        e.feed(r"C:\Users\Eric\Desktop\ocv43\opencv-4.3.0\modules\core\src\system.cpp");
+        let out = e.finish();
+        assert_eq!(out.file_paths.len(), 4, "the ordinary cap still holds");
+        assert!(out.dropped.file_paths > 0, "and the overflow is counted");
+        assert_eq!(
+            out.build_paths.len(),
+            1,
+            "the developer path is kept regardless: {:?}",
+            out.build_paths
+        );
+        assert!(out.build_paths[0].contains("opencv-4.3.0"));
+    }
+
+    #[test]
+    fn truncation_is_counted_rather_than_silent() {
+        let mut e = Extractor::new(2);
+        for i in 0..20 {
+            e.feed(&format!("https://example.com/{}", i));
+        }
+        let out = e.finish();
+        assert_eq!(out.urls.len(), 2);
+        assert_eq!(
+            out.dropped.urls, 18,
+            "a count that reads as a total when it is a scan-order artifact is the defect"
+        );
+        assert!(out.dropped.total() >= 18);
+    }
 }
 
 #[cfg(test)]
