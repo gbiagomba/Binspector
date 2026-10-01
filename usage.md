@@ -509,6 +509,7 @@ unsigned images is a single statement about a build, not 179 findings.
 | `safe-seh` | 32-bit image registering no exception handlers | medium |
 | `authenticode` | No certificate table | medium |
 | `cet` | `CET_COMPAT` absent from the extended DLL characteristics | low |
+| `authenticode-digest` | The image's bytes do not match its own signature | critical |
 
 ELF and Mach-O carry their own set, added in 5.2.0. The ids are new strings rather than overloads
 of the PE ones: `aslr` names a specific optional-header bit, and making it also mean "ELF PIE"
@@ -546,6 +547,74 @@ signing are still properties of the shipped file.
 
 **These participate in `--fail-on`**, which is the breaking change most likely to affect a
 pipeline.
+
+## Signature verification
+
+Three separate questions, which earlier versions collapsed into one. Since 5.3.0 the report answers
+each on its own, because a reader acts differently on each.
+
+| Question | Where | What it establishes |
+|---|---|---|
+| Who claims to have signed this? | `pe::signer`, since 5.0.0 | The certificate's subject Common Name. An identity **claim** |
+| Are these the bytes that were signed? | `pe::authenticode`, since 5.3.0 | The Authenticode digest over the image compared against the digest inside the signature |
+| Do the certificates form a chain? | `pe::chain`, since 5.3.0 | Each certificate's signature verified under its issuer's public key |
+
+### The digest
+
+A mismatch is a **critical** `authenticode-digest` posture finding, and the first posture finding able
+to trip `--fail-on critical`. It is the only thing the tool reports that says the shipped file is not
+the file somebody vouched for.
+
+`Unchecked` and `Mismatch` are kept apart deliberately. An unsigned image, a signature that would not
+decode, and a digest algorithm this build cannot compute are all "we could not tell", which is never
+a finding. SHA-1, SHA-256, SHA-384, and SHA-512 are computed; an unrecognised algorithm OID is
+`Unchecked`.
+
+Verified on a real 441-image bundle: 179 unsigned, **262 verified, 0 mismatched**. Flipping one byte
+inside a section turns that image to `Mismatch`; flipping one byte inside the certificate table leaves
+it `Verified`, which is the check that the exclusion ranges are right rather than merely that hashing
+works.
+
+The hash range walk is computed locally rather than through goblin, whose `authenticode_ranges()`
+raw-indexes `size_of_headers`, `pointer_to_raw_data + size_of_raw_data`, and a certificate-table
+subtraction that underflows, each of them a reachable abort in a scan. The local walk agrees with
+goblin's byte-for-byte on all 441 images, with no panics and no declines.
+
+### The chain
+
+| State | Meaning |
+|---|---|
+| `verified` | Every link verified, up to a self-signed root that is present in the file |
+| `partial` | Every embedded link verified, and the root is not in the file. **The normal case**: Authenticode omits the root because Windows already has it |
+| `self-signed` | One certificate that signed itself, and that signature verifies. A fact, not a defect |
+| `broken` | A link did not verify under the issuer it names. This is where a forged chain lands |
+| `unverified` | Nothing could be checked: no certificates, or a signature algorithm this build cannot verify |
+
+RSA-PKCS#1 with SHA-1, SHA-256, SHA-384, or SHA-512, and ECDSA on P-256 and P-384. SHA-1 is verified
+on purpose: it is still on legitimate older Microsoft components, and refusing it would report a real
+chain as unverifiable, which a reader cannot tell from a forged one.
+
+Measured on the same bundle: 260 `partial`, 2 `verified`, 0 `broken`, every embedded link
+cryptographically verified. Eleven certificates are outside their validity window, which is
+**reported and not treated as broken**: Authenticode is deliberately not expiry-sensitive when a
+signature is countersigned by a timestamp authority.
+
+### What the tool will never say
+
+**Trusted.** There is no pure-Rust code-signing root store to anchor against. `webpki-roots` is
+Mozilla's *TLS* list, and Microsoft's code-signing anchors live in a separate Certificate Trust List
+with no crates.io mirror. So the report names each chain's anchor and prints that anchor's SHA-256
+fingerprint, and the reviewer compares it against the published thumbprint. That handoff is the
+design, and the fingerprint is what makes it actionable.
+
+**Revoked or not revoked.** OCSP and CRL both fetch a URL taken from the certificate under
+examination, which is attacker-controlled outbound traffic: an SSRF-shaped channel and a
+scan-detection beacon at once. That is categorically worse than `--reputation`, which sends a hash to
+an endpoint you chose. Revocation stays unchecked and the report says so.
+
+**Anything about the secondary signature of a dual-signed image.** That second `SignedData` lives in
+an unsigned attribute of the first. The primary signature is the one verified, which is the one
+Windows prefers.
 
 ## Origin attribution
 

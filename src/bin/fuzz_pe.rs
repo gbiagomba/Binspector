@@ -40,6 +40,30 @@ fn exercise(data: &[u8]) {
         certificate: data,
     }];
     let _ = binspector::pe::signer::parse(&certs);
+
+    // The Authenticode decode and the chain walk, driven on the same arbitrary bytes. These are the
+    // newest ASN.1 in the tool, and `chain` additionally feeds attacker-supplied DER to an RSA and an
+    // ECDSA verifier, so a malformed key or signature must come back as a verdict rather than as a
+    // panic. The certificate set can also describe a cycle, which the ordering walk has to terminate
+    // on rather than follow.
+    let _ = binspector::pe::authenticode::expected(data);
+    let certificates = binspector::pe::signer::certificates(data);
+    let refs: Vec<&x509_cert::Certificate> = certificates.iter().collect();
+    let chain = binspector::pe::chain::verify(&refs, 0);
+    // A verdict that names an anchor must name one that was actually there, and a fingerprint is
+    // either a full SHA-256 in hex or absent: a truncated one would be compared against a published
+    // thumbprint and silently fail to match.
+    assert!(
+        chain.anchor_fingerprint.is_empty() || chain.anchor_fingerprint.len() == 64,
+        "fingerprint is {} characters",
+        chain.anchor_fingerprint.len()
+    );
+    assert!(
+        chain.verified_links <= certificates.len().max(1),
+        "{} links verified across {} certificates",
+        chain.verified_links,
+        certificates.len()
+    );
 }
 
 fn main() {

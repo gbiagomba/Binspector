@@ -134,6 +134,19 @@ fn rules() -> Vec<Rule> {
             evidence: "IMAGE_DLLCHARACTERISTICS_EX_CET_COMPAT absent",
             remediation: "build with /CETCOMPAT once the dependency chain supports it",
         },
+        // The only finding in the tool that says the shipped file is not the file that was signed.
+        // Critical because every other reading in this table is a statement about how an image was
+        // built, and this one is a statement that its contents changed after someone vouched for
+        // them. It is also the first posture rule able to trip `--fail-on critical`.
+        Rule {
+            id: "authenticode-digest",
+            title: "Authenticode digest mismatch: the image does not match its own signature",
+            severity: Severity::Critical,
+            evidence: "the SpcIndirectDataContent digest differs from the digest of the shipped \
+                       bytes over the Authenticode range",
+            remediation: "do not trust the signer name on this image. Re-sign from a known-good \
+                          build, and establish where the modification came from",
+        },
     ]
 }
 
@@ -147,6 +160,16 @@ fn state_for(id: &str, a: &crate::pe::PeAnalysis) -> State {
         "safe-seh" => m.safe_seh,
         "authenticode" => m.authenticode,
         "cet" => m.cet,
+        // Not a header flag but a comparison: the digest inside the signature against the digest of
+        // the shipped bytes. `Mismatch` maps to `Disabled` so it becomes a finding through the same
+        // machinery, and `Unchecked` maps to `Unknown` so an unsigned image, a signature that would
+        // not decode, and a digest algorithm this build cannot compute all emit nothing. See
+        // `pe::authenticode`.
+        "authenticode-digest" => match a.signature.as_ref().map(|s| s.digest) {
+            Some(crate::pe::authenticode::DigestState::Mismatch) => State::Disabled,
+            Some(crate::pe::authenticode::DigestState::Verified) => State::Enabled,
+            _ => State::Unknown,
+        },
         // Unreachable for the rule set above, and Unknown is never a finding, so an
         // unrecognised id reports nothing rather than guessing at a field.
         _ => State::Unknown,

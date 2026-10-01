@@ -206,9 +206,134 @@ fn write_origin(w: &mut dyn Write, r: &Report, pes: &[&crate::model::CoverageEnt
     if unattributed > 0 {
         writeln!(w, "    not a parsed image           {:>6}", unattributed)?;
     }
+    write_signature_caveat(w, pes)
+}
+
+/// The one line a reader relies on when deciding how much a signer name is worth.
+///
+/// Conditional since 5.3.0, because the flat statement "no chain or hash is checked" became false.
+/// It names the digest counts across the images actually scanned rather than describing the tool's
+/// capabilities, so a reviewer can tell an image whose bytes were verified from one where nothing
+/// could be compared.
+fn write_signature_caveat(w: &mut dyn Write, pes: &[&crate::model::CoverageEntry]) -> Result<()> {
+    use crate::pe::authenticode::DigestState;
+
+    let mut verified = 0usize;
+    let mut mismatch = 0usize;
+    let mut unchecked = 0usize;
+    for e in pes {
+        let a = e.pe.as_ref().expect("filtered");
+        match a.signature.as_ref().map(|s| s.digest) {
+            Some(DigestState::Verified) => verified += 1,
+            Some(DigestState::Mismatch) => mismatch += 1,
+            Some(DigestState::Unchecked) => unchecked += 1,
+            None => {}
+        }
+    }
+    if verified + mismatch + unchecked == 0 {
+        writeln!(
+            w,
+            "    No image carried a signature, so no identity was claimed and none was checked."
+        )?;
+        return Ok(());
+    }
     writeln!(
         w,
-        "    A signer is an identity claim, not a verified one: no chain or hash is checked."
+        "    Authenticode digest: {} verified, {} mismatched, {} not compared.",
+        verified, mismatch, unchecked
+    )?;
+    if mismatch > 0 {
+        writeln!(
+            w,
+            "    !! A mismatch means the shipped bytes are not the bytes that were signed, so the \
+             signer name on those images is worth nothing."
+        )?;
+    }
+    write_chain_text(w, pes)
+}
+
+/// What the embedded certificates were found to be, and the anchor fingerprints to compare.
+///
+/// The fingerprints are the actionable part. No pure-Rust code-signing root store exists, so the
+/// tool cannot say "trusted"; it says which anchor each chain reaches and what that anchor hashes to,
+/// and the reviewer compares that against a published thumbprint. Without the fingerprint the claim
+/// would be a shrug.
+fn write_chain_text(w: &mut dyn Write, pes: &[&crate::model::CoverageEntry]) -> Result<()> {
+    use crate::pe::chain::ChainState;
+    use std::collections::BTreeMap;
+
+    let mut states: BTreeMap<&'static str, usize> = BTreeMap::new();
+    let mut anchors: BTreeMap<(String, String), usize> = BTreeMap::new();
+    let mut broken: Vec<&str> = Vec::new();
+    let mut expired = 0usize;
+    for e in pes {
+        let a = e.pe.as_ref().expect("filtered");
+        let Some(c) = a.signature.as_ref().map(|s| &s.chain) else {
+            continue;
+        };
+        if c.state == ChainState::Unverified && c.anchor.is_none() {
+            continue;
+        }
+        *states.entry(c.state.as_str()).or_insert(0) += 1;
+        expired += c.expired;
+        if c.state == ChainState::Broken {
+            broken.push(short_name(&e.member));
+        }
+        if let Some(anchor) = c.anchor.as_ref() {
+            anchors
+                .entry((anchor.clone(), c.anchor_fingerprint.clone()))
+                .and_modify(|n| *n += 1)
+                .or_insert(1);
+        }
+    }
+    if states.is_empty() {
+        return Ok(());
+    }
+
+    let summary: Vec<String> = states.iter().map(|(k, n)| format!("{} {}", n, k)).collect();
+    writeln!(w, "    Certificate chain: {}.", summary.join(", "))?;
+    if !broken.is_empty() {
+        writeln!(
+            w,
+            "    !! {} chain(s) did not verify under the issuer they name: {}",
+            broken.len(),
+            preview(&broken, 6)
+        )?;
+    }
+    // `partial` is the common and correct case, so it is explained rather than left looking like a
+    // shortfall: Authenticode omits the root because Windows already has it.
+    if states.contains_key("partial") {
+        writeln!(
+            w,
+            "    A partial chain means every embedded certificate verified and the root is not in \
+             the file, which is how Authenticode normally ships."
+        )?;
+    }
+    if expired > 0 {
+        writeln!(
+            w,
+            "    {} certificate(s) are outside their validity window, which is not a defect: \
+             Authenticode is not expiry-sensitive when countersigned.",
+            expired
+        )?;
+    }
+    let mut listed: Vec<((String, String), usize)> = anchors.into_iter().collect();
+    listed.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    for ((anchor, fingerprint), n) in listed.iter().take(6) {
+        writeln!(
+            w,
+            "      anchor {:<40} {:>4}  sha256:{}",
+            truncate(anchor, 40),
+            n,
+            &fingerprint[..16.min(fingerprint.len())]
+        )?;
+    }
+    // Still the limit that matters, and the reason the fingerprints above are printed at all.
+    writeln!(
+        w,
+        "    Verified is not trusted: no code-signing root store is consulted, because none exists \
+         in pure Rust. Compare an anchor fingerprint against its published thumbprint. Revocation \
+         is never checked."
     )?;
     Ok(())
 }

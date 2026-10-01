@@ -6,6 +6,7 @@
 //! direct evidence that the binary calls the function.
 
 pub mod authenticode;
+pub mod chain;
 pub mod ioc;
 pub mod ipc;
 pub mod loader;
@@ -97,6 +98,18 @@ pub struct PeAnalysis {
     pub overlay_size: u64,
 }
 
+/// Seconds since the Unix epoch, for certificate validity windows.
+///
+/// Zero when the clock is before the epoch, which only a misconfigured system reports and which
+/// would otherwise make every certificate look not-yet-valid. Expiry is reported rather than treated
+/// as broken, so a wrong clock cannot turn into a finding.
+fn now_unix() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
 impl PeAnalysis {
     /// Parse a PE image. Returns `None` when the bytes are not a parseable PE, which
     /// is expected for resources and data files inside an application bundle.
@@ -119,7 +132,15 @@ impl PeAnalysis {
         // A parsed PE with a non-empty import directory is the case where absence of an
         // authorization primitive is evidence; see `ipc`.
         let ipc = IpcSurface::from_imports(&imports, !imports.is_empty());
-        let signature = signer::parse(&pe.certificates);
+        let mut signature = signer::parse(&pe.certificates);
+        // The digest needs the whole image, which `signer` does not see. Done here so an unsigned
+        // image costs nothing and a signed one is compared exactly once.
+        if let (Some(sig), Some(blob)) = (signature.as_mut(), signer::blob(&pe.certificates)) {
+            sig.digest = authenticode::verify(&pe, data, blob);
+            let certs = signer::certificates(blob);
+            let refs: Vec<&x509_cert::Certificate> = certs.iter().collect();
+            sig.chain = chain::verify(&refs, now_unix());
+        }
 
         let (subsystem, image_base) = match pe.header.optional_header {
             Some(oh) => (

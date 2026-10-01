@@ -1,6 +1,6 @@
 [package]
 name = "binspector"
-version = "5.2.0"
+version = "5.3.0"
 edition = "2021"
 description = "Inspect binaries for banned C/C++ functions and exploit mitigations, unpacking nested containers, with PE analysis, reputation and CVE enrichment, and fuzzing"
 license = "GPL-3.0-or-later"
@@ -43,6 +43,26 @@ rustyline = { version = "18.0.1", optional = true }
 cms = { version = "=0.3.0-pre.2", features = ["std"] }
 x509-cert = { version = "0.3.0", default-features = false, features = ["std"] }
 der = { version = "0.8.2", default-features = false, features = ["alloc", "oid", "std"] }
+
+# Authenticode chain verification: each certificate's signature actually checked under its issuer's
+# public key, which is what separates a forged chain whose names line up from a real one, and what
+# makes "self-signed" a verified fact rather than a name coincidence.
+#
+# Pure Rust and no C, which the six-target cross-compile depends on. `rustls-webpki` was rejected
+# because it needs `ring` or `aws-lc-rs` (C plus CMake) and omits RSA-SHA-1, so legitimate older
+# Microsoft chains would fail indistinguishably from forged ones. `x509-verify` was rejected because
+# it pins `der` 0.7 against our 0.8, which would mean a duplicate, type-incompatible codec stack.
+#
+# No root store, deliberately and unavoidably: there is no pure-Rust code-signing trust anchor set.
+# `webpki-roots` is Mozilla's TLS list, and Microsoft's anchors live in a separate CTL with no
+# crates.io mirror. So the tool reports a verified chain and its anchor fingerprint, never "trusted".
+# Pinned exactly because it is a pre-release, which is the same policy the `cms` entry above states:
+# a pre-release is acceptable in a tool that ships binaries only when the version is reproducible
+# rather than floating. `rsa` 0.10 is the line that pairs with `signature` 3 and `sha2` 0.11.
+rsa = { version = "=0.10.0-rc.18", default-features = false, features = ["std", "sha2", "encoding"] }
+p256 = { version = "0.14.0", default-features = false, features = ["ecdsa", "std", "pkcs8"] }
+p384 = { version = "0.14.0", default-features = false, features = ["ecdsa", "std", "pkcs8"] }
+signature = { version = "3.0.0", default-features = false, features = ["alloc", "digest"] }
 
 [[bin]]
 name = "binspector"

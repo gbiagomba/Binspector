@@ -32,6 +32,11 @@
 
 use std::ops::Range;
 
+use cms::content_info::ContentInfo;
+use cms::signed_data::SignedData;
+use der::asn1::{AnyRef, ObjectIdentifier};
+use der::oid::db::rfc5911::ID_SIGNED_DATA;
+use der::{Decode, SliceReader};
 use goblin::pe::{optional_header, PE};
 use serde::{Deserialize, Serialize};
 use sha1::Digest as _;
@@ -55,6 +60,16 @@ const SIZEOF_COFF_HEADER: usize = 20;
 /// Sections considered, so a header claiming a very large count cannot turn one image into a long
 /// walk. The PE format's own field is 16 bits and real images are far below this.
 const MAX_SECTIONS: usize = 4096;
+
+/// `SPC_INDIRECT_DATA_OBJID`, the content type of an Authenticode `SignedData`.
+///
+/// Spelled as text and compared as text because it is **not in `const-oid`'s database**: the
+/// database covers the public standards, and this is Microsoft's. `cms` has no Authenticode support
+/// of any kind, so the walk from here to the expected digest is by hand.
+const SPC_INDIRECT_DATA: &str = "1.3.6.1.4.1.311.2.1.4";
+
+/// Largest `SignedData` blob this module will decode, matching `pe::signer::MAX_BLOB_LEN`.
+const MAX_BLOB_LEN: usize = 4 * 1024 * 1024;
 
 /// Whether the shipped bytes match what the signature covers.
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -264,6 +279,95 @@ pub fn run(plan: &Plan, data: &[u8], algorithm: Algorithm) -> Vec<u8> {
         Algorithm::Sha256 => hash_with!(sha2::Sha256),
         Algorithm::Sha384 => hash_with!(sha2::Sha384),
         Algorithm::Sha512 => hash_with!(sha2::Sha512),
+    }
+}
+
+/// The digest the signature says the image should have, and which algorithm produced it.
+///
+/// Decoded from `SpcIndirectDataContent`, which is the Authenticode-specific content of the CMS
+/// `SignedData`:
+///
+/// ```text
+/// SpcIndirectDataContent ::= SEQUENCE {
+///     data          SpcAttributeTypeAndOptionalValue,
+///     messageDigest DigestInfo }
+/// DigestInfo ::= SEQUENCE {
+///     digestAlgorithm AlgorithmIdentifier,
+///     digest          OCTET STRING }
+/// ```
+///
+/// Two traps worth naming, both of which cost time to find. `econtent` is typed `Option<Any>` and
+/// the `[0] EXPLICIT` wrapper is **already stripped** by the time it is in hand, so the `Any`'s tag
+/// is `SEQUENCE` and not `OCTET STRING` as the CMS prose suggests. And the first field is read and
+/// discarded rather than skipped by arithmetic: it is `SpcPeImageData` in practice, whose length
+/// varies with the page-hash flags, so anything that assumed a size would break on a subset of
+/// images.
+///
+/// `None` for an unsigned image, a blob that is not `SignedData`, content that is not Authenticode,
+/// or a digest algorithm this build cannot compute. Every one of those is `Unchecked`, never a
+/// mismatch.
+pub fn expected(blob: &[u8]) -> Option<(Algorithm, Vec<u8>)> {
+    if blob.is_empty() || blob.len() > MAX_BLOB_LEN {
+        return None;
+    }
+    // DER and never BER, for the reason `pe::signer` documents: the `der` crate's
+    // indefinite-length scanner recurses once per nesting level, so a blob of repeated `24 80`
+    // bytes overflows the stack, which aborts and cannot be caught. Authenticode requires DER.
+    // Partial because a WIN_CERTIFICATE pads its data to an eight-byte boundary.
+    let (info, _padding) = ContentInfo::from_der_partial(blob).ok()?;
+    if info.content_type != ID_SIGNED_DATA {
+        return None;
+    }
+    let signed = info.content.decode_as::<SignedData>().ok()?;
+    if signed.encap_content_info.econtent_type.to_string() != SPC_INDIRECT_DATA {
+        return None;
+    }
+    let econtent = signed.encap_content_info.econtent.as_ref()?;
+
+    let mut outer = SliceReader::new(AnyRef::from(econtent).value()).ok()?;
+    // SpcAttributeTypeAndOptionalValue: read so the reader advances, then dropped.
+    let _data = AnyRef::decode(&mut outer).ok()?;
+    let digest_info = AnyRef::decode(&mut outer).ok()?;
+
+    let mut inner = SliceReader::new(digest_info.value()).ok()?;
+    let algorithm_id = AnyRef::decode(&mut inner).ok()?;
+    // As an `AnyRef` with its tag checked, rather than `OctetStringRef`, which is unsized in
+    // `der` 0.8 and so cannot be decoded directly.
+    let digest = AnyRef::decode(&mut inner).ok()?;
+    if der::Tagged::tag(&digest) != der::Tag::OctetString {
+        return None;
+    }
+
+    let mut algorithm = SliceReader::new(algorithm_id.value()).ok()?;
+    // `const_oid`'s default arc capacity, which is what every other `ObjectIdentifier` in the tree
+    // resolves to. Named explicitly because the type is generic over it and nothing here infers it.
+    let oid = ObjectIdentifier::<{ der::oid::ObjectIdentifier::MAX_SIZE }>::decode(&mut algorithm)
+        .ok()?;
+
+    let algorithm = Algorithm::from_oid(&oid.to_string())?;
+    Some((algorithm, digest.value().to_vec()))
+}
+
+/// Compare the image against its own signature.
+///
+/// `Unchecked` whenever either side could not be established, which keeps "we could not tell" and
+/// "the bytes are wrong" distinct. A reader acts very differently on the two, and the second is the
+/// only one of the tool's findings that says the shipped file is not the file that was signed.
+///
+/// A dual-signed image carries a second `SignedData` in an unsigned attribute of the first. This
+/// verifies the primary signature, which is the one Windows prefers, and says nothing about the
+/// secondary.
+pub fn verify(pe: &PE, data: &[u8], blob: &[u8]) -> DigestState {
+    let Some((algorithm, want)) = expected(blob) else {
+        return DigestState::Unchecked;
+    };
+    let Some(got) = digest(pe, data, algorithm) else {
+        return DigestState::Unchecked;
+    };
+    if got == want {
+        DigestState::Verified
+    } else {
+        DigestState::Mismatch
     }
 }
 

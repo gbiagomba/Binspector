@@ -2,6 +2,81 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.3.0] - 2026-10-01
+
+### Added
+- **Authenticode digest verification: whether the shipped bytes are the bytes that were signed.**
+  5.0.0 printed a certificate's subject Common Name and said plainly that nothing was verified. That
+  was honest and it was a floor: a hostile binary could self-sign as "Microsoft Corporation" and the
+  report printed it. The image is now hashed over the Authenticode range and compared against the
+  digest inside its own signature. SHA-1, SHA-256, SHA-384, and SHA-512.
+
+  Measured on a real 441-image bundle: 179 unsigned, **262 verified, 0 mismatched**. Flipping one
+  byte inside a section turns that image to `mismatch`. Flipping one byte inside the certificate
+  table leaves it `verified`, which is the test that the exclusion ranges are right rather than
+  merely that hashing works.
+- **A critical `authenticode-digest` posture finding**, which is the only thing the tool reports that
+  says the shipped file is not the file somebody vouched for, and the first posture finding able to
+  trip `--fail-on critical`. `Unchecked` emits nothing, so an unsigned image, a signature that would
+  not decode, and an unrecognised digest algorithm stay "we could not tell" rather than becoming a
+  claim.
+- **Certificate chain verification, cryptographic and not just by name.** Each certificate's
+  signature is verified under its issuer's public key over the child's `TBSCertificate`, with
+  RSA-PKCS#1 under SHA-1, SHA-256, SHA-384, and SHA-512, and ECDSA on P-256 and P-384. That is what
+  separates a forged chain whose issuer and subject names line up from one that was actually issued,
+  and it is what makes "self-signed" a verified fact rather than a name coincidence.
+
+  SHA-1 is verified on purpose. It is cryptographically broken for collisions and still present on
+  legitimate older Microsoft components, so refusing it would report a real chain as unverifiable,
+  indistinguishably from a forged one. Verifying what an issuer signed is not an endorsement of the
+  algorithm.
+- **A `partial` chain state, because `unverified` would have been a lie.** 260 of the bundle's 262
+  signed images embed a leaf and an intermediate and no root, which is how Authenticode normally
+  ships: Windows has the root already. Every one of those 260 had its leaf-to-intermediate signature
+  cryptographically verified. Reporting that as "unverified" would read as "nothing was checked",
+  which is the opposite of what happened.
+- **Anchor fingerprints in the report.** Expiry is reported and never treated as broken, because
+  Authenticode is deliberately not expiry-sensitive when countersigned; 11 certificates in the bundle
+  are outside their window and none of them is a finding.
+
+### Security
+- **The Authenticode hash range walk is computed locally**, because goblin's
+  `authenticode_ranges()` raw-indexes attacker-controlled header fields with no bounds check and no
+  `checked_sub`: `size_of_headers`, `pointer_to_raw_data + size_of_raw_data`, and a certificate-table
+  subtraction that underflows on a crafted size. Each is a reachable abort in a scan, which is the
+  same class of defect `exe::binds` exists to avoid on the Mach-O side. Every range here is computed
+  with checked arithmetic and clamped through `data.get()`, and a header the walk will not trust
+  yields `Unchecked` rather than a panic or a guess.
+
+  **Faithful rather than merely safe**, established by differential: the plan agrees with goblin's own
+  iterator byte-for-byte on all 441 real images, with zero panics and zero declines.
+- 160,000 mutations of a real signed PE across four seeds find no panic and no hang in the new ASN.1,
+  including the paths that feed attacker-supplied DER to an RSA and an ECDSA verifier and the
+  certificate-ordering walk, which has to terminate on a planted cycle rather than follow it.
+
+### Changed
+- **The hardcoded report line "no chain or hash is checked" is gone**, because it became false. The
+  signature footer now names the digest counts and the chain states across the images actually
+  scanned. What replaces it is still a limit and still the one that matters: **verified is not
+  trusted**. No code-signing root store is consulted, because none exists in pure Rust.
+- `--first-party` deliberately does **not** start depending on verification state. It is an explicit
+  user assertion about which code is theirs, not a trust decision.
+
+### Deliberately out of scope
+- **Revocation.** OCSP and CRL both fetch a URL taken from the certificate under examination, which is
+  attacker-controlled outbound traffic: an SSRF-shaped channel and a scan-detection beacon at once.
+  That is categorically worse than `--reputation`, which sends a hash to an endpoint the user chose,
+  and it fails the same test the AI component failed in 3.0.0.
+- **A trust verdict.** `webpki-roots` is Mozilla's TLS list, not a code-signing one, and Microsoft's
+  anchors live in a separate Certificate Trust List with no crates.io mirror. `rustls-webpki` needs
+  `ring` or `aws-lc-rs`, which is C plus CMake and would wreck the six-target cross-compile, and it
+  omits RSA-SHA-1. `codesign-verify` wraps the real operating-system APIs but validates a file on disk
+  by path, contradicting "nothing is written to disk during a scan", and is host-dependent, so the
+  same binary would get different verdicts on different scanners. That is the worst possible property
+  for something feeding `--fail-on`.
+- **The secondary signature of a dual-signed image**, which lives in an unsigned attribute of the
+  first. The primary signature is verified, which is the one Windows prefers.
+
 ## [5.2.0] - 2026-10-01
 
 ### Added

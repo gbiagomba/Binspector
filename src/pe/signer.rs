@@ -66,6 +66,21 @@ pub struct Signature {
     /// Whether the blob was the expected PKCS#7 SignedData rather than something else.
     #[serde(default)]
     pub well_formed: bool,
+    /// Whether the shipped bytes are the bytes the signature covers.
+    ///
+    /// This is what makes `signer` mean anything. Without it the name above is a string the image
+    /// chose for itself that no byte of the file has to match. `#[serde(default)]` so a report saved
+    /// before 5.3.0 loads as `Unchecked` rather than as a claim nobody made. See
+    /// `pe::authenticode`.
+    #[serde(default)]
+    pub digest: crate::pe::authenticode::DigestState,
+    /// Whether the embedded certificates form a chain that verifies.
+    ///
+    /// A verified chain is still **not a trusted** one: no code-signing root store exists in pure
+    /// Rust to anchor it against, so the anchor's fingerprint is reported for the reviewer to compare
+    /// against a published thumbprint. See `pe::chain`.
+    #[serde(default)]
+    pub chain: crate::pe::chain::Chain,
 }
 
 /// Parse the first usable certificate entry.
@@ -77,6 +92,36 @@ pub struct Signature {
 pub fn parse(certs: &[AttributeCertificate]) -> Option<Signature> {
     let entry = pick_entry(certs)?;
     Some(read_blob(entry.certificate))
+}
+
+/// The raw blob `parse` would read, so a caller that also has the image bytes can compare the
+/// Authenticode digest against it.
+///
+/// Separate from `parse` because the digest needs the whole image and the certificate table does
+/// not, and threading the image through every identity function to serve one caller would couple
+/// the two for no reason.
+pub fn blob<'d>(certs: &[AttributeCertificate<'d>]) -> Option<&'d [u8]> {
+    pick_entry(certs).map(|c| c.certificate)
+}
+
+/// The X.509 certificates a blob carries, decoded, for `pe::chain` to verify.
+///
+/// Returns owned certificates rather than borrows into the blob because the decoder's output does not
+/// outlive this call, and because the caller is a different module with a different lifetime.
+pub fn certificates(blob: &[u8]) -> Vec<Certificate> {
+    if blob.is_empty() || blob.len() > MAX_BLOB_LEN {
+        return Vec::new();
+    }
+    let Ok((info, _padding)) = ContentInfo::from_der_partial(blob) else {
+        return Vec::new();
+    };
+    if info.content_type != ID_SIGNED_DATA {
+        return Vec::new();
+    }
+    let Ok(signed) = info.content.decode_as::<SignedData>() else {
+        return Vec::new();
+    };
+    x509_chain(&signed).into_iter().cloned().collect()
 }
 
 /// Pick the entry to read. Prefer PKCS#7 SignedData, which is what Authenticode uses;
@@ -136,6 +181,10 @@ fn read_blob(blob: &[u8]) -> Signature {
         signer,
         chain_len: chain.len(),
         well_formed: true,
+        // Both set by `PeAnalysis::parse`: the digest needs the image bytes this does not see, and
+        // the chain needs the current time, which a pure decoder should not reach for.
+        digest: crate::pe::authenticode::DigestState::Unchecked,
+        chain: crate::pe::chain::Chain::default(),
     }
 }
 

@@ -196,6 +196,7 @@ fn exercise(input: &[u8], target: Target) -> std::result::Result<(), String> {
         }
         Target::Pe => {
             PeAnalysis::parse(input);
+            exercise_signature(input);
         }
         Target::Exe => {
             exercise_exe(input);
@@ -213,6 +214,7 @@ fn exercise(input: &[u8], target: Target) -> std::result::Result<(), String> {
         Target::All => {
             strings::extract(input, 4, true, true);
             PeAnalysis::parse(input);
+            exercise_signature(input);
             exercise_exe(input);
             let limits = tight_limits();
             let _ = container::walk_bytes(
@@ -230,6 +232,15 @@ fn exercise(input: &[u8], target: Target) -> std::result::Result<(), String> {
         }
     }));
     result.map_err(|e| panic_message(&e))
+}
+
+/// The Authenticode and chain decoders, reached directly so the fuzzer does not have to produce a
+/// valid PE with a valid certificate table before it can touch the newest ASN.1 in the tool.
+fn exercise_signature(input: &[u8]) {
+    let _ = crate::pe::authenticode::expected(input);
+    let certs = crate::pe::signer::certificates(input);
+    let refs: Vec<&x509_cert::Certificate> = certs.iter().collect();
+    let _ = crate::pe::chain::verify(&refs, 0);
 }
 
 /// The non-PE readers, in the order a scan reaches them.
