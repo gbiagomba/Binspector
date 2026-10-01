@@ -185,6 +185,47 @@ pub fn write_text(w: &mut dyn Write, r: &Report) -> Result<()> {
         writeln!(w)?;
     }
     write_build_provenance(w, r)?;
+    write_capabilities(w, r)?;
+    Ok(())
+}
+
+/// Analysis that was available and did not run.
+///
+/// Four of ten defects a user reported against one scan were capabilities that exist, are
+/// documented in `--help`, and were simply never discovered: carving, reputation, CVE resolution,
+/// and the extraction of indicators they had not realised were collected. The report said nothing
+/// about any of them, so a reader had no way to tell "this bundle has no embedded archives" from
+/// "nobody passed --carve".
+///
+/// The project already has this habit for coverage: a scan that reaches no executable image warns
+/// that a clean result is not evidence. The same reasoning applies to a capability that did not run,
+/// and it had never been applied.
+fn write_capabilities(w: &mut dyn Write, r: &Report) -> Result<()> {
+    let mut idle: Vec<&str> = Vec::new();
+    if !r.coverage.carve_ran {
+        idle.push("--carve           scan members for embedded archives and filesystems");
+    }
+    if r.intel.reputation.is_none() {
+        idle.push(
+            "--reputation      look the hash up with VirusTotal and MetaDefender (hash only)",
+        );
+    }
+    if r.intel.cves.is_none() && !r.intel.components.is_empty() {
+        idle.push("--cve             resolve the detected components against NVD");
+    }
+    if idle.is_empty() {
+        return Ok(());
+    }
+    writeln!(w, "Analysis not run ({})", idle.len())?;
+    for line in &idle {
+        writeln!(w, "  {}", line)?;
+    }
+    writeln!(
+        w,
+        "  These are off by default and were not requested, so their absence from this report is \
+         not a finding about the target."
+    )?;
+    writeln!(w)?;
     Ok(())
 }
 
@@ -398,6 +439,56 @@ fn write_chain_text(w: &mut dyn Write, pes: &[&crate::model::CoverageEntry]) -> 
          is never checked."
     )?;
     Ok(())
+}
+
+#[cfg(test)]
+mod capability_tests {
+    use crate::report::tests_support::rich_report;
+
+    fn render(r: &crate::model::Report) -> String {
+        let mut buf: Vec<u8> = Vec::new();
+        crate::report::text::write(&mut buf, r, None, &crate::report::tests_support::opts())
+            .expect("render");
+        String::from_utf8(buf).expect("utf8")
+    }
+
+    /// Four of ten defects reported against one scan were capabilities that exist and were never
+    /// discovered. The report has to distinguish "this bundle has no embedded archives" from
+    /// "nobody passed --carve".
+    #[test]
+    fn a_default_run_names_the_analysis_it_did_not_do() {
+        let mut r = rich_report();
+        r.coverage.carve_ran = false;
+        r.intel.reputation = None;
+        r.intel.cves = None;
+        let out = render(&r);
+        assert!(out.contains("Analysis not run"), "{}", out);
+        for flag in ["--carve", "--reputation", "--cve"] {
+            assert!(out.contains(flag), "{} not named:\n{}", flag, out);
+        }
+        assert!(
+            out.contains("not a finding about the target"),
+            "absence must be disclaimed, not implied:\n{}",
+            out
+        );
+    }
+
+    /// And says nothing when everything ran, rather than printing an empty heading.
+    #[test]
+    fn a_fully_enriched_run_says_nothing() {
+        let out = render(&rich_report());
+        assert!(!out.contains("Analysis not run"), "{}", out);
+    }
+
+    /// --cve is only worth naming when there is something for it to resolve.
+    #[test]
+    fn cve_is_not_offered_when_no_component_was_detected() {
+        let mut r = rich_report();
+        r.intel.cves = None;
+        r.intel.components.clear();
+        let out = render(&r);
+        assert!(!out.contains("--cve "), "{}", out);
+    }
 }
 
 #[cfg(test)]
