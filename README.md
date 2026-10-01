@@ -4,37 +4,29 @@
   <img src="img/binspector-logo.png" alt="Binspector" width="620">
 </p>
 
-> **VERSION:** 5.3.0
-> **DESCRIPTION:** Binspector reviews compiled artifacts you did not build. Vendor deliverables, dependency bundles, firmware payloads, container images and release archives all arrive as opaque blobs, and the usual answer is `strings` piped into `grep`: blind to anything compressed, unable to tell a real call from a word in a help message, and silent on whether the thing was hardened or signed at all. Binspector unpacks nested containers in memory, matches banned C/C++ functions with boundary verification, grades every finding by the evidence behind it, reads exploit mitigations and verifies signature integrity across PE, ELF and Mach-O, and reports what it could not reach. It never executes the sample and never transmits its contents.
-> **AUTHOR:** Gilles Biagomba
-> **LICENSE:** [GPLv3 or later](LICENSE)
+Binspector was built by **Gilles Biagomba** and is licensed under
+**[GPLv3 or later](LICENSE)**. It reviews compiled artifacts you did not build.
 
----
-
-## Why this matters
-
-- **The problem is evidence, not detection.** Finding the string `strcpy` in a binary is trivial and nearly worthless. The question is whether it is a resolved call, a C++ method that merely shares the name, or a word inside a documentation blob. Binspector grades every occurrence by what backs it, so an import-table entry and an incidental substring are never rated alike, and the rule that demoted a finding is printed next to it.
-- **A clean result has to be falsifiable.** Most scanners report what they found and stop. This one reports what it could not reach: members it failed to open, images with no readable import table, occurrences it suppressed and under which rule, indicators it stopped collecting. A clean result from a tool that silently skipped half the bundle is worse than no result at all, because somebody will act on it.
-- **Containers are the blind spot.** A `.msixbundle`, `.jar`, `.nupkg` or `.zst` is compressed, so a byte scan of the outer file finds nothing and reports success. Binspector descends through nested containers in memory, bounded by caps on depth, expansion ratio and member count, and never writes a member to disk.
-- **Hardening is more actionable than any string match.** A missing ASLR, DEP, RELRO, PIE or stack-canary flag is confirmable from headers alone, needs no source access, and is fixed by a build flag. Those are findings here, with the field they were read from and the remediation, not prose at the bottom of a report.
-- **What it is NOT.** Static only. It does not execute the sample, disassemble it, or prove reachability, so a finding is a place to look rather than a demonstrated exploit. It is not a malware verdict, and it is not a trust decision: it verifies that a signature matches the bytes and that a chain is internally sound, then prints the anchor fingerprint for you to compare against a published thumbprint, because no code-signing root store exists to anchor against in pure Rust.
-- **Honesty note.** Where an upstream parser was unsafe on crafted input, the walk was reimplemented locally and proved equivalent by differential against the original over hundreds of real images, rather than asserted. Numbers in this README come from measured runs. Capabilities that are scoped out say so and say why.
-
-**Peer map:** Binspector = compiled-artifact review · source SAST = a peer tool · runtime and DAST = a peer tool.
+Vendor deliverables, dependency bundles, firmware payloads, container images and release
+archives all arrive as opaque blobs, and the usual answer is `strings` piped into `grep`: blind
+to anything compressed, unable to tell a real call from a word in a help message, and silent on
+whether the thing was hardened or signed at all. Binspector unpacks nested containers in memory,
+matches banned C/C++ functions with boundary verification, grades every finding by the evidence
+behind it, reads exploit mitigations and verifies signature integrity across PE, ELF and Mach-O,
+and reports what it could not reach. It never executes the sample and never transmits its
+contents.
 
 ---
 
 ## 🧬 Background / Lore
 
-The name is the job: it inspects binaries. The logo is an armored aperture, because that is the
-posture the tool takes toward its input. A binary you did not build is not a document to read, it
-is a sealed thing you open carefully, from the outside, without letting it run.
+The name is the job: it inspects binaries. A binary you did not build is not a document to read,
+it is a sealed thing you open carefully, from the outside, without letting it run.
 
-It began as a Bash script that orchestrated other people's tools: peframe, binwalk, the VirusTotal
-CLI, cve-bin-tool, valgrind, zzuf. That worked, but it was only as strong as the weakest assumption
-in the chain, and two of its habits were disqualifying for the job: `vt scan` uploaded the sample
-to a third party, and `valgrind ./$bin` executed it. You cannot examine something you do not trust
-by running it, and you cannot keep an unreleased artifact confidential by uploading it.
+It began as a Bash script that orchestrated other people's tools, and inherited two habits that
+disqualify a tool for this job: it uploaded the sample to a third party, and it executed it. You
+cannot examine something you do not trust by running it, and you cannot keep an unreleased artifact
+confidential by uploading it. [The legacy section](#-legacy-shell-version) has the details.
 
 The Rust port does the work in-process. The guiding principle is that a scanner must be honest
 about what it did not do, which is why coverage gaps, suppressed findings, unread import tables and
@@ -44,10 +36,23 @@ The legacy shell version is still in the tree under [legacy/](legacy/), kept for
 
 ---
 
+## 🎯 Why This Matters
+
+- **Evidence, not detection:** finding the string `strcpy` in a binary is trivial and nearly worthless. The question is whether it is a resolved call, a C++ method that merely shares the name, or a word inside a documentation blob. Binspector grades every occurrence by what backs it, so an import-table entry and an incidental substring are never rated alike, and the rule that demoted a finding is printed next to it.
+- **A clean result must be falsifiable:** most scanners report what they found and stop. This one reports what it could not reach: members it failed to open, images with no readable import table, occurrences it suppressed and under which rule, indicators it stopped collecting. A clean result from a tool that silently skipped half the bundle is worse than no result at all, because somebody will act on it.
+- **Containers are the blind spot:** a `.msixbundle`, `.jar`, `.nupkg` or `.zst` is compressed, so a byte scan of the outer file finds nothing and reports success. Binspector descends through nested containers in memory, bounded by caps on depth, expansion ratio and member count, and never writes a member to disk.
+- **Hardening beats any string match:** a missing ASLR, DEP, RELRO, PIE or stack-canary flag is confirmable from headers alone, needs no source access, and is fixed by a build flag. Those are findings here, with the field they were read from and the remediation, not prose at the bottom of a report.
+- **What it is not:** static only. It does not execute the sample, disassemble it, or prove reachability, so a finding is a place to look rather than a demonstrated exploit. It is not a malware verdict, and it is not a trust decision: it verifies that a signature matches the bytes and that a chain is internally sound, then prints the anchor fingerprint for you to compare against a published thumbprint, because no code-signing root store exists to anchor against in pure Rust.
+- **Honesty note:** where an upstream parser was unsafe on crafted input, the walk was reimplemented locally and checked for agreement with the original on real binaries rather than asserted. One such comparison is a committed test (`src/exe/binds.rs`, macOS only); the Authenticode one was a local run over 441 images and is recorded in that module as not committed. Capabilities that are scoped out say so and say why.
+
+**Peer map:** Binspector = compiled-artifact review · source SAST = a peer tool · runtime and DAST = a peer tool.
+
+---
+
 ## 📚 Table of Contents
 
-- [Why This Matters](#why-this-matters)
 - [Background / Lore](#-background--lore)
+- [Why This Matters](#-why-this-matters)
 - [Features](#-features)
 - [Installation](#-installation)
   - [Using GitHub Releases](#-using-github-releases)
@@ -59,6 +64,8 @@ The legacy shell version is still in the tree under [legacy/](legacy/), kept for
   - [Running Tests](#-running-tests)
   - [Using Docker](#-using-docker)
   - [Using the Makefile](#-using-the-makefile)
+  - [Exit Codes](#exit-codes)
+- [Limitations](#-limitations)
 - [Safety](#-safety)
 - [Inspired By](#-inspired-by)
 - [Legacy Shell Version](#-legacy-shell-version)
@@ -71,14 +78,14 @@ The legacy shell version is still in the tree under [legacy/](legacy/), kept for
 
 - ✅ **Banned function detection**, boundary-verified so `targetsize` is never reported as `gets`, tiered `critical`/`high`/`medium`/`low` by evidence rather than by name
 - ✅ **Evidence-gated severity**: `import`, `exact`, `symbolic` or `prose`. An import-table entry proves a call site exists; a string in a resource does not, and the two are not rated alike
-- ✅ **Exploit mitigations as findings**, with evidence and remediation: ASLR, DEP, CFG, SafeSEH, /GS, CET and Authenticode on PE; NX, RELRO, PIE, stack canary, FORTIFY, executable stack and heap, and code signing on ELF and Mach-O
-- ✅ **Signature verification**, not just signer attribution. The Authenticode digest is compared against the shipped bytes, and every certificate chain is verified cryptographically under RSA and ECDSA
-- ✅ **Nested containers unpacked in memory**: `.msixbundle`, `.msix`, `.appx`, `.jar`, `.nupkg`, `.zip`, `.gz`, `.bz2`, `.xz`, `.zst`, `.7z`, `.cab`. Nothing is written to disk
+- ✅ **Exploit mitigations as findings**, with evidence and remediation: ASLR, DEP, CFG, SafeSEH, /GS, CET, Authenticode and a digest-mismatch rule on PE; NX, RELRO, PIE, stack canary and FORTIFY on ELF; PIE, stack canary, executable stack and heap, and code-signature presence on Mach-O
+- ✅ **Signature verification**, not just signer attribution. The Authenticode digest is compared against the shipped bytes, and each certificate is checked against its issuer's public key where the algorithm is RSA PKCS#1 v1.5 or ECDSA P-256/P-384. Authenticode usually omits the root, so the normal result is a verified partial chain plus the anchor's fingerprint
+- ✅ **Nested containers unpacked in memory**, detected by magic rather than extension: `.msixbundle`, `.msix`, `.appx`, `.jar`, `.nupkg`, `.zip`, `.7z`, `.cab`, and the single-stream wrappers `.gz`, `.bz2`, `.xz`, `.zst`. `.tar` members are not enumerated, so a `.tar.gz` is scanned as one decompressed blob
 - ✅ **Many targets or a whole directory in one report**, or `--split` for one report per target
-- ✅ **Nine output formats**: `text`, `json`, `csv`, `html`, `markdown`, `sarif`, `sqlite`, `sql`, `all`
+- ✅ **Eight output formats**: `text`, `json`, `csv`, `html`, `markdown`, `sarif`, `sql`, `sqlite`, plus `--format all` to write every one a build supports
 - ✅ **Third-party components and CVEs**, detected offline and resolved against NVD on request
 - ✅ **Hash-only reputation** via VirusTotal and MetaDefender. File content is never transmitted
-- ✅ **Fuzzes its own parsers**, differentially or through AFL++, honggfuzz, libFuzzer or WinAFL
+- ✅ **Fuzzes its own parsers** differentially and in-process, and prepares and drives an AFL++, honggfuzz, libFuzzer or WinAFL campaign against an instrumented harness you build
 - ✅ **Six platform targets**: Linux, macOS and Windows, on x64 and ARM64
 - ✅ **Docker support**
 
@@ -110,7 +117,10 @@ sudo mv binspector-* /usr/local/bin/binspector
 **Install (Windows PowerShell):**
 
 ```powershell
-Move-Item binspector-*.exe C:\Windows\System32\binspector.exe
+# A per-user location on PATH, rather than a Windows-owned directory
+$dir = "$env:LOCALAPPDATA\Programs\binspector"
+New-Item -ItemType Directory -Force -Path $dir | Out-Null
+Move-Item .\binspector-x86_64-pc-windows-msvc-v5.3.0.exe "$dir\binspector.exe"
 ```
 
 ---
@@ -118,8 +128,12 @@ Move-Item binspector-*.exe C:\Windows\System32\binspector.exe
 ### 📚 Using Cargo
 
 ```bash
-cargo install --git https://github.com/gbiagomba/Binspector
+cargo install --git https://github.com/gbiagomba/Binspector --locked --bin binspector
 ```
+
+`--locked` builds against the committed `Cargo.lock`, which is what you want for a tool that
+parses hostile input. `--bin binspector` skips the four fuzz harnesses, which are also `[[bin]]`
+targets and are not useful on their own.
 
 ---
 
@@ -168,9 +182,36 @@ cargo build --release --no-default-features
     --palette <NAME>              default, colorblind
 ```
 
-Resource caps (`--max-depth`, `--max-unpacked-bytes`, `--max-expansion-ratio`, `--max-members`,
-`--max-hits`, `--ioc-cap`, `--max-targets` and others) all have safe defaults. Run
-`binspector -h` for the complete list with their values.
+Extraction and output also take `--no-ascii`, `--no-utf16`, `--case-sensitive` (matching is
+case-insensitive by default), `--no-components` and `--no-banner`. Note `--dump` has no effect on
+`json` or `sarif`, which carry matches only.
+
+Resource caps all have safe defaults, and for a tool pointed at hostile input the defaults are
+part of the safety story rather than a footnote:
+
+| Cap | Default | Guards against |
+|---|---|---|
+| `--max-depth` | 4 | Container nesting, a zip inside a zip inside a zip |
+| `--max-expansion-ratio` | 100 | A decompression bomb, measured against the input size |
+| `--max-unpacked-bytes` | 2 GiB | Total expansion across the whole walk |
+| `--max-members` | 50,000 | An archive with a million tiny entries |
+| `--max-hits` | 100,000 | A report that cannot be opened |
+| `--ioc-cap` | 500 | Indicator collection per kind, per target |
+
+Exceeding a cap degrades to a warning and partial results, never to an abort. Run `binspector -h`
+for the complete list.
+
+### Exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | The scan completed. Findings may still be present; without `--fail-on` they do not change the exit code |
+| `1` | `--fail-on` was given and a finding at or above that severity exists, including a missing exploit mitigation |
+| `2` | The run failed: an unreadable target, an invalid option, or an output path that could not be written |
+
+A clean scan and a scan that found nothing because it could not open the target are both `0`, so
+in a pipeline read the coverage section or the JSON `warnings` array rather than the exit code
+alone.
 
 ---
 
@@ -191,7 +232,7 @@ binspector ./app.msixbundle ./libs/ ./firmware.bin
 binspector --split ./vendor-deliverables/
 
 # Write a report, labeled with a project name
-binspector -p "PROJ-123" -o report.txt ./release-1.0.0.tar.gz
+binspector -p "PROJ-123" -o report.txt ./release-1.0.0.zip
 
 # Write every format into a directory, with a timestamped name
 binspector --format all -o out/ ./app.exe
@@ -263,11 +304,14 @@ docker run --rm -v "$PWD:/work" binspector /work/app.exe
 ### 🛠 Using the Makefile
 
 ```bash
-# Build release binary
+# Debug build
 make build
 
-# Run with arguments
-make run ARGS="--help"
+# Release build
+make release
+
+# Scan a binary through cargo
+make run BIN=./app.exe
 
 # Run the full gate (fmt-check + clippy + loc-check + test + fuzz-build)
 make check
@@ -281,16 +325,37 @@ make clean
 
 ---
 
+## 🚧 Limitations
+
+Stated plainly, because a reader who cannot find this section assumes it was hidden:
+
+- **Static only.** No execution, no disassembly, no reachability analysis. A banned-function
+  finding means the name is in the import table or the bytes, not that the call is reachable with
+  attacker-controlled input. It is a place to look.
+- **Not a malware verdict.** There is no behavioural analysis and no signature database. The
+  reputation lookup is an opt-in hash query against third-party services.
+- **Verified is not trusted.** A signature check proves the bytes match and the chain is
+  internally consistent. No code-signing root store is consulted and revocation is never checked.
+- **`.tar` members are not enumerated.** A `.tar.gz` is decompressed and scanned as one blob, so
+  executables inside it get string matching but no header, mitigation or signature analysis.
+- **Managed assemblies are exempt from most native checks**, deliberately: the CLR controls code
+  generation, so `/GS`, CFG, SafeSEH and CET are not properties of the shipped file.
+- **A stripped binary yields less.** Mitigation and canary detection lean on symbols and imports;
+  where a table cannot be read the result is `Unknown`, which is reported and never counted as a
+  finding.
+- **Component detection is a curated set**, not the ~380 checkers cve-bin-tool ships. Coverage is
+  stated in the report so a miss is not mistaken for a clean result.
+
 ## 🛡 Safety
 
 Binspector is pointed at files that may be hostile, so these are properties, not aspirations:
 
-- **The sample is never executed.** The legacy script ran `valgrind ./$bin`; that is not carried forward.
-- **File content is never transmitted.** Reputation sends the hash only. The legacy `vt scan` uploaded the sample, which for an unreleased binary is a disclosure event.
-- **Nothing is written to disk during a scan.** Containers are unpacked in memory, which removes extraction as an attack surface.
-- **Every parser is bounds-checked and fuzzed.** Where an upstream parser raw-indexed attacker-controlled header fields, the walk was reimplemented locally with checked arithmetic and verified byte-for-byte against the original.
+- **The sample is never executed.** There is no execution path: the only subprocesses the tool ever spawns are `curl`, for the two opt-in network lookups, and an external fuzzing engine you asked for.
+- **File content is never transmitted.** Reputation sends the SHA-256 in a GET path and nothing else, which matters because an unreleased binary uploaded to a third party is a disclosure event.
+- **No container member is ever written to disk:** containers are unpacked in memory, which removes extraction as an attack surface. The only files a scan creates are the report you asked for with `-o` and, under `--dump`, a temporary string spool that is deleted when the scan ends.
+- **Parsers are bounds-checked and fuzzed:** four harnesses cover the string, container, PE and ELF/Mach-O readers. Where an upstream parser raw-indexed attacker-controlled header fields or honoured an attacker-chosen repeat count, the walk was reimplemented locally with checked arithmetic and checked for agreement with the original on real system binaries. Carving runs third-party code and is not covered by the container harness.
 - **Resource caps on everything**: nesting depth, unpacked bytes, expansion ratio, member count, recorded hits. A decompression bomb degrades to a warning and partial results, never to an abort.
-- **Revocation is deliberately not checked.** OCSP and CRL fetch a URL taken from the certificate under examination, which is attacker-controlled outbound traffic from the scanning host.
+- **Revocation is deliberately not checked:** OCSP and CRL fetch a URL taken from the certificate under examination, which is attacker-controlled outbound traffic from the scanning host.
 
 ---
 
@@ -358,8 +423,10 @@ Pull requests are welcome.
 6. Open a pull request
 
 `make check` runs format, clippy with warnings denied, the file-size check (no `.rs` over
-1,500 lines), the test suite, and a build of the fuzz harnesses. CI runs the same gate on
-Linux, macOS and Windows before any release is tagged.
+1,500 lines), the test suite, and a build of the fuzz harnesses. CI runs that gate on Linux,
+then cross-builds and packages all six targets, before any release is tagged. The macOS and
+Windows jobs build and package only, so a platform-gated test such as the Mach-O one in
+`src/exe/binds.rs` runs locally and not in CI.
 
 ---
 
@@ -370,4 +437,4 @@ See [LICENSE](LICENSE) for details.
 
 ---
 
-**⚡ Built with Rust | 🛡️ Secured by Design | 🚀 Production Ready**
+**⚡ Built with Rust · 🛡️ Static-only, evidence-graded, never executes the sample**

@@ -16,9 +16,15 @@
 //! would break the tool's central claim.
 //!
 //! So every range here is computed with checked arithmetic and clamped through `data.get()`, the
-//! pattern `pe::sections` already uses. **Faithful rather than merely safe** is established by a
-//! differential test: the plan this module produces is compared against goblin's own iterator over
-//! real signed images, asserting byte-for-byte agreement wherever goblin does not panic.
+//! pattern `pe::sections` already uses.
+//!
+//! **On how faithful this is known to be, stated exactly.** The plan was compared against goblin's
+//! own iterator over 441 real signed images from one application bundle, agreeing on the length of
+//! every yielded slice, with no panics and no declines. That was a **one-off local run against a
+//! corpus that is not in this repository, and it is not a committed test**: the unit tests below
+//! cover the arithmetic and the refusal cases, not equivalence with goblin. Anyone changing this
+//! walk should repeat that comparison rather than trust this paragraph. Do not describe it as a
+//! differential test, which is what an earlier version of this comment wrongly claimed.
 //!
 //! Its name is also misleading: `ExcludedSectionsIter` yields the slices **to hash**, not the ones
 //! to exclude, and one yielded slice is static zero padding that is not in the file at all, so the
