@@ -318,6 +318,16 @@ impl Report {
     }
 
     /// Members that parsed as a PE, with their analysis.
+    /// Whether the digests describe a manifest over several targets rather than one file.
+    ///
+    /// A digest over a *set* of files is not a file hash, so `finish_aggregate` deliberately leaves
+    /// `md5` and `sha1` empty rather than filling them with something that looks like one. The
+    /// writers have to know that, or they print `MD5:` with nothing after it and the report reads
+    /// as broken. Reported as a user-visible bug on a ten-target run.
+    pub fn is_manifest_digest(&self) -> bool {
+        self.targets.len() > 1
+    }
+
     pub fn pe_members(&self) -> Vec<&CoverageEntry> {
         self.coverage
             .entries

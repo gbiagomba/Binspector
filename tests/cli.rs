@@ -331,6 +331,52 @@ fn all_files_takes_what_the_filter_skipped() {
 }
 
 #[test]
+fn a_multi_target_report_names_its_digest_instead_of_printing_empty_fields() {
+    // Reported as "MD5/SHA1 isn't working but SHA2 is". A digest over a set of files is a manifest
+    // digest, so `finish_aggregate` leaves md5 and sha1 empty on purpose rather than inventing
+    // something that looks like a file hash. The writers were still printing the labels, so the
+    // report showed two blank fields and read as broken.
+    let dir = TempDir::new().unwrap();
+    let a = dir.path().join("a.exe");
+    let b = dir.path().join("b.exe");
+    std::fs::write(&a, fake_pe(b"\x00strcpy\x00")).unwrap();
+    std::fs::write(&b, fake_pe(b"\x00gets\x00")).unwrap();
+
+    let out = bin_stdout().arg(&a).arg(&b).output().unwrap();
+    let body = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        body.contains("Manifest SHA256:"),
+        "a multi-target run must name the digest for what it is:\n{}",
+        body
+    );
+    assert!(
+        body.contains("not a file hash"),
+        "and say it is not a file hash:\n{}",
+        body
+    );
+    assert!(
+        !body.contains("MD5:     \n") && !body.contains("SHA1:    \n"),
+        "no empty digest field may be printed:\n{}",
+        body
+    );
+
+    // One target is unchanged: all three real file digests.
+    let one = bin_stdout().arg(&a).output().unwrap();
+    let body = String::from_utf8_lossy(&one.stdout);
+    for label in ["MD5:", "SHA1:", "SHA256:"] {
+        assert!(
+            body.contains(label),
+            "{} missing from a single-target report",
+            label
+        );
+    }
+    assert!(
+        !body.contains("Manifest SHA256"),
+        "one target is not a manifest"
+    );
+}
+
+#[test]
 fn many_targets_write_one_combined_report_unless_split_is_asked_for() {
     // The property that must never regress: how many files appear is decided by the format list
     // and by --split, never by how many targets were scanned. A directory of four hundred images

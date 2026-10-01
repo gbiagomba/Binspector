@@ -47,13 +47,25 @@ pub fn write(
                 thousands(r.file_size)
             ),
         )?;
-        row(w, "MD5", &format!("<code>{}</code>", html_escape(&r.md5)))?;
-        row(w, "SHA1", &format!("<code>{}</code>", html_escape(&r.sha1)))?;
-        row(
-            w,
-            "SHA256",
-            &format!("<code>{}</code>", html_escape(&r.sha256)),
-        )?;
+        if r.is_manifest_digest() {
+            row(
+                w,
+                "Manifest SHA256",
+                &format!(
+                    "<code>{}</code> (over {} target digests, not a file hash)",
+                    html_escape(&r.sha256),
+                    r.targets.len()
+                ),
+            )?;
+        } else {
+            row(w, "MD5", &format!("<code>{}</code>", html_escape(&r.md5)))?;
+            row(w, "SHA1", &format!("<code>{}</code>", html_escape(&r.sha1)))?;
+            row(
+                w,
+                "SHA256",
+                &format!("<code>{}</code>", html_escape(&r.sha256)),
+            )?;
+        }
         row(
             w,
             "Matching",

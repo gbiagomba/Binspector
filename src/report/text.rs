@@ -31,9 +31,21 @@ pub fn write(
         human_bytes(r.file_size),
         thousands(r.file_size)
     )?;
-    writeln!(w, "MD5:     {}", r.md5)?;
-    writeln!(w, "SHA1:    {}", r.sha1)?;
-    writeln!(w, "SHA256:  {}", r.sha256)?;
+    if r.is_manifest_digest() {
+        // Named for what it is. The value is the SHA-256 of the newline-joined
+        // "<sha256>  <label>" lines in target order, which is exactly what `sha256sum` emits, so a
+        // reader can reproduce it by hand from the Targets table.
+        writeln!(
+            w,
+            "Manifest SHA256:  {}  (over {} target digests, not a file hash)",
+            r.sha256,
+            r.targets.len()
+        )?;
+    } else {
+        writeln!(w, "MD5:     {}", r.md5)?;
+        writeln!(w, "SHA1:    {}", r.sha1)?;
+        writeln!(w, "SHA256:  {}", r.sha256)?;
+    }
     writeln!(
         w,
         "Matching: {}, min string length {}, {} banned names",
