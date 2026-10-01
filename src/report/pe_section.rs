@@ -113,6 +113,13 @@ pub fn write_text(w: &mut dyn Write, r: &Report) -> Result<()> {
     }
 
     write_origin(w, r, &pes)?;
+    // Called here rather than from inside `write_origin`, which returns early when no finding is
+    // attributable to a parsed PE. These two read `pes` and never touch `r.hits`, so gating them on
+    // findings meant a clean scan of 441 signed images printed nothing at all about those
+    // signatures, as did a scan whose occurrences all landed in non-PE members such as a package
+    // manifest. The strongest output the tool has was conditional on the weakest.
+    write_signature_caveat(w, &pes)?;
+    write_chain_text(w, &pes)?;
     write_crt_surface_text(w, r)?;
     write_ipc_text(w, r)?;
 
@@ -207,7 +214,7 @@ fn write_origin(w: &mut dyn Write, r: &Report, pes: &[&crate::model::CoverageEnt
     if unattributed > 0 {
         writeln!(w, "    not a parsed image           {:>6}", unattributed)?;
     }
-    write_signature_caveat(w, pes)
+    Ok(())
 }
 
 /// The one line a reader relies on when deciding how much a signer name is worth.
@@ -234,7 +241,7 @@ fn write_signature_caveat(w: &mut dyn Write, pes: &[&crate::model::CoverageEntry
     if verified + mismatch + unchecked == 0 {
         writeln!(
             w,
-            "    No image carried a signature, so no identity was claimed and none was checked."
+            "  No image carried a signature, so no identity was claimed and none was checked."
         )?;
         return Ok(());
     }
@@ -250,7 +257,7 @@ fn write_signature_caveat(w: &mut dyn Write, pes: &[&crate::model::CoverageEntry
              signer name on those images is worth nothing."
         )?;
     }
-    write_chain_text(w, pes)
+    Ok(())
 }
 
 /// What the embedded certificates were found to be, and the anchor fingerprints to compare.
@@ -337,6 +344,72 @@ fn write_chain_text(w: &mut dyn Write, pes: &[&crate::model::CoverageEntry]) -> 
          is never checked."
     )?;
     Ok(())
+}
+
+#[cfg(test)]
+mod signature_gate_tests {
+    use crate::report::tests_support::rich_report;
+    use crate::report::text;
+
+    fn render(r: &crate::model::Report) -> String {
+        let mut buf: Vec<u8> = Vec::new();
+        text::write(&mut buf, r, None, &crate::report::tests_support::opts()).expect("render");
+        String::from_utf8(buf).expect("utf8")
+    }
+
+    /// The defect: signature facts were reported only as a tail call of the findings-by-origin
+    /// block, which returns early when no occurrence is attributable to a parsed PE. So a clean
+    /// scan of a bundle full of signed images said nothing about any of them.
+    #[test]
+    fn signatures_are_reported_even_when_there_are_no_findings() {
+        let mut r = rich_report();
+        r.hits.clear();
+        r.summary.clear();
+        r.banned_hit_count = 0;
+        let out = render(&r);
+        assert!(
+            out.contains("Authenticode digest:"),
+            "a zero-finding scan must still report digests:\n{}",
+            out
+        );
+        assert!(
+            out.contains("Certificate chain:"),
+            "and chain states:\n{}",
+            out
+        );
+    }
+
+    /// The subtler half: findings exist, but every one lands in a member that is not a parsed PE,
+    /// such as a package manifest. All three origin counters stay zero and the guard still fired.
+    #[test]
+    fn signatures_are_reported_when_findings_miss_every_parsed_image() {
+        let mut r = rich_report();
+        for h in r.hits.iter_mut() {
+            h.member = "bundle :: AppxManifest.xml".to_string();
+        }
+        let out = render(&r);
+        assert!(
+            out.contains("Authenticode digest:"),
+            "findings in non-PE members must not suppress signature reporting:\n{}",
+            out
+        );
+    }
+
+    #[test]
+    fn an_unsigned_set_says_so_rather_than_going_quiet() {
+        let mut r = rich_report();
+        for e in r.coverage.entries.iter_mut() {
+            if let Some(pe) = e.pe.as_mut() {
+                pe.signature = None;
+            }
+        }
+        let out = render(&r);
+        assert!(
+            out.contains("No image carried a signature"),
+            "an unsigned set is a statement, not silence:\n{}",
+            out
+        );
+    }
 }
 
 /// Named-pipe servers and whether they import any authorization primitive.
