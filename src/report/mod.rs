@@ -2,6 +2,7 @@
 
 pub mod csv;
 pub mod exe_section;
+pub mod fmt_util;
 pub mod html;
 pub mod json;
 pub mod markdown;

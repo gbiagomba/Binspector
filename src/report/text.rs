@@ -246,7 +246,7 @@ fn write_posture(w: &mut dyn Write, r: &Report) -> Result<()> {
         let shown: Vec<&str> = p
             .members
             .iter()
-            .map(|m| super::pe_section::short_name(m))
+            .map(|m| super::fmt_util::short_name(m))
             .take(8)
             .collect();
         writeln!(

@@ -11,7 +11,8 @@
 use anyhow::Result;
 use std::io::Write;
 
-use super::{pe_section::short_name, thousands};
+use super::fmt_util::{preview, short_name};
+use super::thousands;
 use crate::exe::posture::UnixMitigations;
 use crate::model::Report;
 use crate::pe::mitigations::State;
@@ -120,19 +121,6 @@ fn write_import_sources(w: &mut dyn Write, r: &Report, total: usize) -> Result<(
         )?;
     }
     Ok(())
-}
-
-/// Name a few members and count the rest. Duplicated from `pe_section::preview`, which is
-/// private to that module and whose signature is the same by coincidence rather than by contract.
-fn preview(items: &[&str], max: usize) -> String {
-    if items.len() <= max {
-        return items.join(", ");
-    }
-    format!(
-        "{}, and {} more",
-        items[..max].join(", "),
-        items.len() - max
-    )
 }
 
 #[cfg(test)]

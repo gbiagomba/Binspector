@@ -3,6 +3,7 @@
 use anyhow::Result;
 use std::io::Write;
 
+use super::fmt_util::{preview, short_name, truncate};
 use super::thousands;
 use crate::model::Report;
 use crate::pe::loader::Verdict;
@@ -338,13 +339,6 @@ fn write_chain_text(w: &mut dyn Write, pes: &[&crate::model::CoverageEntry]) -> 
     Ok(())
 }
 
-fn truncate(s: &str, max: usize) -> String {
-    if s.chars().count() <= max {
-        return s.to_string();
-    }
-    s.chars().take(max.saturating_sub(1)).collect::<String>() + "~"
-}
-
 /// Named-pipe servers and whether they import any authorization primitive.
 ///
 /// The question a reviewer actually has about a finding is whether the code is reachable from an
@@ -623,21 +617,6 @@ fn emit_list(w: &mut dyn Write, label: &str, items: &[String]) -> Result<()> {
 }
 
 /// Last element of a provenance chain, which is the file name.
-pub fn short_name(member: &str) -> &str {
-    member.rsplit(" :: ").next().unwrap_or(member)
-}
-
-fn preview(items: &[&str], max: usize) -> String {
-    if items.len() <= max {
-        return items.join(", ");
-    }
-    format!(
-        "{}, and {} more",
-        items[..max].join(", "),
-        items.len() - max
-    )
-}
-
 /// Size of the largest PE, used by the markdown report's header line.
 pub fn largest_pe(r: &Report) -> Option<(&str, u64)> {
     r.pe_members()

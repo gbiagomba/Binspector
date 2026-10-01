@@ -324,13 +324,13 @@ pub fn run_labeled(
                     // always begins with the scanned file's name, so matching it would make
                     // `^MyProduct` attribute every member of MyProduct.msixbundle to
                     // first-party, which is exactly the wrong answer.
-                    let leaf = crate::report::pe_section::short_name(&member_name);
+                    let leaf = crate::report::fmt_util::short_name(&member_name);
                     a.first_party = re.is_match(leaf) || re.is_match(signer);
                 }
                 if a.loader.loads_dynamically() {
                     let filter = pe_loader::ModuleFilter::new(
                         &a.libraries,
-                        crate::report::pe_section::short_name(&member_name),
+                        crate::report::fmt_util::short_name(&member_name),
                     );
                     let found: Vec<pe_loader::UnqualifiedModule> = extracted
                         .iter()

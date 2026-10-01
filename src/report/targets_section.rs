@@ -7,6 +7,7 @@
 //! Deliberately silent for a single target. The scalar fields on `Report` already say
 //! everything a one-file table would repeat, and a 5.0.0 scan has to render byte-identically.
 
+use super::fmt_util::{fit_middle, preview};
 use anyhow::Result;
 use std::io::Write;
 
@@ -77,7 +78,7 @@ pub fn write_text(w: &mut dyn Write, r: &Report) -> Result<()> {
             "  !! {} target(s) never reached an executable image, so a clean result from them \
              is not evidence: {}",
             unreached.len(),
-            label_preview(&unreached, LABEL_PREVIEW)
+            preview(&unreached, LABEL_PREVIEW)
         )?;
     }
     let warned: Vec<&str> = r
@@ -91,7 +92,7 @@ pub fn write_text(w: &mut dyn Write, r: &Report) -> Result<()> {
             w,
             "  !! {} target(s) carry their own scan warnings: {}",
             warned.len(),
-            label_preview(&warned, LABEL_PREVIEW)
+            preview(&warned, LABEL_PREVIEW)
         )?;
     }
 
@@ -208,41 +209,6 @@ fn write_row(
     Ok(())
 }
 
-/// Fit a value into `max` columns, keeping the tail and marking the cut with `~`.
-///
-/// `pe_section::truncate` is private, and it keeps the *head*, which is the wrong end for a
-/// label: a label is a provenance root, often a relative path, and
-/// `arm64/Microsoft.WindowsAppRuntime.2.msix` is identified by its last component while every
-/// sibling shares its first. Counting characters rather than bytes keeps a non-ASCII path from
-/// shifting the columns, and control characters are flattened to spaces because a newline in a
-/// file name would otherwise split one row into two.
-fn fit_middle(s: &str, max: usize) -> String {
-    let cleaned: String = s
-        .chars()
-        .map(|c| if c.is_control() { ' ' } else { c })
-        .collect();
-    let n = cleaned.chars().count();
-    if n <= max {
-        return cleaned;
-    }
-    if max <= 1 {
-        return cleaned.chars().take(max).collect();
-    }
-    // Keep both ends and elide the middle. Neither end alone is safe to drop: a real dependency
-    // tree holds `arm64/Microsoft.WindowsAppRuntime.2.msix` beside `x64/...`, which share their
-    // tail and differ only in their head, while `bin/tool` and `lib/tool` are the reverse.
-    // Tail-only truncation rendered the first pair as `~64/Microsoft...` and `x64/Microsoft...`,
-    // two rows a reader cannot tell apart, which defeats the point of a unique label.
-    let keep = max - 1;
-    let head = keep.div_ceil(2);
-    let tail = keep - head;
-    let mut out = String::with_capacity(max);
-    out.extend(cleaned.chars().take(head));
-    out.push('~');
-    out.extend(cleaned.chars().skip(n - tail));
-    out
-}
-
 /// Display labels for the rows, guaranteeing that no two render identically.
 ///
 /// Truncation can collapse distinct labels: `Microsoft.VCLibs.ARM.14.00.Desktop.appx` and
@@ -269,19 +235,6 @@ fn disambiguate(rows: &[&&TargetInfo]) -> Vec<String> {
         *label = format!("{}{}", base, tag);
     }
     out
-}
-
-/// Name a few labels and count the rest. A duplicate of `pe_section::preview`, which is
-/// private to that module; copying seven lines is cheaper than widening its API.
-fn label_preview(labels: &[&str], max: usize) -> String {
-    if labels.len() <= max {
-        return labels.join(", ");
-    }
-    format!(
-        "{}, and {} more",
-        labels[..max].join(", "),
-        labels.len() - max
-    )
 }
 
 #[cfg(test)]
@@ -486,7 +439,7 @@ mod tests {
     #[test]
     fn label_preview_counts_the_remainder() {
         let labels = vec!["a", "b", "c", "d"];
-        assert_eq!(label_preview(&labels, 10), "a, b, c, d");
-        assert_eq!(label_preview(&labels, 2), "a, b, and 2 more");
+        assert_eq!(preview(&labels, 10), "a, b, c, d");
+        assert_eq!(preview(&labels, 2), "a, b, and 2 more");
     }
 }
