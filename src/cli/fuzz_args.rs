@@ -13,6 +13,7 @@ pub enum FuzzTarget {
     Strings,
     Container,
     Pe,
+    Exe,
     All,
 }
 
@@ -22,6 +23,7 @@ impl From<FuzzTarget> for differential::Target {
             FuzzTarget::Strings => differential::Target::Strings,
             FuzzTarget::Container => differential::Target::Container,
             FuzzTarget::Pe => differential::Target::Pe,
+            FuzzTarget::Exe => differential::Target::Exe,
             FuzzTarget::All => differential::Target::All,
         }
     }

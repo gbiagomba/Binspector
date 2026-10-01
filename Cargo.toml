@@ -1,6 +1,6 @@
 [package]
 name = "binspector"
-version = "5.1.1"
+version = "5.2.0"
 edition = "2021"
 description = "Inspect binaries for banned C/C++ functions and exploit mitigations, unpacking nested containers, with PE analysis, reputation and CVE enrichment, and fuzzing"
 license = "GPL-3.0-or-later"
@@ -63,6 +63,12 @@ doc = false
 [[bin]]
 name = "fuzz_pe"
 path = "src/bin/fuzz_pe.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_exe"
+path = "src/bin/fuzz_exe.rs"
 test = false
 doc = false
 

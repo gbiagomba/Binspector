@@ -10,8 +10,12 @@
 //! Both readers produce the same `ImportRef` the PE path produces, so the evidence loop, the
 //! severity rules, and every writer work unchanged.
 
+pub mod binds;
+pub mod chained;
 pub mod elf;
 pub mod macho;
+pub mod posture;
+pub mod posture_rules;
 
 use crate::pe::ImportRef;
 
@@ -19,8 +23,14 @@ use crate::pe::ImportRef;
 #[derive(Clone, Debug, Default)]
 pub struct UnixImports {
     pub imports: Vec<ImportRef>,
-    /// Which mechanism produced the list, because the two carry different fidelity and a
-    /// reviewer should be able to tell which one answered.
+    /// Which mechanism produced the list, because they carry different fidelity and a reviewer
+    /// should be able to tell which one answered.
+    ///
+    /// A universal binary can resolve one architecture through the bind opcodes and the next
+    /// through the chained import table, so for a fat image this names the **strongest** mechanism
+    /// any slice used, in the order bind opcodes, chained table, symbol table. The distinction that
+    /// matters to a reader is whether the entries are attributed to a library: the first two are,
+    /// the symbol table is not.
     pub source: Source,
 }
 
@@ -32,6 +42,9 @@ pub enum Source {
     ElfDynsym,
     /// Mach-O dyld bind opcodes, which carry per-symbol library attribution.
     MachoBinds,
+    /// Mach-O `LC_DYLD_CHAINED_FIXUPS` import table, which carries library ordinals and is the
+    /// only place imports live on an image built by a current toolchain.
+    MachoChained,
     /// Mach-O `LC_SYMTAB` undefined externals. Used when the bind opcodes are unavailable,
     /// which is the normal case on a modern binary; loses library attribution.
     MachoSymtab,
@@ -43,6 +56,7 @@ impl Source {
             Source::None => "none",
             Source::ElfDynsym => "elf-dynsym",
             Source::MachoBinds => "macho-binds",
+            Source::MachoChained => "macho-chained",
             Source::MachoSymtab => "macho-symtab",
         }
     }

@@ -52,6 +52,7 @@ pub fn write(
     write_posture(w, r)?;
     super::pe_section::write_text(w, r)?;
     super::pe_section::write_dll_search_text(w, r)?;
+    super::exe_section::write_text(w, r)?;
     super::pe_section::write_carve_text(w, r)?;
     super::pe_section::write_intel_text(w, r)?;
     write_warnings(w, r, opts)?;
@@ -431,6 +432,8 @@ mod tests {
                     strings: 10,
                     imports: Vec::new(),
                     import_source: String::new(),
+                    unix: None,
+                    unix_executable: false,
                     pe: None,
                 }],
                 carved: vec![],

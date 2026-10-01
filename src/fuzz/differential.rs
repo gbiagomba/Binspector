@@ -26,6 +26,9 @@ pub enum Target {
     Container,
     /// PE header, section, and import parsing.
     Pe,
+    /// ELF and Mach-O imports and mitigation posture, including the chained-fixups blob, whose
+    /// header is seven attacker-controlled offsets into itself.
+    Exe,
     /// Every parser in sequence, as a real scan would.
     All,
 }
@@ -36,6 +39,7 @@ impl Target {
             Target::Strings => "strings",
             Target::Container => "container",
             Target::Pe => "pe",
+            Target::Exe => "exe",
             Target::All => "all",
         }
     }
@@ -193,6 +197,9 @@ fn exercise(input: &[u8], target: Target) -> std::result::Result<(), String> {
         Target::Pe => {
             PeAnalysis::parse(input);
         }
+        Target::Exe => {
+            exercise_exe(input);
+        }
         Target::Container => {
             let limits = tight_limits();
             let _ = container::walk_bytes(
@@ -206,6 +213,7 @@ fn exercise(input: &[u8], target: Target) -> std::result::Result<(), String> {
         Target::All => {
             strings::extract(input, 4, true, true);
             PeAnalysis::parse(input);
+            exercise_exe(input);
             let limits = tight_limits();
             let _ = container::walk_bytes(
                 input,
@@ -215,12 +223,20 @@ fn exercise(input: &[u8], target: Target) -> std::result::Result<(), String> {
                 &mut |m| {
                     strings::extract(m.data, 4, true, true);
                     PeAnalysis::parse(m.data);
+                    exercise_exe(m.data);
                     Ok(())
                 },
             );
         }
     }));
     result.map_err(|e| panic_message(&e))
+}
+
+/// The non-PE readers, in the order a scan reaches them.
+fn exercise_exe(input: &[u8]) {
+    let _ = crate::exe::read(input);
+    let _ = crate::exe::posture::read(input);
+    let _ = crate::exe::posture::is_executable_image(input);
 }
 
 /// Tight caps so a mutated archive header cannot make the fuzzer itself the bomb.

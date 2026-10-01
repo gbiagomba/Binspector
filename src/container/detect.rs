@@ -114,6 +114,15 @@ pub fn detect(data: &[u8]) -> Format {
 /// least 45. So an implausible architecture count means this is not a fat binary.
 ///
 /// `0xBEBAFECA` is `FAT_CIGAM`, the byte-swapped form, which was missing entirely.
+/// Most architecture slices a universal binary may claim before the header is treated as not one.
+///
+/// Two jobs, which is why it is public. It separates a fat header from a Java class file during
+/// detection, and it bounds how much work a hostile header can ask for in `exe::macho` and
+/// `exe::posture`: goblin bounds `nfat_arch` only by the file length over 20, so a 150 KiB file can
+/// claim 7,710 slices and each one costs a full `MachO::parse`. Fuzzing turned that into a
+/// 3.9-second execution on a single mutated input. Apple has never shipped more than a handful.
+pub const MAX_FAT_ARCHES: u32 = 16;
+
 fn is_fat_macho(data: &[u8]) -> bool {
     let Some(raw) = data.get(4..8) else {
         return false;
@@ -125,9 +134,9 @@ fn is_fat_macho(data: &[u8]) -> bool {
     } else {
         u32::from_be_bytes(bytes)
     };
-    // Apple has never shipped a fat binary with more than a handful of slices, and the lowest
-    // Java major version in the wild is 45, so this separates them cleanly with room to spare.
-    (1..=16).contains(&nfat_arch)
+    // The lowest Java major version in the wild is 45, so the cap separates the two formats
+    // cleanly with room to spare.
+    (1..=MAX_FAT_ARCHES).contains(&nfat_arch)
 }
 
 /// A PE starts with `MZ` and carries a `PE\0\0` signature at the e_lfanew offset.

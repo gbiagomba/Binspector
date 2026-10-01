@@ -2,6 +2,94 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.2.0] - 2026-10-01
+
+### Added
+- **ELF and Mach-O imports, which closes a structural gap rather than adding a feature.**
+  `Confidence::Import` is the strongest evidence the tool has, because an import-table entry is a
+  linker-recorded dependency rather than a name that happens to appear in the bytes. That tier was
+  derivable only from a PE import directory, so `import-backed occurrences` was **zero by
+  construction** for every ELF and Mach-O binary scanned, and the tool was quietly much weaker on
+  Linux and macOS than on Windows without saying so. Verified on `/bin/ls`: 97 imports and 5
+  import-backed occurrences including a critical `strcpy` from `libSystem.B.dylib`, where the count
+  had been zero.
+- **Mach-O `LC_DYLD_CHAINED_FIXUPS` import table.** goblin recognises the load command and never
+  interprets it, so on anything built by a current toolchain `MachO::imports()` returns empty,
+  which is indistinguishable from "this image imports nothing". The table is now read directly,
+  with its dylib ordinals. Measured on eight system binaries: the same 1,055 imports went from
+  **zero attributed to a library to all 1,055 attributed**, which is what lets a report say which
+  library a call comes from instead of naming a bare symbol.
+- **Exploit-mitigation findings for ELF and Mach-O**: `nx`, `relro`, `pie`, `canary`, `fortify`,
+  `exec-stack`, `exec-heap`, and `macho-code-signature`, each with the header field it was read
+  from and a build-flag remediation. New id strings rather than overloads of the PE ones, because
+  the ids are a documented filter surface and making `aslr` also mean "ELF PIE" would silently
+  change what an existing `--filter aslr` selects. These participate in `--fail-on`.
+- **A `Native analysis` report section**, listing which mitigations are missing across the ELF and
+  Mach-O images, which mechanism supplied each image's imports, and how many images had no readable
+  import table at all. That last number matters: for those images the **absence** of an import is
+  not evidence, and the evidence rules depend on knowing the difference.
+- **CRT surface roll-up.** `memcpy`, `memset`, and `memmove` were 81 of 244 occurrences on the
+  reference bundle, one per function per member, which is a link-graph fact rather than 81
+  findings. The human text, markdown, and HTML occurrence lists now carry a surface summary with a
+  denominator instead. JSON, CSV, SQL, SQLite, and SARIF stay complete, and `banned_hit_count`,
+  `severity_counts`, and `--fail-on` are unchanged.
+- **Posture findings in SARIF**, as a `missing-mitigation/<id>` rule family with one result per
+  finding and one location per affected member. `region` is omitted rather than invented, because
+  there is no byte offset to anchor a header fact to.
+- **Named-pipe trust-boundary narrowing.** Which images are pipe servers, which build their own
+  security descriptors, and which call no authorization primitive at all. The last of those is
+  gated on a readable import table, because "imports nothing from the token family" manufactured
+  out of a parse failure would be the tool's strongest claim built on nothing.
+
+### Changed
+- **`--no-pe` is now `--no-exe`**, since it gates three formats rather than one. `--no-pe` remains
+  as a visible alias.
+- `--dump` works across several targets, rather than being refused for a multi-target run.
+
+### Security
+- **A reachable panic and a reachable allocation bomb in the Mach-O import path, both found by
+  fuzzing a real system binary, both now unreachable.** `MachO::imports()` is not safe to call on a
+  file the tool was pointed at. It raw-indexes two attacker-controlled fields with no bounds check
+  (`segments[seg_index]` and `libs[symbol_library_ordinal]`), so four bytes of edit to any signed
+  binary aborted the scan: 8,000 mutations of `/bin/ls` produced it twenty times over, the first at
+  iteration 63. And `BIND_OPCODE_DO_BIND_ULEB_TIMES_SKIPPING_ULEB` carries a ULEB repeat count whose
+  every repetition pushes another entry, so a 120-byte opcode stream could ask for billions; one
+  mutated input spent 1.8 seconds in there and returned nothing.
+
+  Neither is fixable from the outside, because a `catch_unwind` cannot bound an allocation and a size
+  cap cannot help when 120 bytes is already enough. The opcode walk is now local, in
+  `src/exe/binds.rs`, with checked arithmetic throughout. What makes it bounded is the question it
+  asks: `count` repetitions bind the *same symbol from the same library* at successive addresses, so
+  for an import list the count carries no information, and it is read and discarded. There is no
+  address arithmetic in the module at all. **Verified faithful, not merely safe:** the walk agrees
+  with goblin's name-for-name on 46 real system binaries with zero disagreements, which is now a
+  platform-gated test. 80,000 further mutations across four seeds find nothing, and the slowest
+  execution went from 3,866 ms to 0 ms.
+- **A universal binary could claim 7,710 architecture slices**, each costing a full `MachO::parse`
+  in both the import reader and the posture reader, because goblin bounds `nfat_arch` only by the
+  file length over 20 bytes. Capped at the same 16 that detection already used to tell a fat header
+  from a Java class file, which is well above anything Apple ships.
+- **A chained-fixups header could claim four billion imports** in a blob with room for twelve, each
+  claimed entry costing a scan of the string pool. The count is now clamped to what the blob holds,
+  which is a structural check rather than a heuristic: an entry past the end of the blob is not an
+  entry.
+
+### Fixed
+- **The bind-opcode walk read only the first lazy import.** In the lazy stream dyld writes one
+  `BIND_OPCODE_DONE` after each binding rather than one at the end, so treating it as end-of-stream
+  found 8 imports on `/bin/ls` where there are 91. Caught by the differential against goblin, which
+  is exactly the class of defect a passing unit test would have hidden.
+- **Fat-binary linkedit offsets are relative to the architecture slice, not to the file.** goblin
+  slices a universal binary down to one architecture before parsing, so its offsets look absolute
+  and are not. Reading them against the whole file lands in machine code and yields zero imports.
+  The slice offset is now carried explicitly and pinned by an assertion, because a set comparison
+  alone would have reported this as "ours is empty" rather than as an addressing error.
+- Mach-O symbol names were normalised differently on the bind path and the symbol-table path, so a
+  universal binary reported the same symbol twice as `___stack_chk_fail` and `__stack_chk_fail`.
+  Both paths now strip exactly one assembler underscore and dedup prefers the entry that carries
+  library attribution: 181 entries collapse to 97, each attributed. Found by probing a real
+  universal binary, not by a test.
+
 ## [5.1.1] - 2026-10-01
 
 ### Fixed

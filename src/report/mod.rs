@@ -1,6 +1,7 @@
 //! Report rendering. One module per output format, dispatched from here.
 
 pub mod csv;
+pub mod exe_section;
 pub mod html;
 pub mod json;
 pub mod markdown;
@@ -216,6 +217,8 @@ pub(crate) mod tests_support {
                     strings: 10,
                     imports: Vec::new(),
                     import_source: String::new(),
+                    unix: None,
+                    unix_executable: false,
                     pe: None,
                 }],
                 carved: vec![],

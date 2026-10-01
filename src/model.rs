@@ -188,6 +188,28 @@ pub struct CoverageEntry {
     #[serde(default)]
     #[serde(skip_serializing_if = "String::is_empty")]
     pub import_source: String,
+    /// Exploit-mitigation posture for an ELF or Mach-O member.
+    ///
+    /// `None` for a PE, whose posture is `pe.mitigations`, and for anything that is neither.
+    /// Separate from `pe.mitigations` because the two name different header bits: overloading
+    /// `aslr` to also mean ELF PIE would silently change what an existing `--filter aslr`
+    /// selects.
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unix: Option<crate::exe::posture::UnixMitigations>,
+    /// Whether this member is a main executable image.
+    ///
+    /// Carried because three of the Mach-O flags say nothing about a dylib or a bundle: the
+    /// kernel reads them from the main executable's header only. See
+    /// `exe::posture::is_executable_image`.
+    #[serde(default)]
+    #[serde(skip_serializing_if = "is_false")]
+    pub unix_executable: bool,
+}
+
+/// Serde skip predicate for a `bool` that is false in the overwhelming majority of entries.
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -301,6 +323,15 @@ impl Report {
             .entries
             .iter()
             .filter(|e| e.pe.is_some())
+            .collect()
+    }
+
+    /// Members that carry ELF or Mach-O mitigation posture, which is the non-PE half.
+    pub fn unix_members(&self) -> Vec<&CoverageEntry> {
+        self.coverage
+            .entries
+            .iter()
+            .filter(|e| e.unix.is_some())
             .collect()
     }
 

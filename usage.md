@@ -104,7 +104,8 @@ binspector --banned-filter '^str' ./app.exe
 
 | Option | Description |
 |---|---|
-| `--no-pe` | Skip PE parsing (headers, sections, imports, mitigations) |
+| `--no-exe` | Skip executable parsing for all three formats (headers, sections, imports, mitigations) |
+| `--no-pe` | Alias for `--no-exe`, kept because it was the name before 5.2.0 |
 | `--carve` | Scan every member for embedded file signatures. Opt-in at runtime, not a build gate |
 | `--ioc-cap <N>` | Maximum indicators of each kind to collect (default 500) |
 | `--reputation` | Look the hash up with VirusTotal and MetaDefender |
@@ -420,7 +421,37 @@ Heuristics are tuned against real applications rather than ideal ones:
 Without those exemptions, a real 441-image application bundle produced hundreds of hints
 describing ordinary structure.
 
-`--no-pe` skips this entirely.
+### ELF and Mach-O
+
+Read since 5.2.0, and the reason is a gap rather than a feature. `Confidence::Import` is the
+strongest evidence the tool has, because an import-table entry is a linker-recorded dependency
+rather than a name that happens to appear in the bytes. Until 5.2.0 that tier was derivable only
+from a PE import directory, so **`import-backed occurrences` was structurally zero for every ELF
+and Mach-O binary scanned**, and the tool was quietly much weaker on Linux and macOS than on
+Windows without saying so.
+
+| Format | Imports read from | Library attribution |
+|---|---|---|
+| ELF | `.dynsym` entries with `SHN_UNDEF` | No. ELF has a flat namespace, so the library is left empty rather than guessed |
+| Mach-O | `LC_DYLD_INFO` bind opcodes, walked locally | Yes, per symbol |
+| Mach-O | `LC_DYLD_CHAINED_FIXUPS` import table | Yes, by dylib ordinal |
+| Mach-O | `LC_SYMTAB` undefined externals | No. The ordinal is in `n_desc`, which is not exposed |
+
+The report names which mechanism answered for each image, because they differ in what they can
+claim. An image where none of them answered is the case where the **absence** of an import is not
+evidence, and the report says how many of those there were.
+
+A universal binary's slices are unioned and deduplicated: for a banned-function scan the finding
+matters even if only one architecture has it. A fat static library's `ar` slices are skipped, and a
+header claiming more than 16 architectures is not treated as one.
+
+The bind opcodes are walked in `src/exe/binds.rs` rather than through goblin, which panics on an
+out-of-range library ordinal and multiplies its output by an attacker-chosen repeat count. The local
+walk agrees with goblin name-for-name on 46 real system binaries, which is a platform-gated test, and
+discards the repeat count because `count` repetitions bind the same symbol at successive addresses
+and so say nothing an import list needs.
+
+`--no-exe` skips this entirely, for all three formats.
 
 ## Dynamic loading
 
@@ -478,6 +509,32 @@ unsigned images is a single statement about a build, not 179 findings.
 | `safe-seh` | 32-bit image registering no exception handlers | medium |
 | `authenticode` | No certificate table | medium |
 | `cet` | `CET_COMPAT` absent from the extended DLL characteristics | low |
+
+ELF and Mach-O carry their own set, added in 5.2.0. The ids are new strings rather than overloads
+of the PE ones: `aslr` names a specific optional-header bit, and making it also mean "ELF PIE"
+would silently change what an existing `--filter aslr` selects.
+
+| id | Format | Condition | Severity |
+|---|---|---|---|
+| `nx` | ELF | `PT_GNU_STACK` present and executable | high |
+| `exec-stack` | Mach-O | `MH_ALLOW_STACK_EXECUTION` set | high |
+| `pie` | both | ELF `ET_EXEC`, or a Mach-O executable without `MH_PIE` | high |
+| `relro` | ELF | No `PT_GNU_RELRO`, or a segment without `BIND_NOW` | medium |
+| `canary` | both | No `__stack_chk_fail` among the undefined symbols | medium |
+| `fortify` | ELF | No `__*_chk` helper among the undefined symbols | medium |
+| `exec-heap` | Mach-O | 32-bit x86 image without `MH_NO_HEAP_EXECUTION` | medium |
+| `macho-code-signature` | Mach-O | No `LC_CODE_SIGNATURE` | medium |
+
+Three of those are scoped to a main executable image, because the kernel reads `MH_PIE`,
+`MH_ALLOW_STACK_EXECUTION`, and `MH_NO_HEAP_EXECUTION` from the main executable's header only, and
+`ld` rejects `-allow_stack_execute` for anything else. ELF `nx` is deliberately **not** scoped that
+way: the loader ORs `PT_GNU_STACK` across every object it maps, so one shared library with an
+executable stack makes the whole process's stack executable.
+
+`exec-heap` will almost never fire, and that is correct. `MH_NO_HEAP_EXECUTION` affects the i386
+ABI; on x86_64 and every arm64 variant the heap is non-executable regardless and no current
+toolchain sets the bit, so reading its absence as a defect would file "executable heap" against
+every signed Apple system binary.
 
 Each finding carries the flag or directory it was read from and the remediation, so the claim is
 checkable against the file.

@@ -185,6 +185,22 @@ pub fn run_labeled(
                 _ => (Vec::new(), String::new()),
             };
 
+            // Exploit-mitigation posture for the two formats `pe::posture` cannot read. Kept
+            // off `PeAnalysis` because the header bits are different ones: overloading `aslr`
+            // to also mean ELF PIE would change what an existing `--filter aslr` selects.
+            let (unix, unix_executable) = if cfg.analyze_pe
+                && matches!(
+                    member.format,
+                    crate::container::Format::Elf | crate::container::Format::MachO
+                ) {
+                (
+                    crate::exe::posture::read(member.data),
+                    crate::exe::posture::is_executable_image(member.data),
+                )
+            } else {
+                (None, false)
+            };
+
             // An entry in the import directory is direct evidence that the binary calls
             // the function, so it outranks anything inferred from embedded text. Imports
             // are recorded first, and string matches for the same function are then
@@ -483,6 +499,8 @@ pub fn run_labeled(
                 pe,
                 imports: member_imports,
                 import_source,
+                unix,
+                unix_executable,
             });
             Ok(())
         },
@@ -641,12 +659,7 @@ pub fn run_labeled(
                 .cloned()
                 .collect(),
         }],
-        posture: crate::pe::posture::findings(
-            &coverage_entries
-                .iter()
-                .filter(|e| e.pe.is_some())
-                .collect::<Vec<_>>(),
-        ),
+        posture: all_posture(&coverage_entries),
         coverage: Coverage {
             root_format: outcome.root_format.as_str().to_string(),
             members_scanned: outcome.members_scanned,
@@ -701,6 +714,33 @@ fn window(text: &str, start: usize, end: usize, max: usize) -> (String, usize, u
         return (text[start..end].to_string(), 0, hit_len);
     }
     (text[from..to].to_string(), start - from, end - from)
+}
+
+/// Every posture finding for a report, across all three executable formats.
+///
+/// One function rather than two call sites appending two lists, because concatenating two
+/// already-sorted lists is not sorted: a Medium PE finding would print above a High ELF one.
+/// The ordering here is `pe::posture`'s, applied to the union.
+pub fn all_posture(entries: &[CoverageEntry]) -> Vec<crate::model::PostureFinding> {
+    let pes: Vec<&CoverageEntry> = entries.iter().filter(|e| e.pe.is_some()).collect();
+    let unix: Vec<(String, crate::exe::posture::UnixMitigations, bool)> = entries
+        .iter()
+        .filter_map(|e| {
+            e.unix
+                .clone()
+                .map(|m| (e.member.clone(), m, e.unix_executable))
+        })
+        .collect();
+
+    let mut out = crate::pe::posture::findings(&pes);
+    out.extend(crate::exe::posture_rules::findings(&unix));
+    out.sort_by(|a, b| {
+        a.severity
+            .cmp(&b.severity)
+            .then(b.affected.cmp(&a.affected))
+            .then(a.id.cmp(&b.id))
+    });
+    out
 }
 
 #[cfg(test)]

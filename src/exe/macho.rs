@@ -7,10 +7,18 @@
 //! `imports()` returns an empty vector. That is indistinguishable from "this binary imports
 //! nothing", which would silently zero out the strongest evidence tier on most of the platform.
 //!
-//! So: try the bind opcodes, and when they yield nothing fall back to the `LC_SYMTAB` undefined
-//! externals, which are present on any non-stripped image regardless of fixup format. The
-//! fallback loses per-symbol library attribution, so the source is recorded and the two are not
-//! conflated.
+//! So three mechanisms, tried in order, with the one that answered recorded on the result because
+//! they differ in fidelity. `exe::binds` first, which walks the `LC_DYLD_INFO` opcode stream here
+//! rather than through goblin, whose interpreter both panics on an out-of-range library ordinal and
+//! multiplies its output by an attacker-chosen repeat count. Then `exe::chained`, which reads the
+//! `LC_DYLD_CHAINED_FIXUPS` import table and is the path a current toolchain produces. Then the
+//! `LC_SYMTAB` undefined externals, which loses per-symbol library attribution.
+//!
+//! The symbol table is last, not second, because it cannot attribute a symbol to a library: the
+//! dylib ordinal is in `n_desc`, which goblin does not expose. It usually lists the same names as
+//! the chained table, so the cost of reaching it first would be silent loss of attribution rather
+//! than loss of coverage, which is the harder kind of defect to notice. `/bin/ls` concealed the
+//! whole question during development, being an older image that still carries bind opcodes.
 //!
 //! A universal binary carries one import set per architecture. They are **unioned**, because for
 //! a banned-function scan the finding matters even if only one slice has it.
@@ -33,21 +41,40 @@ pub fn read(data: &[u8]) -> Option<UnixImports> {
 
     match mach {
         Mach::Binary(bin) => {
-            let (imports, used) = from_image(&bin);
+            let (imports, used) = from_image(&bin, data, 0);
             acc.extend(imports);
             source = used;
         }
         Mach::Fat(multi) => {
-            // Each slice is its own image. A fat static library's slices are `ar` archives
-            // rather than Mach-O images, so that arm is skipped rather than treated as an error.
-            for slice in &multi {
-                let Ok(SingleArch::MachO(bin)) = slice else {
+            // Each slice is its own image, and its load-command file offsets are relative to the
+            // slice rather than to the file, so the slice offset has to come along: reading a
+            // linkedit blob at a file-absolute offset would read a different architecture's
+            // bytes. `arches()` carries it; iterating `&multi` alone does not.
+            let arches = multi.arches().unwrap_or_default();
+            // goblin bounds `nfat_arch` only by the file length over 20 bytes, so a 150 KiB file
+            // can claim 7,710 slices and each one costs a full `MachO::parse` here and again in
+            // `exe::posture`. Fuzzing produced exactly that: a 3.9-second execution on one mutated
+            // input. The cap is the same one detection uses to tell a fat header from a Java class
+            // file, and it is well above anything Apple ships.
+            if arches.len() > crate::container::detect::MAX_FAT_ARCHES as usize {
+                return Some(UnixImports::default());
+            }
+            for (i, arch) in arches.iter().enumerate() {
+                // Whole-file budget, not per-slice. The cap below is per image, and sixteen slices
+                // each spending it is sixteen times the work for a set that dedups to roughly one
+                // slice's worth, since the slices are the same program.
+                if acc.len() >= MAX_IMPORTS {
+                    break;
+                }
+                // A fat static library's slices are `ar` archives rather than Mach-O images, so
+                // that arm is skipped rather than treated as an error.
+                let Ok(SingleArch::MachO(bin)) = multi.get(i) else {
                     continue;
                 };
-                let (imports, used) = from_image(&bin);
+                let (imports, used) = from_image(&bin, data, arch.offset as usize);
                 acc.extend(imports);
-                // Record the stronger source if any slice managed it.
-                if source == Source::None || used == Source::MachoBinds {
+                // Record the strongest source any slice managed.
+                if rank(used) > rank(source) {
                     source = used;
                 }
             }
@@ -74,30 +101,39 @@ pub fn read(data: &[u8]) -> Option<UnixImports> {
     })
 }
 
-/// One image's imports, preferring the bind opcodes and falling back to the symbol table.
-fn from_image(bin: &MachO) -> (Vec<ImportRef>, Source) {
-    if let Ok(binds) = bin.imports() {
+/// How much a source is worth when two slices disagree. Both the bind opcodes and the chained
+/// import table attribute a symbol to a library; the symbol table cannot, so it ranks below them.
+fn rank(s: Source) -> u8 {
+    match s {
+        Source::MachoBinds => 3,
+        Source::MachoChained => 2,
+        Source::MachoSymtab => 1,
+        _ => 0,
+    }
+}
+
+/// One image's imports, from the first of the three mechanisms that answers.
+///
+/// `base` is this image's file offset: zero for a thin binary, the slice offset within a
+/// universal one.
+fn from_image(bin: &MachO, data: &[u8], base: usize) -> (Vec<ImportRef>, Source) {
+    if let Some(mut binds) = super::binds::imports(bin, data, base) {
+        binds.truncate(MAX_IMPORTS);
         if !binds.is_empty() {
-            let out: Vec<ImportRef> = binds
-                .iter()
-                .take(MAX_IMPORTS)
-                .filter(|i| !i.name.is_empty())
-                .map(|i| ImportRef {
-                    library: dylib_name(i.dylib).to_string(),
-                    // Stripped here too, not only in the fallback. A universal binary can take
-                    // the bind path for one slice and the symbol-table path for another, and if
-                    // the two normalise differently the same symbol appears twice under two
-                    // spellings. Caught by probing a real two-slice binary.
-                    name: strip_underscore(i.name).to_string(),
-                })
-                .collect();
-            if !out.is_empty() {
-                return (out, Source::MachoBinds);
-            }
+            return (binds, Source::MachoBinds);
         }
     }
 
-    // The normal path on a modern binary: chained fixups, which goblin does not interpret.
+    // The normal path on a modern binary: chained fixups, which goblin recognises and does not
+    // interpret, so the table is read here.
+    if let Some(mut chained) = super::chained::imports(bin, data, base) {
+        chained.truncate(MAX_IMPORTS);
+        if !chained.is_empty() {
+            return (chained, Source::MachoChained);
+        }
+    }
+
+    // An older image whose bind opcodes would not parse. Loses library attribution.
     let mut out: Vec<ImportRef> = Vec::new();
     for entry in bin.symbols() {
         if out.len() >= MAX_IMPORTS {
@@ -131,11 +167,6 @@ fn from_image(bin: &MachO) -> (Vec<ImportRef>, Source) {
 /// list written for C names match, which is the whole point of reading the table.
 fn strip_underscore(name: &str) -> &str {
     name.strip_prefix('_').unwrap_or(name)
-}
-
-/// Last path component of a dylib path, so `/usr/lib/libSystem.B.dylib` reads as the library.
-fn dylib_name(path: &str) -> &str {
-    path.rsplit('/').next().unwrap_or(path)
 }
 
 fn is_macho_magic(data: &[u8]) -> bool {
@@ -180,15 +211,6 @@ mod tests {
         assert_eq!(strip_underscore("strcpy"), "strcpy");
         // A C++ mangled Itanium name keeps its shape; only the assembler prefix goes.
         assert_eq!(strip_underscore("__ZN2cv4getsEv"), "_ZN2cv4getsEv");
-    }
-
-    #[test]
-    fn a_dylib_path_reduces_to_its_name() {
-        assert_eq!(
-            dylib_name("/usr/lib/libSystem.B.dylib"),
-            "libSystem.B.dylib"
-        );
-        assert_eq!(dylib_name("libfoo.dylib"), "libfoo.dylib");
     }
 
     /// Real coverage comes from a system binary, which the macOS CI runners carry and the

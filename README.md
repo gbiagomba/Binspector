@@ -128,8 +128,9 @@ safety properties, and how to read a report.
 |---|---|
 | **Banned functions** | Boundary-verified matches, tiered `critical`/`high`/`medium`, each with a member path and byte offset |
 | **Confidence** | `import`, `exact`, `symbolic`, or `prose`. Namespace and documentation noise is excluded by default and disclosed |
-| **Exploit mitigations** | ASLR, DEP, Control Flow Guard, SafeSEH, Authenticode, relocations, per PE image |
-| **Exploit mitigation findings** | Missing ASLR, DEP, /GS, CFG, SafeSEH, CET, or Authenticode, as findings with evidence and remediation, not prose. Confirmable from metadata alone, which makes them the most actionable output |
+| **Exploit mitigations** | Per PE image: ASLR, DEP, Control Flow Guard, SafeSEH, /GS, CET, Authenticode, relocations. Per ELF and Mach-O image: NX, RELRO, PIE, stack canary, FORTIFY, executable stack and heap, code signature |
+| **Exploit mitigation findings** | Any of the above missing, as findings with evidence and remediation, not prose. Confirmable from metadata alone, which makes them the most actionable output. `Unknown` is never a finding: a managed assembly has no load config, and a static ELF has no RELRO to lack |
+| **Imports, all three formats** | PE import directory, ELF `.dynsym`, and Mach-O bind opcodes, chained fixups, or symbol table. An import is a linker-recorded dependency, so it is the strongest evidence the tool has, and before 5.2.0 it was unreachable on Linux and macOS |
 | **Origin** | The Authenticode signer, plus `--first-party` to override it, so a finding in a vendor's binary is not in your queue. An identity claim, never a trust decision |
 | **Dynamic loading** | Which loader APIs each image imports, whether it restricts its search path, and which modules it names without one. Reported as a surface, because an import table does not record what `LoadLibrary` was called with |
 | **PE structure** | Sections with entropy and permissions, imports and exports, TLS callbacks, overlay, packer signals |

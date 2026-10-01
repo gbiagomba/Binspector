@@ -198,6 +198,8 @@ mod tests {
             strings: 10,
             imports: Vec::new(),
             import_source: String::new(),
+            unix: None,
+            unix_executable: false,
             pe: Some(pe),
         }
     }

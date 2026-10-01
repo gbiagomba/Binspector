@@ -206,11 +206,5 @@ fn finish_aggregate(r: &mut Report) {
             .then(b.occurrences.cmp(&a.occurrences))
             .then(a.function.cmp(&b.function))
     });
-    r.posture = crate::pe::posture::findings(
-        &r.coverage
-            .entries
-            .iter()
-            .filter(|e| e.pe.is_some())
-            .collect::<Vec<_>>(),
-    );
+    r.posture = super::all_posture(&r.coverage.entries);
 }
