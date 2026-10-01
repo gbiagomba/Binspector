@@ -2,6 +2,7 @@
 
 pub mod banned;
 pub mod confidence;
+pub mod evidence;
 pub mod matcher;
 pub mod strings;
 
@@ -17,7 +18,7 @@ use crate::model::{CarvedMember, Coverage, CoverageEntry, HitRecord, MatchSummar
 use crate::observe::{level, Event, Observer};
 use crate::pe::{ioc, loader as pe_loader, PeAnalysis};
 use crate::spool::{Spool, SpoolReader};
-use banned::BannedList;
+use banned::{BannedList, Severity};
 use confidence::Confidence;
 use matcher::Matcher;
 
@@ -80,10 +81,16 @@ pub struct ScanOutput {
 }
 
 /// Per-pattern accumulator.
+#[derive(Default)]
 struct Agg {
     occurrences: usize,
     members: HashSet<String>,
     low_confidence: usize,
+    /// Worst adjusted severity seen for this function. `None` until a hit is kept.
+    ///
+    /// Needed because evidence can give two occurrences of one name different severities, so
+    /// the summary row cannot simply copy the family value any more.
+    worst: Option<Severity>,
 }
 
 pub fn run(path: &Path, cfg: &ScanConfig, observer: &dyn Observer) -> Result<ScanOutput> {
@@ -112,6 +119,8 @@ pub fn run(path: &Path, cfg: &ScanConfig, observer: &dyn Observer) -> Result<Sca
     let mut coverage_entries: Vec<CoverageEntry> = Vec::new();
     let mut hit_cap_reached = false;
     let mut low_confidence_total = 0usize;
+    // Per-rule exclusion tally, so no occurrence can disappear without a named reason.
+    let mut excluded_by_rule: BTreeMap<String, usize> = BTreeMap::new();
     let mut iocs = ioc::Extractor::new(cfg.ioc_cap);
     let mut components = intel::components::Detector::new(200);
     let mut spool = if cfg.dump { Some(Spool::new()?) } else { None };
@@ -161,13 +170,48 @@ pub fn run(path: &Path, cfg: &ScanConfig, observer: &dyn Observer) -> Result<Sca
                         None => continue,
                     };
                     imported.insert(entry.name.to_ascii_lowercase());
-                    let agg_entry = agg.entry(id).or_insert_with(|| Agg {
-                        occurrences: 0,
-                        members: HashSet::new(),
-                        low_confidence: 0,
+                    let agg_entry = agg.entry(id).or_default();
+                    // An import is never excluded: it is a linker-recorded fact. It can
+                    // still be demoted, because `strlen` cannot overflow a buffer however it
+                    // got into the binary.
+                    let ruling = evidence::adjudicate(&evidence::Observation {
+                        function: &entry.name,
+                        base_severity: entry.severity,
+                        confidence: Confidence::Import,
+                        text: &entry.name,
+                        start: 0,
+                        end: entry.name.len(),
+                        member_format: member.format,
+                        is_managed: analysis.is_managed,
+                        imports_known: true,
                     });
+                    let (imp_severity, imp_adjustments) = match &ruling {
+                        evidence::Ruling::Keep {
+                            severity,
+                            adjustments,
+                        } => (
+                            *severity,
+                            adjustments
+                                .iter()
+                                .map(|a| crate::model::Adjustment {
+                                    rule: a.rule.to_string(),
+                                    from: a.from,
+                                    to: a.to,
+                                    evidence: a.evidence.clone(),
+                                })
+                                .collect::<Vec<_>>(),
+                        ),
+                        // Unreachable: every exclusion rule requires a non-definitive
+                        // confidence. Kept explicit so a future rule cannot silently drop an
+                        // import, which is the strongest evidence the tool has.
+                        evidence::Ruling::Exclude { .. } => (entry.severity, Vec::new()),
+                    };
                     agg_entry.occurrences += 1;
                     agg_entry.members.insert(member_name.clone());
+                    agg_entry.worst = match agg_entry.worst {
+                        Some(w) if w <= imp_severity => Some(w),
+                        _ => Some(imp_severity),
+                    };
                     observer.on(&Event::Hit {
                         function: &entry.name,
                         member: &member_name,
@@ -176,7 +220,7 @@ pub fn run(path: &Path, cfg: &ScanConfig, observer: &dyn Observer) -> Result<Sca
                     if hits.len() < cfg.max_hits {
                         hits.push(HitRecord {
                             function: entry.name.clone(),
-                            severity: entry.severity,
+                            severity: imp_severity,
                             base_severity: Some(entry.severity),
                             category: entry.category,
                             member: member_name.clone(),
@@ -188,7 +232,7 @@ pub fn run(path: &Path, cfg: &ScanConfig, observer: &dyn Observer) -> Result<Sca
                             context: format!("imported from {}", dll),
                             context_start: 0,
                             context_end: 0,
-                            adjustments: Vec::new(),
+                            adjustments: imp_adjustments,
                         });
                     } else {
                         hit_cap_reached = true;
@@ -235,22 +279,68 @@ pub fn run(path: &Path, cfg: &ScanConfig, observer: &dyn Observer) -> Result<Sca
                             continue;
                         }
                         let conf = confidence::score(&s.text, h.start, h.end, &be.name);
-                        let entry = agg.entry(h.pattern_id).or_insert_with(|| Agg {
-                            occurrences: 0,
-                            members: HashSet::new(),
-                            low_confidence: 0,
+                        // Severity is a property of this observation, not of the name. The
+                        // evidence that decides it is all in scope here: the confidence, the
+                        // member's format, and whether the member is a managed assembly whose
+                        // import table was read.
+                        let ruling = evidence::adjudicate(&evidence::Observation {
+                            function: &be.name,
+                            base_severity: be.severity,
+                            confidence: conf,
+                            text: &s.text,
+                            start: h.start,
+                            end: h.end,
+                            member_format: member.format,
+                            is_managed: pe.as_ref().is_some_and(|a| a.is_managed),
+                            // A usable table, not merely a parsed PE: an image with no
+                            // import directory offers no evidence of absence.
+                            imports_known: pe.as_ref().is_some_and(|a| !a.imports.is_empty()),
                         });
+                        let entry = agg.entry(h.pattern_id).or_default();
 
-                        if !conf.is_reportable() && !cfg.include_low_confidence {
-                            entry.low_confidence += 1;
-                            low_confidence_total += 1;
-                            observer.on(&Event::Suppressed {
-                                function: &be.name,
-                                member: &member_name,
-                                reason: conf.as_str(),
-                            });
-                            continue;
+                        let excluded_by = if !conf.is_reportable() {
+                            Some("prose")
+                        } else {
+                            ruling.exclusion_rule()
+                        };
+                        if let Some(rule) = excluded_by {
+                            if !cfg.include_low_confidence {
+                                entry.low_confidence += 1;
+                                low_confidence_total += 1;
+                                *excluded_by_rule.entry(rule.to_string()).or_insert(0) += 1;
+                                observer.on(&Event::Suppressed {
+                                    function: &be.name,
+                                    member: &member_name,
+                                    reason: rule,
+                                });
+                                continue;
+                            }
                         }
+                        // With --include-excluded, an excluded occurrence is reported at its
+                        // unadjusted severity so the reviewer sees what the rule removed
+                        // rather than a silently re-tiered version of it.
+                        let (severity, adjustments) = match (&ruling, excluded_by) {
+                            (_, Some(_)) => (be.severity, Vec::new()),
+                            (
+                                evidence::Ruling::Keep {
+                                    severity,
+                                    adjustments,
+                                },
+                                None,
+                            ) => (
+                                *severity,
+                                adjustments
+                                    .iter()
+                                    .map(|a| crate::model::Adjustment {
+                                        rule: a.rule.to_string(),
+                                        from: a.from,
+                                        to: a.to,
+                                        evidence: a.evidence.clone(),
+                                    })
+                                    .collect(),
+                            ),
+                            (evidence::Ruling::Exclude { .. }, None) => (be.severity, Vec::new()),
+                        };
 
                         observer.on(&Event::Hit {
                             function: &be.name,
@@ -259,6 +349,10 @@ pub fn run(path: &Path, cfg: &ScanConfig, observer: &dyn Observer) -> Result<Sca
                         });
                         entry.occurrences += 1;
                         entry.members.insert(member_name.clone());
+                        entry.worst = match entry.worst {
+                            Some(w) if w <= severity => Some(w),
+                            _ => Some(severity),
+                        };
 
                         if hits.len() < cfg.max_hits {
                             let (context, cs, ce) =
@@ -273,7 +367,7 @@ pub fn run(path: &Path, cfg: &ScanConfig, observer: &dyn Observer) -> Result<Sca
                             let token_len = (h.end - h.start) * stride as usize;
                             hits.push(HitRecord {
                                 function: be.name.clone(),
-                                severity: be.severity,
+                                severity,
                                 base_severity: Some(be.severity),
                                 category: be.category,
                                 member: member_name.clone(),
@@ -285,7 +379,7 @@ pub fn run(path: &Path, cfg: &ScanConfig, observer: &dyn Observer) -> Result<Sca
                                 context,
                                 context_start: cs,
                                 context_end: ce,
-                                adjustments: Vec::new(),
+                                adjustments,
                             });
                         } else {
                             hit_cap_reached = true;
@@ -343,7 +437,9 @@ pub fn run(path: &Path, cfg: &ScanConfig, observer: &dyn Observer) -> Result<Sca
         .filter_map(|(id, a)| {
             list.get(*id).map(|be| MatchSummary {
                 function: be.name.clone(),
-                severity: be.severity,
+                // Worst adjusted severity among this function's reported occurrences. The
+                // family value is kept alongside it as base_severity.
+                severity: a.worst.unwrap_or(be.severity),
                 base_severity: Some(be.severity),
                 category: be.category,
                 occurrences: a.occurrences,
@@ -420,6 +516,7 @@ pub fn run(path: &Path, cfg: &ScanConfig, observer: &dyn Observer) -> Result<Sca
         hits,
         low_confidence_total,
         low_confidence_top: low_top,
+        excluded_by_rule: excluded_by_rule.into_iter().collect(),
         include_low_confidence: cfg.include_low_confidence,
         iocs: iocs.finish(),
         intel: intel::Intel {
@@ -431,6 +528,12 @@ pub fn run(path: &Path, cfg: &ScanConfig, observer: &dyn Observer) -> Result<Sca
                 Vec::new()
             },
         },
+        posture: crate::pe::posture::findings(
+            &coverage_entries
+                .iter()
+                .filter(|e| e.pe.is_some())
+                .collect::<Vec<_>>(),
+        ),
         coverage: Coverage {
             root_format: outcome.root_format.as_str().to_string(),
             members_scanned: outcome.members_scanned,
@@ -672,6 +775,18 @@ mod tests {
         assert_eq!(n, 3);
     }
 
+    /// Smallest byte sequence `container::detect` accepts as a PE, so a test can exercise the
+    /// executable-member path without a real binary.
+    fn fake_pe(payload: &[u8]) -> Vec<u8> {
+        let mut pe = vec![0u8; 0x200];
+        pe[0] = b'M';
+        pe[1] = b'Z';
+        pe[0x3C] = 0x80;
+        pe[0x80..0x84].copy_from_slice(b"PE\0\0");
+        pe.extend_from_slice(payload);
+        pe
+    }
+
     #[test]
     fn summary_is_ordered_by_severity() {
         let lf = temp_with(b"atoi\nstrcpy\n");
@@ -679,10 +794,31 @@ mod tests {
             banned_list: Some(lf.path().to_path_buf()),
             ..Default::default()
         };
-        let target = temp_with(b"\x00atoi\x00atoi\x00atoi\x00strcpy\x00");
+        // A PE, because since 5.0.0 a hit in a non-executable member is capped at Low and
+        // the ordering would then be by count rather than by severity.
+        let target = temp_with(&fake_pe(b"\x00atoi\x00atoi\x00atoi\x00strcpy\x00"));
         let out = run(target.path(), &cfg, &crate::observe::Null).unwrap();
         // strcpy is critical, atoi is medium, so strcpy leads despite fewer hits.
         assert_eq!(out.report.summary[0].function, "strcpy");
+    }
+
+    #[test]
+    fn a_hit_in_a_non_executable_member_is_capped_at_low() {
+        // The same bytes without a PE header. Nothing in a data file is a critical finding,
+        // and the cap is recorded as an adjustment rather than applied silently.
+        let lf = temp_with(b"strcpy\n");
+        let cfg = ScanConfig {
+            banned_list: Some(lf.path().to_path_buf()),
+            ..Default::default()
+        };
+        let target = temp_with(b"\x00strcpy\x00");
+        let out = run(target.path(), &cfg, &crate::observe::Null).unwrap();
+        let hit = &out.report.hits[0];
+        assert_eq!(hit.severity, Severity::Low);
+        assert_eq!(hit.base_severity(), Severity::Critical);
+        assert_eq!(hit.adjustments[0].rule, "non-executable-member");
+        assert_eq!(out.report.summary[0].severity, Severity::Low);
+        assert_eq!(out.report.summary[0].base_severity(), Severity::Critical);
     }
 
     #[test]

@@ -348,6 +348,8 @@ mod tests {
             low_confidence_total: 0,
             low_confidence_top: vec![],
             include_low_confidence: false,
+            posture: Vec::new(),
+            excluded_by_rule: Vec::new(),
             coverage: Coverage {
                 root_format: "zip".into(),
                 members_scanned: 3,

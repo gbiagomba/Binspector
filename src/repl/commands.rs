@@ -415,6 +415,11 @@ pub mod sqlite_support {
         let banned_hit_count = summary.iter().map(|s| s.occurrences).sum();
         Ok(Report {
             tool: "binspector".to_string(),
+            // The SQLite schema stores no posture table, so a report reloaded from one has
+            // none. Not the same as a scan that found an image hardened, and the browser says
+            // so rather than showing an empty posture section as though it were a clean result.
+            posture: Vec::new(),
+            excluded_by_rule: Vec::new(),
             tool_version,
             binary,
             project: None,

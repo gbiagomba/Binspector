@@ -34,6 +34,14 @@ pub const RULE_AMBIGUOUS_NAME: &str = "ambiguous-name-no-import";
 pub const RULE_MANAGED: &str = "managed-no-native-call";
 /// The function reads memory and takes no destination pointer.
 pub const RULE_READ_ONLY: &str = "read-only-primitive";
+/// `IsBad*Ptr`. Not a read-only primitive and not harmless: calling one swallows the guard
+/// page the OS would otherwise use to turn a bad pointer into an immediate, clean crash, and
+/// Microsoft's guidance is to never call them. Demoting these under a rule named "read-only"
+/// would both lose a real finding class and mislabel it.
+pub const RULE_POINTER_VALIDATION: &str = "deprecated-pointer-validation";
+/// Allocator entry points. None takes a destination buffer, so by the same reasoning that
+/// demotes `memcpy`, an imported `free` is not a defect on its own.
+pub const RULE_ALLOCATOR: &str = "allocator-entry-point";
 /// The function takes an explicit size, so the defect would be a wrong size rather than
 /// the call itself.
 pub const RULE_BOUNDED_MEMORY: &str = "bounded-memory-primitive";
@@ -110,6 +118,20 @@ pub struct Observation<'a> {
     /// image, and a member that never parsed as a PE at all, are both `false`, because
     /// neither is evidence that no native call site exists.
     pub is_managed: bool,
+    /// Whether a usable import table was read, so that the *absence* of an import is itself
+    /// evidence.
+    ///
+    /// Two ways this is false, and both matter:
+    ///
+    /// - **Not a PE.** `Confidence::Import` is currently only derivable from a PE import
+    ///   directory, so without this flag every rule requiring import backing would fire on
+    ///   every ELF and Mach-O hit. Dropping a real `system()` call in a Linux binary because
+    ///   the tool cannot yet read ELF imports would be a coverage loss wearing the costume of
+    ///   precision.
+    /// - **A PE with no import directory**, which is a packed image, a resource-only DLL, or
+    ///   a managed assembly. There is no table for the name to be absent from, so absence
+    ///   says nothing. A packed binary is exactly where a hidden `system` matters most.
+    pub imports_known: bool,
 }
 
 /// Names that are ordinary English words as well as C runtime functions.
@@ -126,17 +148,24 @@ const AMBIGUOUS_WORDS: &[&str] = &["system", "gets", "free", "rand", "random"];
 /// Functions that read memory and take no destination pointer, so they cannot overflow a
 /// buffer. `IsBad*Ptr` is worse than useless rather than dangerous: it swallows the
 /// guard page the OS would otherwise use to catch a bad pointer.
-const READ_ONLY_PRIMITIVES: &[&str] = &[
-    "strlen",
-    "wcslen",
-    "tcslen",
-    "memcmp",
-    "wmemcmp",
+const READ_ONLY_PRIMITIVES: &[&str] = &["strlen", "wcslen", "tcslen", "memcmp", "wmemcmp"];
+
+/// `IsBad*Ptr`. Deliberately NOT in the read-only set: these are not harmless reads. Calling
+/// one installs an exception handler over the access, which suppresses the guard page the OS
+/// would otherwise use to turn a bad pointer into an immediate crash, and can mask a race.
+/// Microsoft's guidance is to never call them, so this is a real finding class that merely
+/// does not deserve `High`.
+const POINTER_VALIDATION: &[&str] = &[
     "isbadreadptr",
     "isbadwriteptr",
     "isbadcodeptr",
     "isbadstringptr",
 ];
+
+/// Allocator entry points. None takes a destination buffer, so an import of one is not a
+/// defect by the same reasoning that demotes `memcpy`. A double free or use after free is a
+/// real bug, but it is not visible from the fact that `free` is called.
+const ALLOCATORS: &[&str] = &["malloc", "calloc", "realloc", "free", "aligned_malloc"];
 
 /// Functions that take an explicit byte count. The defect in a `memcpy` is a wrong size
 /// computed somewhere else, which an import table cannot show, so the call alone is a
@@ -183,7 +212,35 @@ pub fn adjudicate(o: &Observation) -> Ruling {
             &mut adjustments,
             RULE_READ_ONLY,
             Severity::Low,
-            format!("{} reads memory and takes no destination pointer", o.function),
+            format!(
+                "{} reads memory and takes no destination pointer",
+                o.function
+            ),
+        );
+    }
+
+    // 4b. Pointer validation: its own rule, because "read-only" would mislabel it.
+    if POINTER_VALIDATION.contains(&name.as_str()) {
+        demote(
+            &mut severity,
+            &mut adjustments,
+            RULE_POINTER_VALIDATION,
+            Severity::Medium,
+            format!(
+                "{} suppresses the guard page that would otherwise crash cleanly",
+                o.function
+            ),
+        );
+    }
+
+    // 4c. An allocator call takes no destination buffer.
+    if ALLOCATORS.contains(&name.as_str()) {
+        demote(
+            &mut severity,
+            &mut adjustments,
+            RULE_ALLOCATOR,
+            Severity::Medium,
+            format!("{} takes no destination buffer", o.function),
         );
     }
 
@@ -240,6 +297,16 @@ fn exclusion(o: &Observation) -> Option<Ruling> {
                 ),
             });
         }
+        if crate::scan::confidence::is_itanium_definition(o.text, o.start, o.end) {
+            return Some(Ruling::Exclude {
+                rule: RULE_SYMBOL_DEFINITION,
+                evidence: format!(
+                    "`{}` is an Itanium mangled definition of a method named {}",
+                    snippet(o.text),
+                    o.function
+                ),
+            });
+        }
         if is_qualified_name(o.text, o.start) {
             return Some(Ruling::Exclude {
                 rule: RULE_SYMBOL_DEFINITION,
@@ -253,19 +320,42 @@ fn exclusion(o: &Observation) -> Option<Ruling> {
     }
 
     // 2. The name is an ordinary English word and only text backs the match.
+    //
+    // Two premises, and they need separating because one depends on the import table and the
+    // other does not.
     if inferred && AMBIGUOUS_WORDS.contains(&canonical_name(o.function).as_str()) {
-        return Some(Ruling::Exclude {
-            rule: RULE_AMBIGUOUS_NAME,
-            evidence: format!(
-                "{} is an ordinary English word and no import backs `{}`",
-                o.function,
-                snippet(o.text)
-            ),
-        });
+        // 2a. A symbolic match means the token sits inside a larger unbroken token, such as
+        // `h-system` in an ICU locale table. That is never a call, whatever the member is, so
+        // this does not depend on an import table existing.
+        if o.confidence == Confidence::Symbolic {
+            return Some(Ruling::Exclude {
+                rule: RULE_AMBIGUOUS_NAME,
+                evidence: format!(
+                    "{} is an ordinary English word embedded in the larger token `{}`",
+                    o.function,
+                    snippet(o.text)
+                ),
+            });
+        }
+        // 2b. An exact match is a real standalone token, so it is only refutable by an import
+        // table that was read and does not contain the name. Without such a table, absence is
+        // not evidence: a stripped ELF carries a genuine `system` call as the exact string
+        // `system` in its dynamic string table, and dropping it would be a coverage loss.
+        if o.imports_known {
+            return Some(Ruling::Exclude {
+                rule: RULE_AMBIGUOUS_NAME,
+                evidence: format!(
+                    "{} is an ordinary English word and the import table does not contain it",
+                    o.function
+                ),
+            });
+        }
     }
 
     // 3. A pure IL assembly has no native call site.
     if inferred && o.is_managed {
+        // `is_managed` is only ever true for a parsed PE, so this needs no imports_known
+        // guard: a managed assembly by definition had its headers read.
         return Some(Ruling::Exclude {
             rule: RULE_MANAGED,
             evidence: format!(
@@ -344,7 +434,68 @@ mod tests {
             end: start + function.len(),
             member_format: Format::Pe,
             is_managed: false,
+            // The default case is a PE, whose import table was read.
+            imports_known: true,
         }
+    }
+
+    #[test]
+    fn an_ordinary_word_survives_where_no_import_table_was_read() {
+        // The coverage hole this guards: on an ELF or Mach-O member there is no path to
+        // Confidence::Import, so requiring import backing would drop every `system` hit in a
+        // Linux binary, which is exactly where a real system() call lives.
+        let mut o = case("system", Severity::High, Confidence::Exact, "system");
+        o.member_format = Format::Elf;
+        o.imports_known = false;
+        let r = adjudicate(&o);
+        assert!(!r.is_excluded(), "an ELF system() must not be dropped");
+        assert_eq!(r.severity(), Some(Severity::High));
+
+        // On a PE, where the import table WAS read and does not contain it, the rule fires.
+        let pe = case("system", Severity::High, Confidence::Exact, "system");
+        assert_eq!(
+            adjudicate(&pe).exclusion_rule(),
+            Some(RULE_AMBIGUOUS_NAME),
+            "on a PE the absence of the import is evidence"
+        );
+    }
+
+    #[test]
+    fn an_ordinary_word_inside_a_larger_token_is_never_a_call() {
+        // Observed on a real bundle: `h-system` and `x-system` inside an ICU locale table, in
+        // a resource-only DLL with no import table at all. The token is embedded, so no
+        // import table is needed to know it is not a call.
+        for text in ["h-system", "x-system"] {
+            let mut o = case("system", Severity::High, Confidence::Symbolic, text);
+            o.imports_known = false;
+            assert_eq!(
+                adjudicate(&o).exclusion_rule(),
+                Some(RULE_AMBIGUOUS_NAME),
+                "text was {}",
+                text
+            );
+        }
+    }
+
+    #[test]
+    fn pointer_validation_is_its_own_rule_not_read_only() {
+        let o = case(
+            "IsBadWritePtr",
+            Severity::High,
+            Confidence::Import,
+            "IsBadWritePtr",
+        );
+        let r = adjudicate(&o);
+        assert_eq!(r.severity(), Some(Severity::Medium), "not Low");
+        assert_eq!(r.adjustments()[0].rule, RULE_POINTER_VALIDATION);
+    }
+
+    #[test]
+    fn allocators_are_demoted_like_other_non_destination_calls() {
+        let o = case("malloc", Severity::High, Confidence::Import, "malloc");
+        let r = adjudicate(&o);
+        assert_eq!(r.severity(), Some(Severity::Medium));
+        assert_eq!(r.adjustments()[0].rule, RULE_ALLOCATOR);
     }
 
     // Rule 1: a wrapper is the countermeasure, not the defect.
@@ -431,10 +582,7 @@ mod tests {
     #[test]
     fn ambiguous_word_needs_an_import() {
         let o = case("system", Severity::High, Confidence::Exact, "system");
-        assert_eq!(
-            adjudicate(&o).exclusion_rule(),
-            Some(RULE_AMBIGUOUS_NAME)
-        );
+        assert_eq!(adjudicate(&o).exclusion_rule(), Some(RULE_AMBIGUOUS_NAME));
 
         let o = case("system", Severity::High, Confidence::Import, "system");
         let ruling = adjudicate(&o);
@@ -485,7 +633,7 @@ mod tests {
 
     #[test]
     fn read_only_matching_ignores_case_and_a_leading_underscore() {
-        for function in ["_tcslen", "tcslen", "WCSLEN", "IsBadWritePtr"] {
+        for function in ["_tcslen", "tcslen", "WCSLEN", "memcmp"] {
             let o = case(function, Severity::High, Confidence::Import, function);
             assert_eq!(
                 adjudicate(&o).severity(),

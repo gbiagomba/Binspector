@@ -106,6 +106,26 @@ impl HitRecord {
     }
 }
 
+/// A missing exploit mitigation, reported as a finding rather than as prose.
+///
+/// Separate from `summary` and `hits` on purpose: a mitigation has no function name, no byte
+/// offset, no encoding, and no confidence, so putting it there would mean faking six fields
+/// and making `banned_hit_count` mean two different things.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PostureFinding {
+    /// Stable id: "aslr", "dep", "gs", "cfg", "safe-seh", "authenticode", "cet".
+    pub id: String,
+    pub title: String,
+    pub severity: Severity,
+    /// How many images lack it. May exceed `members.len()`, which is capped.
+    pub affected: usize,
+    /// The images, capped so one finding cannot fill the report.
+    pub members: Vec<String>,
+    /// What was read, so the claim is checkable against the file.
+    pub evidence: String,
+    pub remediation: String,
+}
+
 /// What the walk actually opened, so a clean result can be distinguished from a
 /// scan that never reached any real code.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -165,9 +185,20 @@ pub struct Report {
     pub low_confidence_total: usize,
     /// Largest low-confidence contributors, so suppression stays auditable.
     pub low_confidence_top: Vec<(String, usize)>,
+    /// Occurrences removed, per evidence rule, so none disappears without a named reason.
+    ///
+    /// Sums to `low_confidence_total`. `prose` is the long-standing confidence filter; the
+    /// rest are the 5.0.0 evidence rules.
+    #[serde(default)]
+    pub excluded_by_rule: Vec<(String, usize)>,
     /// Whether low-confidence hits were included in `summary` and `hits`.
     pub include_low_confidence: bool,
     pub coverage: Coverage,
+    /// Missing exploit mitigations. Empty when every parsed image is hardened, or when no
+    /// image parsed.
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub posture: Vec<PostureFinding>,
     /// Indicators aggregated across every member.
     pub iocs: crate::pe::Iocs,
     /// Reputation and CVE enrichment. Empty unless explicitly requested.

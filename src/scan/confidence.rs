@@ -142,6 +142,37 @@ pub fn is_qualified_name(text: &str, start: usize) -> bool {
     start >= 2 && text.as_bytes().get(start - 2..start) == Some(b"::".as_slice())
 }
 
+/// Whether the token is the name component of an Itanium (GCC and Clang) mangled symbol.
+///
+/// In `_ZN2cv11FileStorage4Impl4getsEv` the token `gets` is preceded by its own ASCII decimal
+/// length, `4`, rather than by `::` or `?`. Without this, the OpenCV false positive that
+/// `is_mangled_definition` catches on a Windows build comes straight back from a Linux or
+/// macOS build of the same code.
+///
+/// Requires the string to actually look like a mangled name (`_Z` prefix), so an ordinary
+/// string that happens to have a digit before the token is not swept up.
+pub fn is_itanium_definition(text: &str, start: usize, end: usize) -> bool {
+    if !text.starts_with("_Z") || start == 0 || end > text.len() || start >= end {
+        return false;
+    }
+    let bytes = text.as_bytes();
+    // Collect the decimal run immediately before the token.
+    let mut i = start;
+    while i > 0 && bytes[i - 1].is_ascii_digit() {
+        i -= 1;
+    }
+    if i == start {
+        return false;
+    }
+    let digits = match std::str::from_utf8(&bytes[i..start]) {
+        Ok(d) => d,
+        Err(_) => return false,
+    };
+    // The length prefix must equal the token's own length, which is what makes this a name
+    // component rather than a coincidence.
+    digits.parse::<usize>() == Ok(end - start)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

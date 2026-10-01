@@ -9,6 +9,7 @@ pub mod ioc;
 pub mod loader;
 pub mod mitigations;
 pub mod packer;
+pub mod posture;
 pub mod sections;
 
 use serde::{Deserialize, Serialize};
@@ -187,6 +188,49 @@ fn subsystem_name(s: u16) -> String {
         _ => "unknown",
     }
     .to_string()
+}
+
+/// Shared fixtures for tests in sibling modules, which cannot reach a private test module.
+#[cfg(test)]
+pub(crate) mod tests_support {
+    use super::*;
+
+    /// A fully hardened 64-bit native DLL with no imports. Callers mutate what they need.
+    pub fn analysis() -> PeAnalysis {
+        PeAnalysis {
+            machine: "x86_64".into(),
+            is_dll: true,
+            is_64: true,
+            subsystem: "windows-gui".into(),
+            timestamp: 0,
+            entry_point: 0x1000,
+            image_base: 0x1_4000_0000,
+            is_managed: false,
+            sections: vec![],
+            imports: vec![],
+            libraries: vec![],
+            export_count: 0,
+            tls_callbacks: 0,
+            has_debug_info: false,
+            mitigations: Mitigations {
+                aslr: mitigations::State::Enabled,
+                high_entropy_va: mitigations::State::Enabled,
+                dep: mitigations::State::Enabled,
+                cfg: mitigations::State::Enabled,
+                seh: mitigations::State::Enabled,
+                force_integrity: mitigations::State::Enabled,
+                appcontainer: mitigations::State::Enabled,
+                authenticode: mitigations::State::Enabled,
+                relocations: mitigations::State::Enabled,
+                gs: mitigations::State::Enabled,
+                safe_seh: mitigations::State::Enabled,
+                cet: mitigations::State::Enabled,
+            },
+            loader: LoaderSurface::default(),
+            packer_hints: vec![],
+            overlay_size: 0,
+        }
+    }
 }
 
 #[cfg(test)]
