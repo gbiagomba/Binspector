@@ -6,6 +6,7 @@ pub mod confidence;
 pub mod crt_surface;
 pub mod evidence;
 pub mod matcher;
+pub mod remediation;
 pub mod strings;
 
 use anyhow::Result;

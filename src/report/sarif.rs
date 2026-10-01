@@ -27,6 +27,12 @@ pub fn write(w: &mut dyn Write, r: &Report) -> Result<()> {
                 )
             },
             "defaultConfiguration": { "level": s.severity.sarif_level() },
+            // Posture rules have carried `help` since 5.3.0 and banned-function rules carried
+            // none, so a code-scanning UI showed a fix for a missing mitigation and nothing for an
+            // unbounded copy. Same source as the text report's Remediation section.
+            "help": {
+                "text": crate::scan::remediation::advice(&s.function, s.category)
+            },
             "properties": {
                 "category": s.category.as_str(),
                 "severity": s.severity.as_str(),

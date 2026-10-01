@@ -170,12 +170,50 @@ fn write_summary(w: &mut dyn Write, r: &Report, opts: &RenderOpts) -> Result<()>
         )?;
     }
     writeln!(w)?;
+    write_remediation(w, r)?;
     write_low_confidence(w, r)?;
     Ok(())
 }
 
 /// Disclose what confidence filtering removed, so suppression is auditable rather
 /// than invisible.
+/// How to fix the findings above, one entry per distinct function.
+///
+/// Mitigation findings have carried a `fix:` line since 5.0.0 and banned-function findings carried
+/// none, which is backwards: a missing mitigation is one build flag, and replacing an unbounded
+/// string call is the part that actually needs guidance.
+///
+/// Grouped by function rather than repeated per occurrence, because the advice is a property of the
+/// function and 1,355 occurrences of the same ten names would otherwise print the same ten
+/// paragraphs 1,355 times.
+fn write_remediation(w: &mut dyn Write, r: &Report) -> Result<()> {
+    if r.summary.is_empty() {
+        return Ok(());
+    }
+    writeln!(w, "Remediation")?;
+    for s in &r.summary {
+        writeln!(
+            w,
+            "  {} {}",
+            Theme::marker(s.severity),
+            opts_free_name(&s.function)
+        )?;
+        writeln!(
+            w,
+            "      {}",
+            crate::scan::remediation::advice(&s.function, s.category)
+        )?;
+    }
+    writeln!(w)?;
+    Ok(())
+}
+
+/// The function name as the report prints it in this section, without theme decoration: the
+/// remediation block is reference material and reads better unhighlighted.
+fn opts_free_name(f: &str) -> &str {
+    f
+}
+
 fn write_low_confidence(w: &mut dyn Write, r: &Report) -> Result<()> {
     if r.excluded_total == 0 || r.include_excluded {
         return Ok(());
