@@ -65,8 +65,8 @@ pub fn write(
     super::pe_section::write_text(w, r)?;
     super::pe_section::write_dll_search_text(w, r)?;
     super::exe_section::write_text(w, r)?;
-    super::pe_section::write_carve_text(w, r)?;
-    super::pe_section::write_intel_text(w, r)?;
+    super::intel_section::write_carve_text(w, r)?;
+    super::intel_section::write_intel_text(w, r)?;
     write_warnings(w, r, opts)?;
     write_summary(w, r, opts)?;
     write_occurrences(w, r, opts)?;

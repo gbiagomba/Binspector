@@ -34,8 +34,8 @@ fn render(r: &Report, opts: &RenderOpts) -> Result<String> {
     super::pe_section::write_text(w, r)?;
     super::pe_section::write_dll_search_text(w, r)?;
     super::exe_section::write_text(w, r)?;
-    super::pe_section::write_carve_text(w, r)?;
-    super::pe_section::write_intel_text(w, r)?;
+    super::intel_section::write_carve_text(w, r)?;
+    super::intel_section::write_intel_text(w, r)?;
     let _ = opts;
     Ok(String::from_utf8(buf)?)
 }
