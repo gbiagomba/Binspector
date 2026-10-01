@@ -45,3 +45,7 @@ fuzz/out/
 hfuzz_target/
 hfuzz_workspace/
 .greprules/
+
+# Image sources. Only the committed logo belongs in history: the raw generator renders are
+# 1 to 2 MB each and nothing references them, so they stay local.
+img/Firefly_*

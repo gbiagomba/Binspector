@@ -1,84 +1,165 @@
 # Binspector
 
-Binspector is a fast, cross-platform Rust CLI for reviewing binaries. It finds banned and
-dangerous C/C++ functions, reads PE headers and exploit mitigations, detects third-party
-components and their known CVEs, and fuzzes its own parsers.
+<p align="center">
+  <img src="img/binspector-logo.png" alt="Binspector" width="620">
+</p>
 
-Three properties make its output trustworthy:
+> **VERSION:** 5.3.0
+> **DESCRIPTION:** A fast, cross-platform Rust CLI that reviews binaries for banned C/C++ functions, exploit-mitigation gaps, and signature integrity, descending into nested containers in memory.
+> **AUTHOR:** Gilles Biagomba
+> **LICENSE:** [GPLv3 or later](LICENSE)
 
-**It opens containers.** A `.msixbundle` is a ZIP of `.msix` files holding the real PE
-binaries. A scanner that reads the outer file byte by byte sees only compressed data and
-finds nothing. Binspector unpacks nested archives in memory, and every finding carries the
-full path to the file it came from.
+---
 
-**It matches whole tokens, then scores confidence.** A raw substring search reports `gets`
-inside `targetsize` and `system` inside `FileSystem`. Binspector verifies identifier
-boundaries, then scores what survives: an import-table symbol is not the same evidence as
-the word `Gets` in an XML doc comment, and the two are reported differently.
+## 🧬 Background / Lore
 
-**It prefers evidence over inference, and severity follows the evidence.** When a member parses
-as a PE, the import directory is read directly: an import is a linker-recorded dependency, so it
-is proof the binary calls the function. Since 5.0.0 that evidence sets the severity, rather than
-a table keyed on the function name. A mangled C++ wrapper that *defines* a method called
-`sprintf` is not a call to `sprintf`; a `strcpy` in a managed .NET assembly has no native call
-site; `strlen` cannot overflow a buffer. Each of those is excluded or demoted by a named rule,
-and every adjustment is recorded alongside what the name alone would have said.
+Binspector began as a Bash script that orchestrated other people's tools: peframe, binwalk,
+the VirusTotal CLI, cve-bin-tool, valgrind, zzuf. It worked, but it was only as good as the
+weakest assumption in the chain, and two of its habits were actively unsafe: `vt scan`
+uploaded the sample to a third party, and `valgrind ./$bin` executed it.
 
-On a 256 MiB Windows application bundle this is the difference between 3 findings that were all
-false and a report a reviewer can act on: 244 occurrences, of which 68 are critical or high, every
-critical one backed by an import table entry, with 87 occurrences excluded by named rules that the
-report discloses individually. An adversarial three-agent review of the previous output refuted or
-disputed 239 of 301 findings; the rules in 5.0.0 reproduce that partition without any rule that
-says "only imports count".
+The Rust port does the work in-process and never runs the sample. The name is the job: it
+inspects binaries, and it is built on the premise that a scanner must be honest about what it
+did not do. Coverage gaps, suppressed findings, unread import tables and unchecked signatures
+are all reported, because a clean result from a scanner that silently skipped half the bundle
+is worse than no result at all.
 
-## Install
+The legacy shell version is still in the tree under [legacy/](legacy/), kept for reference.
+
+---
+
+## 📚 Table of Contents
+
+- [Background / Lore](#-background--lore)
+- [Features](#-features)
+- [Installation](#-installation)
+  - [Using GitHub Releases](#-using-github-releases)
+  - [Using Cargo](#-using-cargo)
+  - [Compiling From Source](#-compiling-from-source)
+- [Flags](#-flags)
+- [Usage](#-usage)
+  - [Quick Start](#quick-start)
+  - [Running Tests](#-running-tests)
+  - [Using Docker](#-using-docker)
+  - [Using the Makefile](#-using-the-makefile)
+- [Safety](#-safety)
+- [Inspired By](#-inspired-by)
+- [Legacy Shell Version](#-legacy-shell-version)
+- [Contributing](#-contributing)
+- [License](#-license)
+
+---
+
+## 🚀 Features
+
+- ✅ **Banned function detection**, boundary-verified so `targetsize` is never reported as `gets`, tiered `critical`/`high`/`medium`/`low` by evidence rather than by name
+- ✅ **Evidence-gated severity**: `import`, `exact`, `symbolic` or `prose`. An import-table entry proves a call site exists; a string in a resource does not, and the two are not rated alike
+- ✅ **Exploit mitigations as findings**, with evidence and remediation: ASLR, DEP, CFG, SafeSEH, /GS, CET and Authenticode on PE; NX, RELRO, PIE, stack canary, FORTIFY, executable stack and heap, and code signing on ELF and Mach-O
+- ✅ **Signature verification**, not just signer attribution. The Authenticode digest is compared against the shipped bytes, and every certificate chain is verified cryptographically under RSA and ECDSA
+- ✅ **Nested containers unpacked in memory**: `.msixbundle`, `.msix`, `.appx`, `.jar`, `.nupkg`, `.zip`, `.gz`, `.bz2`, `.xz`, `.zst`, `.7z`, `.cab`. Nothing is written to disk
+- ✅ **Many targets or a whole directory in one report**, or `--split` for one report per target
+- ✅ **Nine output formats**: `text`, `json`, `csv`, `html`, `markdown`, `sarif`, `sqlite`, `sql`, `all`
+- ✅ **Third-party components and CVEs**, detected offline and resolved against NVD on request
+- ✅ **Hash-only reputation** via VirusTotal and MetaDefender. File content is never transmitted
+- ✅ **Fuzzes its own parsers**, differentially or through AFL++, honggfuzz, libFuzzer or WinAFL
+- ✅ **Six platform targets**: Linux, macOS and Windows, on x64 and ARM64
+- ✅ **Docker support**
+
+---
+
+## 🛠 Installation
+
+### 📦 Using GitHub Releases
+
+Download precompiled binaries from the [releases page](https://github.com/gbiagomba/Binspector/releases).
+Each release ships a bare binary and an archive for every target.
+
+| Platform | Architecture | Binary |
+|----------|-------------|--------|
+| Linux | x64 | `binspector-x86_64-unknown-linux-gnu-v5.3.0` |
+| Linux | ARM64 | `binspector-aarch64-unknown-linux-gnu-v5.3.0` |
+| macOS | x64 | `binspector-x86_64-apple-darwin-v5.3.0` |
+| macOS | ARM64 | `binspector-aarch64-apple-darwin-v5.3.0` |
+| Windows | x64 | `binspector-x86_64-pc-windows-msvc-v5.3.0.exe` |
+| Windows | ARM64 | `binspector-aarch64-pc-windows-msvc-v5.3.0.exe` |
+
+**Install (Linux/macOS):**
 
 ```bash
-# Unix/macOS
-./scripts/install.sh
-
-# Windows (PowerShell)
-powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1
+chmod +x binspector-*
+sudo mv binspector-* /usr/local/bin/binspector
 ```
 
-From source, which needs Rust:
+**Install (Windows PowerShell):**
+
+```powershell
+Move-Item binspector-*.exe C:\Windows\System32\binspector.exe
+```
+
+---
+
+### 📚 Using Cargo
+
+```bash
+cargo install --git https://github.com/gbiagomba/Binspector
+```
+
+---
+
+### 🧱 Compiling From Source
 
 ```bash
 git clone https://github.com/gbiagomba/Binspector
 cd Binspector
 cargo build --release
-./target/release/binspector --help
+# Binary: target/release/binspector
 ```
 
-Prebuilt binaries for Linux, macOS, and Windows on x86_64 and arm64 are attached to each
-[release](https://github.com/gbiagomba/Binspector/releases), in two forms:
-
-- `binspector-<target>-<tag>.tar.gz` or `.zip`, containing the binary plus `LICENSE` and
-  `README.md`. Preferred: the archive preserves the executable bit, so it runs after
-  extraction with no `chmod`.
-- `binspector-<target>-<tag>` or `.exe`, a bare binary for scripted installs. Needs
-  `chmod +x` on Unix, and carries no license text.
-
-`LICENSE`, `README.md`, and `usage.md` are also attached standalone, so they can be linked
-or fetched without downloading a platform archive.
-
-Every feature is compiled into a default build, so a released binary writes all nine
-formats, browses a report, and can carve. For a smaller build:
+SQLite output, carving and the REPL are on by default. A minimal build drops all three:
 
 ```bash
-cargo build --release --no-default-features   # drops sqlite, carve, and repl
+cargo build --release --no-default-features
 ```
 
-Via Docker:
+---
 
-```bash
-docker build -t binspector .
-docker run --rm -v "$PWD:/work" binspector /work/path/to/binary
+## 🔧 Flags
+
+```
+-h, --help                        Print help
+-V, --version                     Print version
+-v, --verbose...                  Report what the scan is doing, to stderr. Repeat for more
+-p, --project <PROJECT>           Project name for output labeling
+-l, --min-len <N>                 Minimum string length to consider [default: 4]
+-o, --output <FILE>               Output file, a stem when several formats are given, or a
+                                  directory when it ends in a separator. `-` means stdout
+    --format <FORMAT>             text, json, csv, html, md, sarif, sqlite, sql, all
+    --split                       One report per target instead of one combined report
+    --fail-on <SEVERITY>          Exit 1 at or above critical, high or medium
+    --banned-list <FILE>          Custom banned list, one function name per line
+    --banned-filter <REGEX>       Consider only banned names matching this regex
+    --first-party <REGEX>         Mark images matching this name or signer as first-party
+    --include-excluded            Also report occurrences the evidence rules excluded
+    --matches-only                Report only the matches, omitting metadata and coverage
+    --dump                        Include every extracted string, matches highlighted
+    --carve                       Scan members for embedded file signatures
+    --no-exe                      Skip PE, ELF and Mach-O parsing
+    --reputation                  VirusTotal and MetaDefender lookup (hash only)
+    --cve                         Resolve detected components against NVD
+    --all-files                   Scan every file found, not only executables and archives
+    --color <WHEN>                auto, always, never
+    --palette <NAME>              default, colorblind
 ```
 
-See [scripts/README.md](scripts/README.md) for installer options.
+Resource caps (`--max-depth`, `--max-unpacked-bytes`, `--max-expansion-ratio`, `--max-members`,
+`--max-hits`, `--ioc-cap`, `--max-targets` and others) all have safe defaults. Run
+`binspector -h` for the complete list with their values.
 
-## Quick start
+---
+
+## 📈 Usage
+
+### Quick Start
 
 ```bash
 # Scan a binary or bundle. Prints a summary
@@ -93,13 +174,16 @@ binspector --split ./Dependencies/
 # Write a report, labeled with a project name
 binspector -p "PROJ-123" -o report.txt ./SampleApp_1.0.0_x64.msixbundle
 
+# Write every format into a directory, with a timestamped name
+binspector --format all -o out/ ./app.exe
+
 # SARIF for a pipeline, failing the build on critical findings
 binspector --format sarif -o scan.sarif --fail-on critical ./app.exe
 
 # Full annotated dump, colorblind palette
 binspector --dump --palette colorblind ./app.exe | less -R
 
-# PE analysis is automatic. Add reputation and CVE lookups (opt-in, hash only)
+# Executable analysis is automatic. Add reputation and CVE lookups (opt-in, hash only)
 export VT_API_KEY=... NVD_API_KEY=...
 binspector --reputation --cve ./app.exe
 
@@ -114,57 +198,87 @@ binspector --format json -o scan.json ./app.exe
 binspector repl scan.json
 ```
 
-Nine output formats: `text`, `json`, `csv`, `html`, `markdown`, `sarif`, `sqlite`, `sql`,
-and `all`. With no `-o`, output goes to `binspector_output-<timestamp>.<ext>` in the current
-directory. Run `binspector -h` for every flag.
+With no `-o`, output goes to `binspector_output-<timestamp>.<ext>` in the current directory.
 
 **[usage.md](usage.md) is the full reference**: every option, the severity and confidence
-tiers, container support, PE analysis, reputation and CVE details, carving, fuzzing, the
-safety properties, and how to read a report.
+tiers, container support, executable analysis, signature verification, reputation and CVE
+details, carving, fuzzing, the safety properties, and how to read a report.
 
-## What it reports
+---
 
-| | |
-|---|---|
-| **Banned functions** | Boundary-verified matches, tiered `critical`/`high`/`medium`, each with a member path and byte offset |
-| **Confidence** | `import`, `exact`, `symbolic`, or `prose`. Namespace and documentation noise is excluded by default and disclosed |
-| **Exploit mitigations** | Per PE image: ASLR, DEP, Control Flow Guard, SafeSEH, /GS, CET, Authenticode, relocations. Per ELF and Mach-O image: NX, RELRO, PIE, stack canary, FORTIFY, executable stack and heap, code signature |
-| **Exploit mitigation findings** | Any of the above missing, as findings with evidence and remediation, not prose. Confirmable from metadata alone, which makes them the most actionable output. `Unknown` is never a finding: a managed assembly has no load config, and a static ELF has no RELRO to lack |
-| **Imports, all three formats** | PE import directory, ELF `.dynsym`, and Mach-O bind opcodes, chained fixups, or symbol table. An import is a linker-recorded dependency, so it is the strongest evidence the tool has, and before 5.2.0 it was unreachable on Linux and macOS |
-| **Origin** | The Authenticode signer, plus `--first-party` to override it, so a finding in a vendor's binary is not in your queue |
-| **Signature verification** | The Authenticode digest compared against the shipped bytes, and each certificate's signature verified under its issuer's public key. A digest mismatch is a **critical** finding: the shipped file is not the file that was signed. Never "trusted", because no pure-Rust code-signing root store exists, so the anchor's fingerprint is printed for you to compare against a published thumbprint. Revocation is never checked, deliberately: fetching a URL out of a hostile certificate is attacker-controlled outbound traffic |
-| **Dynamic loading** | Which loader APIs each image imports, whether it restricts its search path, and which modules it names without one. Reported as a surface, because an import table does not record what `LoadLibrary` was called with |
-| **PE structure** | Sections with entropy and permissions, imports and exports, TLS callbacks, overlay, packer signals |
-| **Components and CVEs** | Third-party libraries detected offline, resolved against NVD on request |
-| **Reputation** | VirusTotal and MetaDefender, by hash only |
-| **Coverage** | What was actually opened, and an explicit warning when no executable image was reached |
+### 🧪 Running Tests
 
-Two surfaces exist for checking the tool rather than the sample. `-v` reports what the scan
-is doing, up to `-vv` which names the rule behind every suppressed occurrence, so a
-suppression total can be counted instead of trusted. `binspector repl <report>` browses a
-finished report read-only, which is worth it for the cross-cutting questions `jq` handles
-worst, such as which images lack ASLR. Both are described in
-[usage.md](usage.md#verbose-output).
+```bash
+# Via Make
+make test
 
-## Safety
+# Via Cargo
+cargo test --all
 
-Binspector is built to be pointed at untrusted samples.
+# The full gate CI runs: format, lint, file-size check, tests, fuzz harness build
+make check
 
-- **Nothing is written to disk during a scan.** Archives are unpacked in memory.
-- **The sample is never executed.** Binspector only reads bytes.
-- **Decompression bombs are capped** on depth, total bytes, member size, expansion ratio,
-  and member count, and a breach degrades to a warning with partial results.
-- **No file content leaves the machine.** Reputation sends a hash, CVE lookup sends a
-  component name, and only when asked.
-- **API keys never appear in a command line**, because arguments are visible through `ps`.
+# Minimal build, no optional features
+cargo test --all --no-default-features
+```
 
-Details in [usage.md](usage.md#safety-properties).
+---
 
-## Inspired by
+### 🐳 Using Docker
 
-Binspector began as a shell script that orchestrated other people's tools. The Rust port
-does the work in-process, but the ideas and the reference data come from these projects, and
-it is worth naming them.
+**Build image:**
+
+```bash
+docker build -t binspector .
+```
+
+**Run:**
+
+```bash
+docker run --rm binspector --help
+docker run --rm -v "$PWD:/work" binspector /work/app.exe
+```
+
+---
+
+### 🛠 Using the Makefile
+
+```bash
+# Build release binary
+make build
+
+# Run with arguments
+make run ARGS="--help"
+
+# Run the full gate (fmt-check + clippy + loc-check + test + fuzz-build)
+make check
+
+# Differential fuzzing against a sample
+make fuzz-diff BIN=./app.exe
+
+# Clean build artifacts
+make clean
+```
+
+---
+
+## 🛡 Safety
+
+Binspector is pointed at files that may be hostile, so these are properties, not aspirations:
+
+- **The sample is never executed.** The legacy script ran `valgrind ./$bin`; that is not carried forward.
+- **File content is never transmitted.** Reputation sends the hash only. The legacy `vt scan` uploaded the sample, which for an unreleased binary is a disclosure event.
+- **Nothing is written to disk during a scan.** Containers are unpacked in memory, which removes extraction as an attack surface.
+- **Every parser is bounds-checked and fuzzed.** Where an upstream parser raw-indexed attacker-controlled header fields, the walk was reimplemented locally with checked arithmetic and verified byte-for-byte against the original.
+- **Resource caps on everything**: nesting depth, unpacked bytes, expansion ratio, member count, recorded hits. A decompression bomb degrades to a warning and partial results, never to an abort.
+- **Revocation is deliberately not checked.** OCSP and CRL fetch a URL taken from the certificate under examination, which is attacker-controlled outbound traffic from the scanning host.
+
+---
+
+## 🙏 Inspired By
+
+The Rust port does the work in-process, but the ideas and the reference data come from these
+projects, and it is worth naming them.
 
 | Project | What Binspector takes from it |
 |---|---|
@@ -189,27 +303,52 @@ The banned function lists come from:
 
 See [rsc/README.md](rsc/README.md) for how those lists are organised.
 
-## Legacy shell version
+---
 
-The original Bash implementation lives under [legacy/](legacy/). It shelled out to peframe,
-binwalk, the VirusTotal CLI, MetaDefender, cve-bin-tool, valgrind, and zzuf. Two of its
-behaviors are deliberately not carried forward: `vt scan` uploaded the sample to a third
-party, and `valgrind ./$bin` executed it.
+## 🐚 Legacy Shell Version
 
-## Development
+The original Bash implementation lives under [legacy/](legacy/), kept for historical
+reference. It is not used by the Rust build or runtime.
 
-```bash
-make check    # fmt-check + clippy + loc-check + tests + fuzz-build
-make help     # all targets
-```
+| File | What it was |
+|---|---|
+| [legacy/binspector.sh](legacy/binspector.sh) | The v1 scanner. Shelled out to peframe, binwalk, the VirusTotal and MetaDefender CLIs, cve-bin-tool, valgrind and zzuf |
+| [legacy/install.sh](legacy/install.sh) | Linux install helper for the shell version |
+| [legacy/mac_install.sh](legacy/mac_install.sh) | macOS install helper |
 
-No `.rs` file exceeds 1500 lines, enforced by `make loc-check` in CI. See
-[usage.md](usage.md#development) for the project layout.
+It expected `sdl_banned_funct.list` at an install path such as `/opt/Binspector/`. The Rust
+CLI embeds [rsc/sdl_banned_funct.list](rsc/sdl_banned_funct.list) and needs none of it.
 
-## License
+**Two of its behaviours are deliberately not carried forward.** `vt scan` uploaded the sample
+to a third party, and `valgrind ./$bin` executed it. Both are disqualifying for a tool whose
+job is to examine something you do not trust.
 
-GNU General Public License v3.0 or later. See [LICENSE](LICENSE).
+---
 
-Binspector links the binwalk library under the `carve` feature and several MIT and
-Apache-2.0 crates; those licenses are compatible with distributing this work under the
-GPL.
+## 🤝 Contributing
+
+Pull requests are welcome.
+
+**Before submitting:**
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Run the gate (`make check`)
+4. Commit changes (`git commit -m 'feat: add amazing feature'`)
+5. Push to the branch (`git push origin feature/amazing-feature`)
+6. Open a pull request
+
+`make check` runs format, clippy with warnings denied, the file-size check (no `.rs` over
+1,500 lines), the test suite, and a build of the fuzz harnesses. CI runs the same gate on
+Linux, macOS and Windows before any release is tagged.
+
+---
+
+## 📜 License
+
+This project is licensed under **GPLv3 or later**.
+See [LICENSE](LICENSE) for details.
+
+---
+
+**⚡ Built with Rust | 🛡️ Secured by Design | 🚀 Production Ready**
