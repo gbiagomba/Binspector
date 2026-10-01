@@ -37,28 +37,23 @@ const CAP: usize = 32;
 
 /// Server-side pipe API family. Lowercased prefixes, so `A`/`W` and `Ex` variants all match,
 /// the way `loader.rs` matches `LoadLibrary`.
-const PIPE_SERVER: &[&str] = &[
-    "createnamedpipe",
-    "connectnamedpipe",
-    "disconnectnamedpipe",
+const PIPE_SERVER: &[&str] = &["createnamedpipe", "connectnamedpipe", "disconnectnamedpipe"];
+
+/// Client-side and either-end pipe use.
+///
+/// `WaitNamedPipe*` is a **client** API: a client waits for a free instance and then opens it
+/// with `CreateFile`. `SetNamedPipeHandleState` and `PeekNamedPipe` are called from either end.
+/// None of them can establish that an image serves a pipe, so they live here rather than in
+/// `pipe_server`, which is what keeps that field's name true. Counting them as server evidence
+/// would have reported an ordinary pipe client as `ServerUnauthorized`, this module's strongest
+/// claim, on a binary that serves nothing.
+const PIPE_CLIENT: &[&str] = &[
+    "callnamedpipe",
+    "transactnamedpipe",
     "waitnamedpipe",
     "setnamedpipehandlestate",
+    "peeknamedpipe",
 ];
-
-/// The subset of that family only a server can call, which is what the server verdicts are
-/// gated on.
-///
-/// `WaitNamedPipe*` is a *client* call: a client waits for a free instance and then opens it
-/// with `CreateFile`. `SetNamedPipeHandleState` is called on either end. Neither establishes
-/// that this image serves a pipe, so neither may on its own produce `ServerUnauthorized`,
-/// which is the strongest claim in this module. A pure client that imports `WaitNamedPipeW`
-/// and `CreateFileW` is an extremely common pattern and must not be reported as a server with
-/// no authentication.
-const SERVER_ONLY: &[&str] = &["createnamedpipe", "connectnamedpipe", "disconnectnamedpipe"];
-
-/// Client-side pipe use that is unambiguous. `CreateFile` on a pipe path is the usual client
-/// call and cannot be distinguished from any other file open, so it is not here.
-const PIPE_CLIENT: &[&str] = &["callnamedpipe", "transactnamedpipe"];
 
 /// Security descriptor and ACL construction. Context, never a verdict on its own: an image
 /// that builds its own DACL has made a decision about who may connect, which is worth seeing
@@ -87,11 +82,11 @@ const AUTHORIZATION: &[&str] = &[
 pub struct IpcSurface {
     /// Named-pipe server primitives: CreateNamedPipe*, ConnectNamedPipe, WaitNamedPipe*,
     /// DisconnectNamedPipe, SetNamedPipeHandleState. Only CreateNamedPipe*, ConnectNamedPipe
-    /// and DisconnectNamedPipe are server-only; see `SERVER_ONLY` for why the server verdicts
-    /// are gated on those three alone.
+    /// Server-only primitives: CreateNamedPipe*, ConnectNamedPipe, DisconnectNamedPipe. Only
+    /// these can establish that an image serves a pipe.
     pub pipe_server: Vec<String>,
-    /// Pipe client use: CreateFile on a pipe cannot be distinguished, so this is
-    /// CallNamedPipe* and TransactNamedPipe only.
+    /// Client-side and either-end pipe use. `CreateFile` on a pipe path cannot be told from any
+    /// other file open, so it is absent.
     pub pipe_client: Vec<String>,
     /// Security descriptor and ACL construction:
     /// ConvertStringSecurityDescriptorToSecurityDescriptor*, SetSecurityDescriptorDacl,
@@ -194,7 +189,7 @@ impl IpcSurface {
     fn serves_a_pipe(&self) -> bool {
         self.pipe_server
             .iter()
-            .any(|n| starts_with_any(&n.to_ascii_lowercase(), SERVER_ONLY))
+            .any(|n| starts_with_any(&n.to_ascii_lowercase(), PIPE_SERVER))
     }
 
     fn decide(&self, imports_known: bool) -> IpcVerdict {
@@ -272,7 +267,19 @@ mod tests {
         assert_eq!(s.verdict, IpcVerdict::ServerUnauthorized);
         assert!(s.verdict.is_weak());
         assert!(s.is_server());
-        assert_eq!(s.pipe_server.len(), 3);
+        // Only the server-only primitives land in `pipe_server`: WaitNamedPipeW is a client API
+        // (a client waits for a free instance, then opens it with CreateFile), so counting it as
+        // server evidence would report an ordinary client as ServerUnauthorized.
+        assert_eq!(
+            s.pipe_server.len(),
+            2,
+            "CreateNamedPipeW and ConnectNamedPipe"
+        );
+        assert!(
+            s.pipe_client.iter().any(|n| n == "WaitNamedPipeW"),
+            "the client-side wait belongs to the client column: {:?}",
+            s.pipe_client
+        );
         assert_eq!(s.descriptor_builders.len(), 3);
         assert!(s.authorization.is_empty());
         assert_eq!(s.verdict.as_str(), "server-unauthorized");
@@ -300,6 +307,20 @@ mod tests {
 
     /// The one test that must not be wrong. Without a readable import table there is nothing
     /// for a name to be absent from, so the absence claim is unavailable at any strength.
+    #[test]
+    fn a_client_that_only_waits_on_a_pipe_is_not_reported_as_a_server() {
+        // The false positive the server-only gate exists to prevent: a client importing the wait
+        // API and nothing server-side must never carry this module's strongest claim.
+        let s = IpcSurface::from_imports(
+            &imports(&["WaitNamedPipeW", "SetNamedPipeHandleState", "PeekNamedPipe"]),
+            true,
+        );
+        assert_eq!(s.verdict, IpcVerdict::Client);
+        assert!(!s.verdict.is_weak());
+        assert!(!s.is_server());
+        assert!(s.pipe_server.is_empty());
+    }
+
     #[test]
     fn an_unreadable_import_table_can_never_produce_the_unauthorized_verdict() {
         let s =

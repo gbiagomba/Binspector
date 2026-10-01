@@ -113,6 +113,7 @@ pub fn write_text(w: &mut dyn Write, r: &Report) -> Result<()> {
 
     write_origin(w, r, &pes)?;
     write_crt_surface_text(w, r)?;
+    write_ipc_text(w, r)?;
 
     // String hygiene, which the banned-function list alone reports upside down: an image can
     // import 23 hardened variants beside 5 unsafe ones, and naming only the five misleads.
@@ -217,6 +218,82 @@ fn truncate(s: &str, max: usize) -> String {
         return s.to_string();
     }
     s.chars().take(max.saturating_sub(1)).collect::<String>() + "~"
+}
+
+/// Named-pipe servers and whether they import any authorization primitive.
+///
+/// The question a reviewer actually has about a finding is whether the code is reachable from an
+/// unauthenticated surface. Answering that needs a disassembler. What imports alone can say is
+/// which images are pipe servers that check nobody, and that is where to look first.
+///
+/// Stated as narrowing, not reachability, because the difference matters: an unauthorized verdict
+/// means no authorization primitive is linked, not that any particular finding is exploitable.
+pub fn write_ipc_text(w: &mut dyn Write, r: &Report) -> Result<()> {
+    use crate::pe::ipc::IpcVerdict;
+
+    let servers: Vec<&crate::model::CoverageEntry> = r
+        .pe_members()
+        .into_iter()
+        .filter(|e| e.pe.as_ref().is_some_and(|a| a.ipc.is_server()))
+        .collect();
+    if servers.is_empty() {
+        return Ok(());
+    }
+    let unauthorized: Vec<&&crate::model::CoverageEntry> = servers
+        .iter()
+        .filter(|e| {
+            e.pe.as_ref()
+                .is_some_and(|a| a.ipc.verdict == IpcVerdict::ServerUnauthorized)
+        })
+        .collect();
+
+    writeln!(
+        w,
+        "  Named-pipe servers: {} image(s), {} importing no authorization primitive",
+        servers.len(),
+        unauthorized.len()
+    )?;
+    for e in unauthorized.iter().take(10) {
+        let a = e.pe.as_ref().expect("filtered");
+        let serves = a.ipc.pipe_server.join(", ");
+        writeln!(w, "    !! {}: serves {}", short_name(&e.member), serves)?;
+        if !a.ipc.descriptor_builders.is_empty() {
+            // The review's force came from "builds its own descriptor AND checks nobody", not
+            // either half, so the descriptor work is named alongside rather than scored.
+            writeln!(
+                w,
+                "       builds its own security descriptor: {}",
+                a.ipc.descriptor_builders.join(", ")
+            )?;
+        }
+        writeln!(
+            w,
+            "       imports none of ImpersonateNamedPipeClient, OpenThreadToken, \
+             GetTokenInformation, CheckTokenMembership, AccessCheck"
+        )?;
+    }
+    if unauthorized.len() > 10 {
+        writeln!(w, "    ... and {} more", unauthorized.len() - 10)?;
+    }
+    // Name which primitive carried an authorized verdict, so a thin one is visible as thin.
+    for e in servers.iter().take(10) {
+        let a = e.pe.as_ref().expect("filtered");
+        if a.ipc.verdict == IpcVerdict::Server && !a.ipc.authorization.is_empty() {
+            writeln!(
+                w,
+                "    {}: authorized by {}",
+                short_name(&e.member),
+                a.ipc.authorization.join(", ")
+            )?;
+        }
+    }
+    writeln!(
+        w,
+        "    Narrowing, not reachability: an unauthorized verdict means no authorization \
+         primitive is linked, not that a finding here is reachable. Absence is only evidence \
+         where the import table was readable."
+    )?;
+    Ok(())
 }
 
 /// Bounded memory primitives, as a counted surface rather than a list of findings.

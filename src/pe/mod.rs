@@ -6,6 +6,7 @@
 //! direct evidence that the binary calls the function.
 
 pub mod ioc;
+pub mod ipc;
 pub mod loader;
 pub mod mitigations;
 pub mod packer;
@@ -16,6 +17,7 @@ pub mod signer;
 use serde::{Deserialize, Serialize};
 
 pub use ioc::Iocs;
+pub use ipc::IpcSurface;
 pub use loader::LoaderSurface;
 pub use mitigations::Mitigations;
 pub use sections::SectionInfo;
@@ -69,6 +71,12 @@ pub struct PeAnalysis {
     #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub signature: Option<Signature>,
+    /// Named-pipe IPC surface, and whether a pipe server imports any authorization primitive.
+    ///
+    /// Narrowing, not reachability: it says where to look first, not that any particular finding
+    /// is reachable. See `ipc`.
+    #[serde(default)]
+    pub ipc: IpcSurface,
     /// Whether `--first-party` matched this image's path or its signer name.
     ///
     /// Explicit rather than guessed. A signer name alone cannot tell first-party code from a
@@ -107,6 +115,9 @@ impl PeAnalysis {
         let packer_hints = packer::hints(&sections, imports.len(), is_managed);
         let loader = LoaderSurface::from_imports(&imports);
         let safe_variants = collect_safe_variants(&imports);
+        // A parsed PE with a non-empty import directory is the case where absence of an
+        // authorization primitive is evidence; see `ipc`.
+        let ipc = IpcSurface::from_imports(&imports, !imports.is_empty());
         let signature = signer::parse(&pe.certificates);
 
         let (subsystem, image_base) = match pe.header.optional_header {
@@ -145,6 +156,7 @@ impl PeAnalysis {
             has_debug_info: pe.debug_data.is_some(),
             mitigations: Mitigations::from_pe(&pe),
             loader,
+            ipc,
             signature,
             // Set by the scan, which knows the member path and the --first-party pattern.
             first_party: false,
@@ -307,6 +319,7 @@ pub(crate) mod tests_support {
                 cet: mitigations::State::Enabled,
             },
             loader: LoaderSurface::default(),
+            ipc: IpcSurface::default(),
             signature: None,
             first_party: false,
             safe_variants: vec![],
@@ -383,6 +396,7 @@ mod tests {
                 cet: mitigations::State::Unknown,
             },
             loader: LoaderSurface::default(),
+            ipc: IpcSurface::default(),
             signature: None,
             first_party: false,
             safe_variants: vec![],
