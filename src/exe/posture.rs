@@ -430,7 +430,6 @@ fn is_macho_magic(data: &[u8]) -> bool {
 mod tests {
     use super::*;
     use crate::exe::posture_rules::findings;
-    use crate::model::PostureFinding;
 
     /// Every mitigation set to one state, so a test names the reading it exercises rather than
     /// restating eight fields.
@@ -454,9 +453,6 @@ mod tests {
         m
     }
 
-    fn ids(f: &[PostureFinding]) -> Vec<&str> {
-        f.iter().map(|x| x.id.as_str()).collect()
-    }
     use goblin::elf::header::ET_REL;
     use goblin::mach::cputype::{CPU_TYPE_ARM, CPU_TYPE_ARM64, CPU_TYPE_X86_64};
     use goblin::mach::header::{MH_BUNDLE, MH_DYLIB};
@@ -676,7 +672,7 @@ mod tests {
         assert!(
             f.is_empty(),
             "a signed, PIE, canaried system binary should produce nothing, got {:?}",
-            ids(&f)
+            f.iter().map(|x| x.id.as_str()).collect::<Vec<_>>()
         );
     }
 }

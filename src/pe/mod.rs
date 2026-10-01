@@ -5,6 +5,7 @@
 //! data. An entry in the import directory is a linker-recorded dependency, which is
 //! direct evidence that the binary calls the function.
 
+pub mod authenticode;
 pub mod ioc;
 pub mod ipc;
 pub mod loader;
