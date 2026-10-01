@@ -66,19 +66,21 @@ pub fn write(
         writeln!(w, "</table>")?;
     }
 
-    let (crit, high, med) = r.severity_counts();
+    let (crit, high, med, low) = r.severity_counts();
     writeln!(w, "<h2>Findings</h2>")?;
     writeln!(
         w,
         "<p>{} distinct functions, {} occurrences. \
          <span class=\"sev critical\">critical {}</span>, \
          <span class=\"sev high\">high {}</span>, \
-         <span class=\"sev medium\">medium {}</span>.</p>",
+         <span class=\"sev medium\">medium {}</span>, \
+         <span class=\"sev low\">low {}</span>.</p>",
         thousands(r.summary.len() as u64),
         thousands(r.banned_hit_count as u64),
         thousands(crit as u64),
         thousands(high as u64),
-        thousands(med as u64)
+        thousands(med as u64),
+        thousands(low as u64)
     )?;
 
     if r.summary.is_empty() {
@@ -231,6 +233,7 @@ fn sev_class(s: Severity) -> &'static str {
         Severity::Critical => "critical",
         Severity::High => "high",
         Severity::Medium => "medium",
+        Severity::Low => "low",
     }
 }
 

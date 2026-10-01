@@ -176,6 +176,7 @@ pub(crate) mod tests_support {
             summary: vec![MatchSummary {
                 function: "strcpy".into(),
                 severity: Severity::Critical,
+                base_severity: Some(Severity::Critical),
                 category: Category::BufferOverflow,
                 occurrences: 5,
                 members: 2,
@@ -184,6 +185,7 @@ pub(crate) mod tests_support {
             hits: vec![HitRecord {
                 function: "strcpy".into(),
                 severity: Severity::Critical,
+                base_severity: Some(Severity::Critical),
                 category: Category::BufferOverflow,
                 member: "bundle :: app.msix :: App.exe".into(),
                 offset: 0x1234,
@@ -194,6 +196,7 @@ pub(crate) mod tests_support {
                 context: "call strcpy here".into(),
                 context_start: 5,
                 context_end: 11,
+                adjustments: Vec::new(),
             }],
             low_confidence_total: 24_227,
             low_confidence_top: vec![("system".to_string(), 24_227)],

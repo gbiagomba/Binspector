@@ -8,11 +8,41 @@ use crate::scan::banned::{Category, Severity};
 use crate::scan::confidence::Confidence;
 use crate::scan::strings::Encoding;
 
+/// One evidence rule that changed an occurrence's severity.
+///
+/// Recorded rather than applied silently. A reviewer who disagrees with a demotion can see
+/// exactly which rule fired and on what, and `--include-excluded` restores what was removed.
+/// Severity that changes without saying why is not auditable, and auditability is the only
+/// reason the adjustment exists.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Adjustment {
+    /// Stable identifier, safe to filter on: "symbol-definition", "read-only-primitive", and
+    /// so on.
+    pub rule: String,
+    pub from: Severity,
+    pub to: Severity,
+    /// The specific evidence, such as the mangled symbol or "managed assembly, no native
+    /// import".
+    pub evidence: String,
+}
+
 /// One banned function that matched, aggregated across the whole scan.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MatchSummary {
     pub function: String,
+    /// Worst adjusted severity among this function's reported occurrences.
+    ///
+    /// A roll-up, because evidence can give two occurrences of one name different
+    /// severities. `--fail-on` and the aggregate counts read this.
     pub severity: Severity,
+    /// What the function-family table says, independent of any evidence.
+    ///
+    /// `None` in a report written before 5.0.0, where `severity` *was* the unadjusted family
+    /// value. Read it through `base_severity()`, which falls back accordingly rather than
+    /// inventing a level.
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_severity: Option<Severity>,
     pub category: Category,
     pub occurrences: usize,
     /// Number of distinct members the function appeared in.
@@ -25,7 +55,14 @@ pub struct MatchSummary {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HitRecord {
     pub function: String,
+    /// Severity after the evidence rules. This is what writers sort and colour by.
     pub severity: Severity,
+    /// What the function-family table says on the name alone, before evidence.
+    ///
+    /// `None` in a report written before 5.0.0. See `base_severity()`.
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_severity: Option<Severity>,
     pub category: Category,
     /// Provenance from the root inwards, joined with " :: ".
     pub member: String,
@@ -42,6 +79,31 @@ pub struct HitRecord {
     /// Byte range of the match inside `context`.
     pub context_start: usize,
     pub context_end: usize,
+    /// Every rule that changed this occurrence's severity, in the order they fired. Empty
+    /// when the evidence changed nothing.
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub adjustments: Vec<Adjustment>,
+}
+
+impl MatchSummary {
+    /// The family-table severity, falling back to `severity` for a pre-5.0.0 report where
+    /// the two were the same thing.
+    pub fn base_severity(&self) -> Severity {
+        self.base_severity.unwrap_or(self.severity)
+    }
+}
+
+impl HitRecord {
+    /// The family-table severity, falling back to `severity` for a pre-5.0.0 report.
+    pub fn base_severity(&self) -> Severity {
+        self.base_severity.unwrap_or(self.severity)
+    }
+
+    /// Whether the evidence changed this occurrence's severity.
+    pub fn was_adjusted(&self) -> bool {
+        !self.adjustments.is_empty()
+    }
 }
 
 /// What the walk actually opened, so a clean result can be distinguished from a
@@ -116,18 +178,21 @@ pub struct Report {
 }
 
 impl Report {
-    pub fn severity_counts(&self) -> (usize, usize, usize) {
+    /// Occurrences per severity, worst first: (critical, high, medium, low).
+    pub fn severity_counts(&self) -> (usize, usize, usize, usize) {
         let mut crit = 0;
         let mut high = 0;
         let mut med = 0;
+        let mut low = 0;
         for s in &self.summary {
             match s.severity {
                 Severity::Critical => crit += s.occurrences,
                 Severity::High => high += s.occurrences,
                 Severity::Medium => med += s.occurrences,
+                Severity::Low => low += s.occurrences,
             }
         }
-        (crit, high, med)
+        (crit, high, med, low)
     }
 
     /// Members that parsed as a PE, with their analysis.

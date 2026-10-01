@@ -23,6 +23,13 @@ pub enum Severity {
     High,
     /// Weak error handling or predictability. Worth reviewing, rarely exploitable alone.
     Medium,
+    /// Cannot corrupt memory on its own. Context for a reviewer, not a defect.
+    ///
+    /// Added in 5.0.0. Nothing in the function-family table assigns `Low` directly; it is
+    /// where the evidence rules put a read-only primitive or a hit in a non-executable
+    /// member. Declared last so the derived `Ord` keeps reading worst-first, which is what
+    /// the `--fail-on` threshold comparison depends on.
+    Low,
 }
 
 impl Severity {
@@ -31,6 +38,7 @@ impl Severity {
             Severity::Critical => "critical",
             Severity::High => "high",
             Severity::Medium => "medium",
+            Severity::Low => "low",
         }
     }
 
@@ -40,6 +48,9 @@ impl Severity {
             Severity::Critical => "error",
             Severity::High => "warning",
             Severity::Medium => "note",
+            // SARIF has four levels and `none` means "no issue", which would be wrong: a
+            // read-only primitive is still worth seeing. `note` is the honest floor.
+            Severity::Low => "note",
         }
     }
 }

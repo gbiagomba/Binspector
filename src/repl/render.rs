@@ -49,14 +49,15 @@ pub fn short(member: &str) -> &str {
 }
 
 pub fn summary(r: &Report) -> String {
-    let (crit, high, med) = r.severity_counts();
+    let (crit, high, med, low) = r.severity_counts();
     let mut s = format!(
-        "  {} distinct functions, {} occurrences (critical {}, high {}, medium {})\n",
+        "  {} distinct functions, {} occurrences (critical {}, high {}, medium {}, low {})\n",
         thousands(r.summary.len() as u64),
         thousands(r.banned_hit_count as u64),
         thousands(crit as u64),
         thousands(high as u64),
-        thousands(med as u64)
+        thousands(med as u64),
+        thousands(low as u64)
     );
     if r.low_confidence_total > 0 && !r.include_low_confidence {
         s.push_str(&format!(
@@ -115,6 +116,9 @@ pub fn mitigations(r: &Report, missing: Option<&str>) -> String {
             Some("cfg") => off(m.cfg),
             Some("authenticode") => off(m.authenticode),
             Some("seh") => off(m.seh),
+            Some("gs") => off(m.gs),
+            Some("safe-seh") => off(m.safe_seh),
+            Some("cet") => off(m.cet),
             // Not a header flag like the others: the verdict comes from the image's loader
             // imports and its strings, so it is carried on the loader surface rather than
             // duplicated into Mitigations.
@@ -132,6 +136,8 @@ pub fn mitigations(r: &Report, missing: Option<&str>) -> String {
             m.cfg.as_str().to_string(),
             m.seh.as_str().to_string(),
             m.authenticode.as_str().to_string(),
+            m.gs.as_str().to_string(),
+            m.cet.as_str().to_string(),
             a.loader.verdict.as_str().to_string(),
             if a.is_managed { "managed" } else { "native" }.to_string(),
         ]);
@@ -151,6 +157,8 @@ pub fn mitigations(r: &Report, missing: Option<&str>) -> String {
                 "cfg",
                 "seh",
                 "authenticode",
+                "gs",
+                "cet",
                 "dll-search",
                 "kind",
             ],
@@ -251,6 +259,7 @@ pub fn severity_of(s: &str) -> Option<Severity> {
         "critical" => Some(Severity::Critical),
         "high" => Some(Severity::High),
         "medium" => Some(Severity::Medium),
+        "low" => Some(Severity::Low),
         _ => None,
     }
 }

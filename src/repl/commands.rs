@@ -134,8 +134,8 @@ pub const HELP: &str = "\
   hits [fn] [--severity s]         occurrences, filterable
        [--confidence c]            one of import, exact, symbolic, prose
   member <fragment>                full detail for matching members, including PE analysis
-  mitigations [--missing k]        the mitigation matrix; k is aslr, dep, cfg, seh,
-                                   authenticode, dll-search, or any
+  mitigations [--missing k]        the mitigation matrix; k is aslr, dep, cfg, seh, gs,
+                                   safe-seh, cet, authenticode, dll-search, or any
   components                       third-party libraries detected
   cves                             CVEs resolved against NVD, if --cve was used
   iocs                             URLs, IPs, emails, registry keys, file paths
@@ -360,8 +360,12 @@ pub mod sqlite_support {
                 let sev: String = row.get(1)?;
                 let cat: String = row.get(2)?;
                 summary.push(crate::model::MatchSummary {
+                    // The SQLite schema stores one severity per row; it is the adjusted
+                    // value, and the base is not persisted, so leave it unset rather than
+                    // claim they are equal.
+                    base_severity: None,
                     function: row.get(0)?,
-                    severity: parse_severity(&sev),
+                    severity: parse_severity(&sev)?,
                     category: parse_category(&cat),
                     occurrences: row.get::<_, i64>(3)? as usize,
                     members: row.get::<_, i64>(4)? as usize,
@@ -443,13 +447,14 @@ pub mod sqlite_support {
         })
     }
 
-    fn parse_severity(s: &str) -> crate::scan::banned::Severity {
-        use crate::scan::banned::Severity::*;
-        match s {
-            "critical" => Critical,
-            "medium" => Medium,
-            _ => High,
-        }
+    /// Severity as stored in a SQLite report.
+    ///
+    /// Returns an error rather than guessing. The previous `_ => High` silently promoted any
+    /// unrecognised value, which with a fourth level would turn a `low` row into a `high`
+    /// one and misrepresent a report the browser is only supposed to be viewing.
+    fn parse_severity(s: &str) -> Result<crate::scan::banned::Severity> {
+        crate::repl::render::severity_of(s)
+            .ok_or_else(|| anyhow::anyhow!("unknown severity {:?} in the report", s))
     }
 
     fn parse_category(s: &str) -> crate::scan::banned::Category {

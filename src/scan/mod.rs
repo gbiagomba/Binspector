@@ -177,6 +177,7 @@ pub fn run(path: &Path, cfg: &ScanConfig, observer: &dyn Observer) -> Result<Sca
                         hits.push(HitRecord {
                             function: entry.name.clone(),
                             severity: entry.severity,
+                            base_severity: Some(entry.severity),
                             category: entry.category,
                             member: member_name.clone(),
                             offset: 0,
@@ -187,6 +188,7 @@ pub fn run(path: &Path, cfg: &ScanConfig, observer: &dyn Observer) -> Result<Sca
                             context: format!("imported from {}", dll),
                             context_start: 0,
                             context_end: 0,
+                            adjustments: Vec::new(),
                         });
                     } else {
                         hit_cap_reached = true;
@@ -272,6 +274,7 @@ pub fn run(path: &Path, cfg: &ScanConfig, observer: &dyn Observer) -> Result<Sca
                             hits.push(HitRecord {
                                 function: be.name.clone(),
                                 severity: be.severity,
+                                base_severity: Some(be.severity),
                                 category: be.category,
                                 member: member_name.clone(),
                                 offset: s.offset + (h.start as u64) * stride,
@@ -282,6 +285,7 @@ pub fn run(path: &Path, cfg: &ScanConfig, observer: &dyn Observer) -> Result<Sca
                                 context,
                                 context_start: cs,
                                 context_end: ce,
+                                adjustments: Vec::new(),
                             });
                         } else {
                             hit_cap_reached = true;
@@ -340,6 +344,7 @@ pub fn run(path: &Path, cfg: &ScanConfig, observer: &dyn Observer) -> Result<Sca
             list.get(*id).map(|be| MatchSummary {
                 function: be.name.clone(),
                 severity: be.severity,
+                base_severity: Some(be.severity),
                 category: be.category,
                 occurrences: a.occurrences,
                 members: a.members.len(),

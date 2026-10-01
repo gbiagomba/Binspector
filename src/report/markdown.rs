@@ -70,17 +70,18 @@ pub fn write(
     )?;
     writeln!(w)?;
 
-    let (crit, high, med) = r.severity_counts();
+    let (crit, high, med, low) = r.severity_counts();
     writeln!(w, "## Findings")?;
     writeln!(w)?;
     writeln!(
         w,
-        "{} distinct functions, {} occurrences. Critical {}, high {}, medium {}.",
+        "{} distinct functions, {} occurrences. Critical {}, high {}, medium {}, low {}.",
         thousands(r.summary.len() as u64),
         thousands(r.banned_hit_count as u64),
         thousands(crit as u64),
         thousands(high as u64),
-        thousands(med as u64)
+        thousands(med as u64),
+        thousands(low as u64)
     )?;
     writeln!(w)?;
     if r.summary.is_empty() {

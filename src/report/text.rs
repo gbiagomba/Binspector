@@ -119,15 +119,17 @@ fn write_warnings(w: &mut dyn Write, r: &Report, _opts: &RenderOpts) -> Result<(
 }
 
 fn write_summary(w: &mut dyn Write, r: &Report, opts: &RenderOpts) -> Result<()> {
-    let (crit, high, med) = r.severity_counts();
+    let (crit, high, med, low) = r.severity_counts();
     writeln!(
         w,
-        "Findings: {} distinct functions, {} occurrences (critical {}, high {}, medium {})",
+        "Findings: {} distinct functions, {} occurrences (critical {}, high {}, medium {}, \
+         low {})",
         thousands(r.summary.len() as u64),
         thousands(r.banned_hit_count as u64),
         thousands(crit as u64),
         thousands(high as u64),
-        thousands(med as u64)
+        thousands(med as u64),
+        thousands(low as u64)
     )?;
     if r.summary.is_empty() {
         writeln!(w, "  No banned function references found.")?;
@@ -272,16 +274,30 @@ fn write_dump(
 }
 
 /// Highest severity among the banned functions that matched inside one string.
+/// Colour for a token in the `--dump` output.
+///
+/// Deliberately the **base** severity, not the adjusted one. A dump is a raw listing of every
+/// extracted string, and the claim it makes about a highlighted token is only "this is a
+/// banned name". The evidence rules judge a specific occurrence in a specific member, and this
+/// function has neither: it is handed a line of spooled text and a byte range, and can only
+/// join back to the summary by name. Since 5.0.0 one name can carry several adjusted
+/// severities, so using the adjusted value here would colour by whichever occurrence happened
+/// to be worst anywhere in the report, which is a claim about the wrong thing.
+///
+/// `usage.md` states this, so the difference between a dump colour and a findings severity is
+/// documented rather than discovered.
 fn worst_severity(r: &Report, text: &str, hits: &[(usize, usize)]) -> Severity {
-    let mut worst = Severity::Medium;
+    // Lowest of nothing is Low, not Medium: a token that matches no summary row should not
+    // be painted as though it were a medium finding.
+    let mut worst = Severity::Low;
     for (s, e) in hits {
         if *s >= *e || *e > text.len() {
             continue;
         }
         let token = &text[*s..*e];
         for summary in &r.summary {
-            if summary.function.eq_ignore_ascii_case(token) && summary.severity < worst {
-                worst = summary.severity;
+            if summary.function.eq_ignore_ascii_case(token) && summary.base_severity() < worst {
+                worst = summary.base_severity();
             }
         }
     }
@@ -322,6 +338,7 @@ mod tests {
             summary: vec![MatchSummary {
                 function: "strcpy".into(),
                 severity: Severity::Critical,
+                base_severity: Some(Severity::Critical),
                 category: Category::BufferOverflow,
                 occurrences: 5,
                 members: 2,

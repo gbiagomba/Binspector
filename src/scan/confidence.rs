@@ -119,6 +119,29 @@ fn is_whole_symbol(text: &str, start: usize, end: usize) -> bool {
     }
 }
 
+/// True when the match is the *name component* of an MSVC mangled symbol, which makes it
+/// the definition of a method with that name rather than a reference to the CRT function.
+///
+/// The shape is `?<name>@<scope>@@<signature>`: the string opens with `?`, the token
+/// starts at index 1, and an `@` terminates the name. So
+/// `?sprintf@WRStrSafe@@SAHPEAD_KPEBDZZ` is `WRStrSafe::sprintf`, a safe wrapper that
+/// takes an explicit destination capacity. Reporting it as `sprintf` flags the
+/// countermeasure as the defect.
+pub fn is_mangled_definition(text: &str, start: usize, end: usize) -> bool {
+    let bytes = text.as_bytes();
+    start == 1 && bytes.first() == Some(&b'?') && bytes.get(end) == Some(&b'@')
+}
+
+/// True when the match is the final component of a qualified C++ name, that is, it is
+/// immediately preceded by `::`.
+///
+/// `cv::FileStorage::Impl::gets` declares an OpenCV member called `gets`. C `gets` was
+/// removed in C11 and Windows exports only `gets_s`, so the CRT import is not even
+/// constructible; the only thing this string can be is somebody else's method.
+pub fn is_qualified_name(text: &str, start: usize) -> bool {
+    start >= 2 && text.as_bytes().get(start - 2..start) == Some(b"::".as_slice())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -237,5 +260,71 @@ mod tests {
             v,
             vec![Confidence::Exact, Confidence::Symbolic, Confidence::Prose]
         );
+    }
+
+    fn span(text: &str, token: &str) -> (usize, usize) {
+        let s = text.find(token).expect("token present");
+        (s, s + token.len())
+    }
+
+    #[test]
+    fn mangled_name_component_is_a_definition() {
+        for (text, token) in [
+            ("?sprintf@WRStrSafe@@SAHPEAD_KPEBDZZ", "sprintf"),
+            ("?strncat@WRStrSafe@@SAHPEAD_KPEBD_K@Z", "strncat"),
+            ("?wcscat@WRStrSafe@@SAHPEA_W_KPEB_W@Z", "wcscat"),
+            ("?wcscpy@WRStrSafe@@SAHPEA_W_KPEB_W@Z", "wcscpy"),
+        ] {
+            let (start, end) = span(text, token);
+            assert!(
+                is_mangled_definition(text, start, end),
+                "{} should be a mangled definition",
+                text
+            );
+        }
+    }
+
+    #[test]
+    fn a_reference_inside_a_mangled_signature_is_not_a_definition() {
+        // The name component is `WRStrSafeWrap`, and `sprintf` appears later in the
+        // string. Only the component directly after the leading `?` is a definition.
+        let text = "?WRStrSafeWrap@@YAHPEADsprintf@Z";
+        let (start, end) = span(text, "sprintf");
+        assert!(!is_mangled_definition(text, start, end));
+        // A bare symbol has no `?` prefix at all.
+        let (start, end) = span("sprintf", "sprintf");
+        assert!(!is_mangled_definition("sprintf", start, end));
+        // A `?` prefix with no `@` closing the name is not the MSVC shape.
+        let (start, end) = span("?sprintf", "sprintf");
+        assert!(!is_mangled_definition("?sprintf", start, end));
+    }
+
+    #[test]
+    fn qualified_name_is_detected() {
+        let text = "cv::FileStorage::Impl::gets";
+        let start = text.rfind("gets").unwrap();
+        assert!(is_qualified_name(text, start));
+        assert!(is_qualified_name("WRStrSafe::sprintf", 11));
+    }
+
+    #[test]
+    fn unqualified_and_single_colon_are_not_qualified_names() {
+        let (start, _) = span("gets", "gets");
+        assert!(!is_qualified_name("gets", start));
+        // A single colon is a label or a drive separator, not C++ scope resolution.
+        let text = "msvcrt:gets";
+        let start = text.find("gets").unwrap();
+        assert!(!is_qualified_name(text, start));
+        // `::` further left does not qualify the token itself.
+        let text = "cv::FileStorage_gets";
+        let start = text.find("gets").unwrap();
+        assert!(!is_qualified_name(text, start));
+    }
+
+    #[test]
+    fn predicates_are_byte_range_safe() {
+        assert!(!is_mangled_definition("?a@", 1, 99));
+        assert!(!is_qualified_name("ab", 0));
+        assert!(!is_qualified_name("ab", 1));
     }
 }

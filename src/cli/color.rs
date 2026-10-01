@@ -58,9 +58,13 @@ impl Theme {
             (Palette::Colorblind, Severity::Critical) => "\x1b[1;38;5;166m",
             (Palette::Colorblind, Severity::High) => "\x1b[1;38;5;214m",
             (Palette::Colorblind, Severity::Medium) => "\x1b[1;38;5;25m",
+            // Low is deliberately dim rather than another hue: it must not compete for
+            // attention with the three tiers that can actually corrupt memory.
+            (Palette::Colorblind, Severity::Low) => "\x1b[2;38;5;245m",
             (Palette::Default, Severity::Critical) => "\x1b[1;31m",
             (Palette::Default, Severity::High) => "\x1b[1;33m",
             (Palette::Default, Severity::Medium) => "\x1b[1;36m",
+            (Palette::Default, Severity::Low) => "\x1b[2;37m",
         }
     }
 
@@ -70,9 +74,11 @@ impl Theme {
             (Palette::Colorblind, Severity::Critical) => "#d55e00",
             (Palette::Colorblind, Severity::High) => "#e69f00",
             (Palette::Colorblind, Severity::Medium) => "#0072b2",
+            (Palette::Colorblind, Severity::Low) => "#6b7280",
             (Palette::Default, Severity::Critical) => "#c0392b",
             (Palette::Default, Severity::High) => "#b7791f",
             (Palette::Default, Severity::Medium) => "#1f6feb",
+            (Palette::Default, Severity::Low) => "#6b7280",
         }
     }
 
@@ -82,6 +88,7 @@ impl Theme {
             Severity::Critical => "!!!",
             Severity::High => "!!",
             Severity::Medium => "!",
+            Severity::Low => "-",
         }
     }
 

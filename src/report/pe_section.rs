@@ -23,18 +23,26 @@ pub fn write_text(w: &mut dyn Write, r: &Report) -> Result<()> {
 
     // Mitigation posture across the whole bundle: the aggregate is what a reviewer
     // acts on, since one unhardened DLL undermines the process it loads into.
+    // Label paired with its accessor, rather than a label matched to a field: the previous
+    // form had a `_` arm that fell through to Authenticode, so adding a label without adding
+    // a match arm would have silently reported one mitigation's state under another's name.
+    type Pick = fn(&crate::pe::Mitigations) -> State;
+    let checks: [(&str, Pick); 6] = [
+        ("ASLR", |m| m.aslr),
+        ("DEP", |m| m.dep),
+        ("CFG", |m| m.cfg),
+        ("/GS", |m| m.gs),
+        ("SafeSEH", |m| m.safe_seh),
+        ("Authenticode", |m| m.authenticode),
+    ];
     let mut off: Vec<(&str, Vec<&str>)> = Vec::new();
-    for label in ["ASLR", "DEP", "CFG", "Authenticode"] {
+    for (label, pick) in checks {
         let mut missing: Vec<&str> = Vec::new();
         for e in &pes {
             let a = e.pe.as_ref().expect("filtered");
-            let s = match label {
-                "ASLR" => a.mitigations.aslr,
-                "DEP" => a.mitigations.dep,
-                "CFG" => a.mitigations.cfg,
-                _ => a.mitigations.authenticode,
-            };
-            if s == State::Disabled {
+            // Unknown is never reported as missing: a managed assembly has no load config,
+            // and calling that "/GS off" would be a false claim.
+            if pick(&a.mitigations) == State::Disabled {
                 missing.push(short_name(&e.member));
             }
         }
@@ -45,7 +53,8 @@ pub fn write_text(w: &mut dyn Write, r: &Report) -> Result<()> {
     if off.is_empty() {
         writeln!(
             w,
-            "  Mitigations: ASLR, DEP, CFG, and Authenticode present on every image"
+            "  Mitigations: ASLR, DEP, CFG, /GS, SafeSEH, and Authenticode present or not \
+             determinable on every image"
         )?;
     } else {
         for (label, missing) in &off {
