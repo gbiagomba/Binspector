@@ -17,7 +17,29 @@ fn exercise(data: &[u8]) {
                 s.name
             );
         }
+        // Signer parsing walks an attacker-controlled PKCS#7 blob through an ASN.1 decoder,
+        // which makes it the newest and least battle-tested parser in the tool. `parse` runs
+        // inside `PeAnalysis::parse` already, so reaching here means it survived; assert the
+        // invariant that a reader relies on, namely that a name is never reported without the
+        // blob having been well formed.
+        if let Some(sig) = a.signature.as_ref() {
+            assert!(
+                sig.signer.is_none() || sig.well_formed,
+                "a signer name was reported for a blob that did not parse"
+            );
+        }
     }
+
+    // Also drive the certificate path directly, so the fuzzer can reach the decoder with
+    // bytes that are not a valid PE at all. goblin only hands over a certificate table for an
+    // image it could parse, which would otherwise gate the ASN.1 code behind PE validity.
+    let certs = [goblin::pe::certificate_table::AttributeCertificate {
+        length: data.len() as u32,
+        revision: goblin::pe::certificate_table::AttributeCertificateRevision::Revision2_0,
+        certificate_type: goblin::pe::certificate_table::AttributeCertificateType::PkcsSignedData,
+        certificate: data,
+    }];
+    let _ = binspector::pe::signer::parse(&certs);
 }
 
 fn main() {
