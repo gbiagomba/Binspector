@@ -4,10 +4,10 @@
   <img src="img/binspector-logo.png" alt="Binspector" width="620">
 </p>
 
-Binspector was built by **Gilles Biagomba** and is licensed under
+> Binspector was built by **Gilles Biagomba** and is licensed under
 **[GPLv3 or later](LICENSE)**. It reviews compiled artifacts you did not build.
-
-Vendor deliverables, dependency bundles, firmware payloads, container images and release
+>
+> Vendor deliverables, dependency bundles, firmware payloads, container images and release
 archives all arrive as opaque blobs, and the usual answer is `strings` piped into `grep`: blind
 to anything compressed, unable to tell a real call from a word in a help message, and silent on
 whether the thing was hardened or signed at all. Binspector unpacks nested containers in memory,
