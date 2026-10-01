@@ -205,8 +205,11 @@ sorts together. A slug is the target's file name, sanitised for a filename, with
 on collision. `--split` cannot share stdout, and `--fail-on` in split mode trips if *any* report
 trips.
 
-`--dump` works on one target at a time: it writes every extracted string, and one target already
-yields millions.
+`--dump` works across several targets: the per-target dumps are concatenated and every record
+names its member, which is rooted at its target, so a combined dump stays attributable. It is
+simply large, since one target can already yield millions of strings, so a notice says so. To
+watch what a run is doing rather than read every string, use `-v` or `-vv`, which are unaffected
+by target count.
 
 ### Multi-target metadata
 

@@ -382,14 +382,32 @@ fn split_and_dump_are_rejected_where_they_cannot_work() {
         .assert()
         .code(2)
         .stderr(contains("cannot share stdout"));
-    // --dump holds one target's spool, and one target already yields millions of strings.
-    bin()
-        .arg("--dump")
-        .arg(&f.target)
-        .arg(&f.target)
-        .assert()
-        .code(2)
-        .stderr(contains("one target at a time"));
+    // --dump across several targets is supported, with a notice about the volume.
+    let dir = TempDir::new().unwrap();
+    let a = dir.path().join("a.msixbundle");
+    let b = dir.path().join("b.msixbundle");
+    std::fs::write(&a, zip_bytes(&[("A.exe", &fake_pe(b"\x00strcpy\x00"))])).unwrap();
+    std::fs::write(&b, zip_bytes(&[("B.exe", &fake_pe(b"\x00gets\x00"))])).unwrap();
+    let out = bin_stdout().arg("--dump").arg(&a).arg(&b).output().unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    // Both targets' strings are present, each attributable to its own target.
+    assert!(
+        stdout.contains("a.msixbundle ::"),
+        "first target missing from the dump"
+    );
+    assert!(
+        stdout.contains("b.msixbundle ::"),
+        "second target missing from the dump"
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("across 2 targets"),
+        "the volume notice should be printed"
+    );
 }
 
 #[test]

@@ -62,6 +62,37 @@ impl Spool {
         Ok(())
     }
 
+    /// Append another spool's records.
+    ///
+    /// The on-disk format is identical, so records are copied line by line rather than parsed
+    /// and re-serialised. Used to carry `--dump` across several targets: each record already
+    /// names its member, and a member chain is rooted at its target, so a combined dump stays
+    /// attributable without any extra field.
+    pub fn absorb(&mut self, other: &mut SpoolReader) -> Result<()> {
+        other.rewind()?;
+        let mut line = String::new();
+        loop {
+            line.clear();
+            let n = other
+                .reader
+                .read_line(&mut line)
+                .context("reading a spool to merge")?;
+            if n == 0 {
+                break;
+            }
+            self.writer
+                .write_all(line.as_bytes())
+                .context("merging dump spools")?;
+            if !line.ends_with('\n') {
+                self.writer
+                    .write_all(b"\n")
+                    .context("merging dump spools")?;
+            }
+            self.count += 1;
+        }
+        Ok(())
+    }
+
     pub fn len(&self) -> usize {
         self.count
     }

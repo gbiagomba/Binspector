@@ -71,11 +71,17 @@ pub fn detect(data: &[u8]) -> Format {
         }
         [0x7F, b'E', b'L', b'F'] => return Format::Elf,
         // Mach-O 32/64, both endiannesses, plus the universal binary magic.
+        // Thin Mach-O, both widths and both endiannesses.
         [0xFE, 0xED, 0xFA, 0xCE]
         | [0xCE, 0xFA, 0xED, 0xFE]
         | [0xFE, 0xED, 0xFA, 0xCF]
-        | [0xCF, 0xFA, 0xED, 0xFE]
-        | [0xCA, 0xFE, 0xBA, 0xBE] => return Format::MachO,
+        | [0xCF, 0xFA, 0xED, 0xFE] => return Format::MachO,
+        // A universal binary, which needs disambiguating: see `is_fat_macho`.
+        [0xCA, 0xFE, 0xBA, 0xBE] | [0xBE, 0xBA, 0xFE, 0xCA] => {
+            if is_fat_macho(data) {
+                return Format::MachO;
+            }
+        }
         [0xFD, b'7', b'z', b'X'] => return Format::Xz,
         [b'M', b'S', b'C', b'F'] => return Format::Cab,
         _ => {}
@@ -99,6 +105,31 @@ pub fn detect(data: &[u8]) -> Format {
     Format::Unknown
 }
 
+/// Whether a `CAFEBABE` or `BEBAFECA` header is a Mach-O universal binary.
+///
+/// `0xCAFEBABE` is also the Java class-file magic, so treating it as Mach-O unconditionally made
+/// every `.class` inside a JAR detect as a Mach-O image. The discriminator is the next field:
+/// a fat header's `nfat_arch` counts architectures and is small, while a class file's bytes 4..8
+/// are its minor and major version pair, and every real class file has a major version of at
+/// least 45. So an implausible architecture count means this is not a fat binary.
+///
+/// `0xBEBAFECA` is `FAT_CIGAM`, the byte-swapped form, which was missing entirely.
+fn is_fat_macho(data: &[u8]) -> bool {
+    let Some(raw) = data.get(4..8) else {
+        return false;
+    };
+    let bytes = [raw[0], raw[1], raw[2], raw[3]];
+    let swapped = data[0] == 0xBE;
+    let nfat_arch = if swapped {
+        u32::from_le_bytes(bytes)
+    } else {
+        u32::from_be_bytes(bytes)
+    };
+    // Apple has never shipped a fat binary with more than a handful of slices, and the lowest
+    // Java major version in the wild is 45, so this separates them cleanly with room to spare.
+    (1..=16).contains(&nfat_arch)
+}
+
 /// A PE starts with `MZ` and carries a `PE\0\0` signature at the e_lfanew offset.
 fn is_pe(data: &[u8]) -> bool {
     if !data.starts_with(b"MZ") || data.len() < 0x40 {
@@ -114,6 +145,47 @@ fn is_pe(data: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_java_class_file_is_not_a_mach_o() {
+        // The pre-existing bug: CAFEBABE is also the Java class magic, so every .class inside a
+        // JAR detected as a Mach-O image. Bytes 4..8 are minor and major version; major 52 is
+        // Java 8, and any real class file is at least 45.
+        let mut class = vec![0xCA, 0xFE, 0xBA, 0xBE, 0x00, 0x00, 0x00, 0x34];
+        class.extend_from_slice(&[0u8; 32]);
+        assert_eq!(
+            detect(&class),
+            Format::Unknown,
+            "a .class is not an executable image"
+        );
+
+        // Java 21 is major 65, still far above the plausible slice count.
+        let mut modern = vec![0xCA, 0xFE, 0xBA, 0xBE, 0x00, 0x00, 0x00, 0x41];
+        modern.extend_from_slice(&[0u8; 32]);
+        assert_eq!(detect(&modern), Format::Unknown);
+    }
+
+    #[test]
+    fn a_universal_binary_is_still_a_mach_o() {
+        // Two slices, which is what a real x86_64 plus arm64 binary carries.
+        let mut fat = vec![0xCA, 0xFE, 0xBA, 0xBE, 0x00, 0x00, 0x00, 0x02];
+        fat.extend_from_slice(&[0u8; 48]);
+        assert_eq!(detect(&fat), Format::MachO);
+    }
+
+    #[test]
+    fn the_byte_swapped_fat_magic_is_recognised() {
+        // FAT_CIGAM, which was absent entirely, so a big-endian-host fat binary was invisible.
+        let mut fat = vec![0xBE, 0xBA, 0xFE, 0xCA, 0x02, 0x00, 0x00, 0x00];
+        fat.extend_from_slice(&[0u8; 48]);
+        assert_eq!(detect(&fat), Format::MachO);
+    }
+
+    #[test]
+    fn a_truncated_fat_header_does_not_panic() {
+        assert_eq!(detect(&[0xCA, 0xFE, 0xBA, 0xBE]), Format::Unknown);
+        assert_eq!(detect(&[0xCA, 0xFE, 0xBA, 0xBE, 0x00]), Format::Unknown);
+    }
 
     #[test]
     fn detects_zip() {

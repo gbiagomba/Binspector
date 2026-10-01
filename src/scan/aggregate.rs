@@ -34,6 +34,9 @@ pub fn run_many(
         many => {
             let total = many.len();
             let mut merged: Option<ScanOutput> = None;
+            // One spool for the whole run, appended to as each target finishes, so the cost is
+            // linear in the total rather than quadratic in the number of targets.
+            let mut dump: Option<crate::spool::Spool> = None;
             for (i, t) in many.iter().enumerate() {
                 observer.on(&Event::Target {
                     label: &t.label,
@@ -41,7 +44,17 @@ pub fn run_many(
                     total,
                     size: t.size,
                 });
-                let one = run_labeled(&t.path, &t.label, &t.selected_by, cfg, observer)?;
+                let mut one = run_labeled(&t.path, &t.label, &t.selected_by, cfg, observer)?;
+                if let Some(mut reader) = one.spool.take() {
+                    let sink = match dump.as_mut() {
+                        Some(s) => s,
+                        None => {
+                            dump = Some(crate::spool::Spool::new()?);
+                            dump.as_mut().expect("just created")
+                        }
+                    };
+                    sink.absorb(&mut reader)?;
+                }
                 merged = Some(match merged {
                     None => one,
                     Some(acc) => merge(acc, one),
@@ -49,6 +62,10 @@ pub fn run_many(
             }
             let mut out = merged.expect("at least two targets");
             finish_aggregate(&mut out.report);
+            out.spool = match dump {
+                Some(s) => Some(s.finish()?),
+                None => None,
+            };
             Ok(out)
         }
     }
@@ -100,8 +117,8 @@ fn merge(mut acc: ScanOutput, next: ScanOutput) -> ScanOutput {
     a.intel.components = components;
 
     a.banned_hit_count = a.summary.iter().map(|s| s.occurrences).sum();
-    // The spool holds one target's dumped strings. `--dump` with several targets is rejected
-    // during CLI validation, so there is never a second spool to lose here.
+    // Spools are accumulated by the caller into one for the whole run, so there is none to
+    // merge here and none to lose.
     acc
 }
 

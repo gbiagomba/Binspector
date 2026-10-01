@@ -382,15 +382,16 @@ impl Cli {
             ),
             None => None,
         };
-        // --dump writes every extracted string, and the spool holds one target's worth. Several
-        // targets would need several spools, and a dump across a directory would be enormous
-        // anyway: the reference bundle alone yields 6.5M strings. Rejected rather than silently
-        // dumping only the last target.
+        // --dump across several targets works: the spools are concatenated, and every record
+        // names its member, which is rooted at its target. It is simply large, so say so rather
+        // than refusing: one bundle alone yields millions of strings.
         if self.dump && targets.len() > 1 {
-            bail!(
-                "--dump works on one target at a time. It writes every extracted string, and \
-                 one target already yields millions; scan targets individually."
-            );
+            notices.push(format!(
+                "--dump across {} targets writes every extracted string from all of them. Use \
+                 -v or -vv to watch progress instead if you only want to see what the scan is \
+                 doing.",
+                targets.len()
+            ));
         }
         // --split writes a file per target, so it cannot share stdout, mirroring the existing
         // rule for several formats.

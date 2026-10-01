@@ -2,6 +2,29 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.1.1] - 2026-10-01
+
+### Fixed
+- **A Java class file detected as a Mach-O image.** `0xCAFEBABE` is both the Mach-O universal
+  binary magic and the Java class-file magic, so every `.class` inside a scanned JAR was typed
+  `macho`. The discriminator is the next field: a fat header's `nfat_arch` counts architectures
+  and is small, while a class file's bytes 4..8 are its minor and major version pair, and every
+  real class file has a major version of at least 45. A count outside 1 to 16 is therefore not a
+  fat binary. Pre-existing, not introduced by 5.1.0.
+- **`FAT_CIGAM` (`0xBEBAFECA`) was absent**, so a byte-swapped universal binary was invisible to
+  detection. A truncated fat header now returns `Unknown` instead of reading past the end.
+
+### Changed
+- **`--dump` works across several targets** instead of being refused. The per-target spools are
+  concatenated into one, and because every record names its member and a member chain is rooted
+  at its target, a combined dump stays attributable with no extra field. The concatenation is
+  linear in the total rather than quadratic in the target count. A notice reports the volume,
+  since one target can already yield millions of strings, and points at `-v` and `-vv` for
+  watching a run rather than reading every string.
+
+  The previous refusal was the wrong call: a spool-per-target limitation is something to fix, not
+  a reason to reject the flag.
+
 ## [5.1.0] - 2026-10-01
 
 Several targets, or a directory, in one run.
