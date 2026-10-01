@@ -143,12 +143,10 @@ pub fn is_executable_image(data: &[u8]) -> bool {
 
 /// Turn per-member mitigations into findings, one finding per mitigation listing its members.
 ///
-/// One finding per mitigation rather than one per image, for the reason `pe::posture` gives:
-/// 179 images with a writable GOT is a single statement about how the build was linked, and
-/// 179 findings would bury everything else in the report.
-///
-/// The `bool` in each tuple is `is_executable_image`, which scopes the rules that are only
-/// meaningful for a program the kernel loads. See `applies`.
+/// One per mitigation rather than one per image, for the reason `pe::posture` gives: 179 images
+/// with a writable GOT is a single statement about how the build was linked, and 179 findings
+/// would bury everything else. The `bool` in each tuple is `is_executable_image`, which scopes
+/// the rules that are meaningful only for a program the kernel loads. See `applies`.
 pub fn findings(members: &[(String, UnixMitigations, bool)]) -> Vec<PostureFinding> {
     let mut out = Vec::new();
     for rule in rules() {
@@ -173,8 +171,8 @@ pub fn findings(members: &[(String, UnixMitigations, bool)]) -> Vec<PostureFindi
             remediation: rule.remediation.to_string(),
         });
     }
-    // Worst first, then by breadth, then by id, matching `pe::posture::findings` so a mixed
-    // report reads the same way whichever format produced the finding.
+    // Worst first, then breadth, then id, matching `pe::posture::findings` so a mixed report
+    // reads the same way whichever format produced the finding.
     out.sort_by(|a, b| {
         a.severity
             .cmp(&b.severity)
@@ -279,33 +277,27 @@ fn state_for(id: &str, m: &UnixMitigations) -> State {
 /// inference whose premise is invalid, never the whole analysis.
 fn applies(id: &str, is_executable_image: bool) -> bool {
     match id {
-        // PIE is not a property a shared object or a relocatable object can lack.
-        //
-        // Both Mach-O flags are read by the kernel from the main executable's header only, and
-        // `ld` rejects -allow_stack_execute for anything else, so neither says anything about
-        // a dylib or a bundle.
+        // PIE is not a property a shared object or a relocatable object can lack. The kernel
+        // reads both Mach-O flags from the main executable's header only, and `ld` rejects
+        // -allow_stack_execute for anything else, so neither says anything about a dylib.
         //
         // ELF `nx` is deliberately NOT in this list: the loader ORs PT_GNU_STACK across every
         // object it maps, so one shared library with an executable stack makes the whole
-        // process's stack executable. That is the rule's most useful case, not an exception.
+        // process's stack executable. That is the rule's best case, not an exception.
         "pie" | "exec-stack" | "exec-heap" => is_executable_image,
         _ => true,
     }
 }
 
-// ---------------------------------------------------------------------------
-// Per-mitigation decision logic, extracted so it can be tested without
-// synthesising an ELF or a Mach-O. Follows `pe::mitigations`, which pulled
-// `gs_state` and `safe_seh_state` out for exactly this reason: the interesting
-// part of each of these is which inputs mean Unknown, and a hand-built fixture
-// tests the fixture more than the rule.
-// ---------------------------------------------------------------------------
+// Per-mitigation decision logic, extracted so it can be tested without synthesising an ELF or
+// a Mach-O. Follows `pe::mitigations`, which pulled `gs_state` and `safe_seh_state` out for the
+// same reason: the interesting part of each is which inputs mean Unknown, and a hand-built
+// fixture tests the fixture more than the rule.
 
 /// `State` from a positive flag: set means the mitigation is on.
 ///
-/// Local rather than `State::from_flag`, which is private to `pe::mitigations`. Also the
-/// honest spelling for the two Mach-O flags, where one has to be inverted at its call site
-/// and a shared helper would hide which.
+/// Local rather than `State::from_flag`, which is private to `pe::mitigations`. Also the honest
+/// spelling for the two Mach-O flags, one of which must be inverted at its call site.
 fn flag(set: bool) -> State {
     if set {
         State::Enabled
@@ -318,7 +310,7 @@ fn flag(set: bool) -> State {
 ///
 /// `None` is the absent-header case and must stay Unknown. Every current kernel defaults the
 /// stack to non-executable when the header is missing, so Disabled would be wrong; but the
-/// image makes no statement, so Enabled would be a claim the file does not support either.
+/// image makes no statement, so Enabled is unsupported too.
 fn nx_state(gnu_stack_executable: Option<bool>) -> State {
     match gnu_stack_executable {
         Some(executable) => flag(!executable),
@@ -367,10 +359,10 @@ fn elf_pie_state(e_type: u16, is_lib: bool) -> State {
 
 /// Stack canary from the undefined symbols.
 ///
-/// An empty symbol list is Unknown, not Disabled. A static or stripped binary genuinely may
-/// be built with `-fstack-protector-strong`; the canary helper is just linked in rather than
-/// imported. Absence of evidence is not evidence of absence, and this is the reading that
-/// would otherwise file a false finding against every static binary a scan opens.
+/// An empty symbol list is Unknown, not Disabled. A static or stripped binary may well be built
+/// with `-fstack-protector-strong`, with the helper linked in rather than imported. Absence of
+/// evidence is not evidence of absence, and Disabled here would file a false finding against
+/// every static binary a scan opens.
 fn canary_state(symbols: &[String]) -> State {
     if symbols.is_empty() {
         return State::Unknown;
@@ -380,9 +372,9 @@ fn canary_state(symbols: &[String]) -> State {
 
 /// `_FORTIFY_SOURCE` from the undefined symbols.
 ///
-/// The fortify helpers are spelled `__<name>_chk`, so both ends of the name are required: a
-/// project function called `validate_chk` is not evidence of a fortified libc. Same empty-list
-/// rule as the canary, and for the same reason.
+/// The helpers are spelled `__<name>_chk`, so both ends of the name are required: a project
+/// function called `validate_chk` is not evidence of a fortified libc. Same empty-list rule as
+/// the canary, for the same reason.
 fn fortify_state(symbols: &[String]) -> State {
     if symbols.is_empty() {
         return State::Unknown;
@@ -408,29 +400,27 @@ fn macho_pie_state(flags: u32, filetype: u32) -> State {
 
 /// Non-executable stack for a Mach-O, from `MH_ALLOW_STACK_EXECUTION`.
 ///
-/// **Inverted**, unlike every other flag in this file and unlike the whole PE convention in
+/// **Inverted**, unlike every other flag here and unlike the whole PE convention in
 /// `pe::mitigations`. This bit is an opt-*out*: it is set only when the link was told
-/// `-allow_stack_execute`, and setting it switches the mitigation off. So the state is the
-/// negation of the bit.
-///
-/// Because it is an opt-out, absence is a real reading rather than silence, which is why this
-/// one needs no Unknown case and `macho_exec_heap_state` does. Read the two together.
+/// `-allow_stack_execute`, and setting it switches the mitigation off, so the state is the
+/// negation of the bit. Because it is an opt-out, absence is a real reading rather than
+/// silence, which is why this one needs no Unknown case and the heap flag below does.
 fn macho_exec_stack_state(flags: u32) -> State {
     flag(flags & MH_ALLOW_STACK_EXECUTION == 0)
 }
 
 /// Non-executable heap for a Mach-O, from `MH_NO_HEAP_EXECUTION`.
 ///
-/// **Not inverted**, in direct contrast to `macho_exec_stack_state` immediately above. This
-/// bit is an opt-*in*: set means the mitigation is on. The two flags sit next to each other in
-/// the same header word, describe the same kind of protection, and run in opposite directions.
-/// Treating them alike is the trap, and it fails silently in whichever direction you guessed.
+/// **Not inverted**, in direct contrast to `macho_exec_stack_state` immediately above. This bit
+/// is an opt-*in*: set means the mitigation is on. The two flags sit in the same header word,
+/// describe the same kind of protection, and run in opposite directions. Treating them alike is
+/// the trap, and it fails silently in whichever direction you guessed.
 ///
-/// And it is only meaningful on 32-bit x86, which is the second trap. Apple documents the flag
+/// It is also meaningful only on 32-bit x86, which is the second trap. Apple documents the flag
 /// as affecting the i386 ABI; on x86_64 and on every arm64 variant the heap is non-executable
 /// regardless and no current toolchain sets the bit. Reading absence as Disabled there would
-/// file "executable heap" against every macOS binary in existence, including Apple's own
-/// signed system binaries, which is exactly the invented finding the module rule forbids. So
+/// file "executable heap" against every macOS binary in existence, Apple's own signed system
+/// binaries included, which is exactly the invented finding the module rule forbids. So
 /// anything that is not `CPU_TYPE_X86` is Unknown.
 fn macho_exec_heap_state(flags: u32, cputype: u32) -> State {
     if cputype != CPU_TYPE_X86 {

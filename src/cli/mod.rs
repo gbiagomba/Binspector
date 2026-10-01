@@ -150,8 +150,8 @@ pub struct Cli {
     #[arg(long)]
     pub carve: bool,
 
-    /// Skip PE parsing (headers, sections, imports, mitigations)
-    #[arg(long = "no-pe")]
+    /// Skip executable parsing (headers, sections, imports, mitigations) for PE, ELF, and Mach-O
+    #[arg(long = "no-exe", alias = "no-pe", visible_alias = "no-pe")]
     pub no_pe: bool,
 
     /// Maximum indicators of each kind to collect
