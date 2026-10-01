@@ -17,4 +17,5 @@ pub mod pe;
 pub mod repl;
 pub mod report;
 pub mod scan;
+pub mod select;
 pub mod spool;
