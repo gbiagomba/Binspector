@@ -100,6 +100,11 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
+          # Let GitHub decide "Latest" by semantic version rather than by publish order.
+          # The default marks whatever was published most recently as latest, so backfilling an
+          # older tag steals the badge: tagging v5.1.1 and v5.2.0 after v5.3.0 already existed put
+          # v5.1.1 on the repository sidebar as the current release.
+          make_latest: legacy
           files: |
             ${{ steps.package.outputs.archive }}
             ${{ steps.package.outputs.bare }}
@@ -143,6 +148,11 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
+          # Let GitHub decide "Latest" by semantic version rather than by publish order.
+          # The default marks whatever was published most recently as latest, so backfilling an
+          # older tag steals the badge: tagging v5.1.1 and v5.2.0 after v5.3.0 already existed put
+          # v5.1.1 on the repository sidebar as the current release.
+          make_latest: legacy
           files: |
             ${{ steps.package.outputs.archive }}
             ${{ steps.package.outputs.bare }}
@@ -185,6 +195,11 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
+          # Let GitHub decide "Latest" by semantic version rather than by publish order.
+          # The default marks whatever was published most recently as latest, so backfilling an
+          # older tag steals the badge: tagging v5.1.1 and v5.2.0 after v5.3.0 already existed put
+          # v5.1.1 on the repository sidebar as the current release.
+          make_latest: legacy
           files: |
             ${{ steps.package.outputs.archive }}
             ${{ steps.package.outputs.bare }}
@@ -199,6 +214,11 @@ jobs:
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          # Let GitHub decide "Latest" by semantic version rather than by publish order.
+          # The default marks whatever was published most recently as latest, so backfilling an
+          # older tag steals the badge: tagging v5.1.1 and v5.2.0 after v5.3.0 already existed put
+          # v5.1.1 on the repository sidebar as the current release.
+          make_latest: legacy
           files: |
             LICENSE
             README.md
