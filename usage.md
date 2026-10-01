@@ -13,6 +13,8 @@ Full reference. See [README.md](README.md) for the overview and quick start.
 - [Containers](#containers)
 - [Executable analysis](#executable-analysis)
 - [Dynamic loading](#dynamic-loading)
+- [Exploit mitigation findings](#exploit-mitigation-findings)
+- [Origin attribution](#origin-attribution)
 - [Reputation and CVEs](#reputation-and-cves)
 - [Carving](#carving)
 - [Fuzzing](#fuzzing)
@@ -75,7 +77,8 @@ binspector --banned-filter '^str' ./app.exe
 | `--banned-filter <REGEX>` | Consider only banned names matching this regex |
 | `--case-sensitive` | Match case sensitively (default is case insensitive) |
 | `--no-ascii`, `--no-utf16` | Disable an extraction source (not both) |
-| `--include-low-confidence` | Also report namespace and prose matches |
+| `--include-excluded` | Also report occurrences the evidence rules removed, each tagged with its rule. `--include-low-confidence` is an alias |
+| `--first-party <REGEX>` | Mark images whose file name or Authenticode signer matches as first-party |
 
 ### Output
 
@@ -136,7 +139,7 @@ report, a pipe, or a log file. `--no-banner` suppresses it in an interactive ses
 | Code | Meaning |
 |---|---|
 | `0` | Success |
-| `1` | A `--fail-on` threshold was met, or `fuzz --fail-on-finding` found something |
+| `1` | A `--fail-on` threshold was met, by a banned-function finding **or a missing exploit mitigation**, or `fuzz --fail-on-finding` found something |
 | `2` | An error occurred |
 
 ## Output formats
@@ -214,6 +217,47 @@ Windows DLL search-order hijacking lives:
 import table, and 78 of the 441 images in the reference bundle import the family. Calling
 those defective on the strength of a name would be inference presented as evidence. See
 [Dynamic loading](#dynamic-loading) for what is reported instead.
+
+### Evidence gating
+
+Since 5.0.0 severity is a property of the **observation**, not of the function name. The family
+table still assigns a base severity, and the evidence next to the match then adjudicates it. Both
+values are kept: `base_severity` is what the table said, `severity` is what the evidence
+supports, and `adjustments` lists every rule that moved it. Nothing is silent.
+
+**Exclusions.** The occurrence is removed, counted against its rule, and disclosed in the report.
+
+| Rule | Condition |
+|---|---|
+| `prose` | Namespace text or documentation, the long-standing confidence filter |
+| `symbol-definition` | The token is the name component of a C++ mangled or qualified symbol, so it *defines* a method of that name rather than calling the CRT function. `?sprintf@WRStrSafe@@` is a safe wrapper taking an explicit capacity; MSVC, Itanium, and `::`-qualified forms are all recognised |
+| `ambiguous-name-no-import` | The name is also an ordinary English word (`system`, `gets`, `free`, `rand`, `random`). A symbolic match is excluded outright, because the token sits inside a larger token such as `h-system`. An exact match is excluded only when a usable import table was read and does not contain the name |
+| `managed-no-native-call` | A managed .NET assembly has no native call site, and the match is not import-backed |
+
+**Demotions.** The occurrence is reported at a lower severity, with the reason attached.
+
+| Rule | New severity | Why |
+|---|---|---|
+| `read-only-primitive` | `low` | `strlen`, `wcslen`, `memcmp` take no destination pointer and cannot overflow a buffer |
+| `deprecated-pointer-validation` | `medium` | `IsBad*Ptr` is not harmless: it suppresses the guard page that would otherwise turn a bad pointer into a clean crash |
+| `allocator-entry-point` | `medium` | `malloc`, `free`, and friends take no destination buffer |
+| `bounded-memory-primitive` | `medium` | `memcpy`, `memset`, `memmove` take an explicit size; the bug is a wrong size, not the call |
+| `non-executable-member` | capped at `low` | A hit in a data file is data. Capped rather than excluded, because a shell script inside a bundle is a legitimate place to find `system` |
+
+**An import is never excluded**, only demoted. An entry in the import directory is a
+linker-recorded fact, and no amount of surrounding text retracts it.
+
+**Absence of an import is only evidence when a table was read.** `import` confidence is currently
+only derivable from a PE import directory, and a packed or resource-only PE has no import
+directory at all, so a rule that requires import backing is skipped for an ELF, a Mach-O, or an
+importless PE. Without that, a real `system()` call in a Linux binary would be dropped.
+
+`--include-excluded` reports everything the rules removed, each tagged with the rule, so the
+filter can be audited rather than trusted.
+
+**`--dump` colours by `base_severity`, not by the adjusted value.** A dump is a raw listing of
+every extracted string, and the only claim it makes about a highlighted token is that it is a
+banned name; it has no specific occurrence to judge.
 
 ### Confidence
 
@@ -330,6 +374,59 @@ statically import, which is what a runtime load looks like.
 **The stated limit.** This cannot prove a call site is wrong, and `hardened` does not mean
 every load in the image is safe. It narrows 78 images to the handful worth reading, and every
 claim it makes carries an offset you can verify.
+
+## Exploit mitigation findings
+
+A missing mitigation is a finding, not prose, since 5.0.0. It is confirmable from image metadata
+alone, needs no call site or source access, and is fixed by a build flag, which makes it the most
+actionable thing the tool reports.
+
+One finding per mitigation, listing the affected images rather than one finding per image: 179
+unsigned images is a single statement about a build, not 179 findings.
+
+| id | Condition | Severity |
+|---|---|---|
+| `aslr` | `DYNAMIC_BASE` absent | high |
+| `dep` | `NX_COMPAT` absent | high |
+| `gs` | Load config present with no usable `SecurityCookie` | medium |
+| `cfg` | Guard flags present without `CF_INSTRUMENTED` | medium |
+| `safe-seh` | 32-bit image registering no exception handlers | medium |
+| `authenticode` | No certificate table | medium |
+| `cet` | `CET_COMPAT` absent from the extended DLL characteristics | low |
+
+Each finding carries the flag or directory it was read from and the remediation, so the claim is
+checkable against the file.
+
+**`Unknown` is never a finding.** A managed assembly has no load config directory, so reporting
+"/GS off" for one would be a false claim. For the same reason `/GS`, CFG, SafeSEH, and CET are not
+evaluated for managed assemblies at all: the CLR controls their code generation. ASLR, DEP, and
+signing are still properties of the shipped file.
+
+**These participate in `--fail-on`**, which is the breaking change most likely to affect a
+pipeline.
+
+## Origin attribution
+
+A reviewer cannot patch someone else's binary, so the report says whose code a finding is in.
+
+The signer comes from the Authenticode certificate's subject Common Name. `--first-party <REGEX>`
+overrides it, matched against the image's **file name** and the signer name. Not the provenance
+chain: a chain always begins with the scanned file's own name, so matching it would attribute
+every member of `MyProduct.msixbundle` to first-party.
+
+```
+Findings by origin
+  first-party (--first-party)      131
+  unsigned                          84
+  signed by .NET                    13
+  signed by Microsoft Corpora~       5
+```
+
+**A signer is an identity claim, not a verified one.** Nothing validates the certificate chain,
+checks revocation, or compares the Authenticode hash against the image, so a hostile binary can
+self-sign as anyone. Use it to deprioritise a vendor's code, never to trust a file. For the same
+reason, a signature that cannot be parsed is reported as signed-but-unreadable rather than
+silently treated as unsigned.
 
 ## Reputation and CVEs
 

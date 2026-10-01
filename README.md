@@ -16,13 +16,20 @@ inside `targetsize` and `system` inside `FileSystem`. Binspector verifies identi
 boundaries, then scores what survives: an import-table symbol is not the same evidence as
 the word `Gets` in an XML doc comment, and the two are reported differently.
 
-**It prefers evidence over inference.** When a member parses as a PE, the import directory
-is read directly. An import is a linker-recorded dependency, so it is proof the binary
-calls the function, unlike a name that merely appears in its bytes.
+**It prefers evidence over inference, and severity follows the evidence.** When a member parses
+as a PE, the import directory is read directly: an import is a linker-recorded dependency, so it
+is proof the binary calls the function. Since 5.0.0 that evidence sets the severity, rather than
+a table keyed on the function name. A mangled C++ wrapper that *defines* a method called
+`sprintf` is not a call to `sprintf`; a `strcpy` in a managed .NET assembly has no native call
+site; `strlen` cannot overflow a buffer. Each of those is excluded or demoted by a named rule,
+and every adjustment is recorded alongside what the name alone would have said.
 
-On a 256 MiB Windows application bundle this is the difference between 3 findings that were
-all false, and 39 real ones traceable to a named DLL and a byte offset, 210 of them backed
-by an import table entry.
+On a 256 MiB Windows application bundle this is the difference between 3 findings that were all
+false and a report a reviewer can act on: 244 occurrences, of which 68 are critical or high, every
+critical one backed by an import table entry, with 87 occurrences excluded by named rules that the
+report discloses individually. An adversarial three-agent review of the previous output refuted or
+disputed 239 of 301 findings; the rules in 5.0.0 reproduce that partition without any rule that
+says "only imports count".
 
 ## Install
 
@@ -116,6 +123,8 @@ safety properties, and how to read a report.
 | **Banned functions** | Boundary-verified matches, tiered `critical`/`high`/`medium`, each with a member path and byte offset |
 | **Confidence** | `import`, `exact`, `symbolic`, or `prose`. Namespace and documentation noise is excluded by default and disclosed |
 | **Exploit mitigations** | ASLR, DEP, Control Flow Guard, SafeSEH, Authenticode, relocations, per PE image |
+| **Exploit mitigation findings** | Missing ASLR, DEP, /GS, CFG, SafeSEH, CET, or Authenticode, as findings with evidence and remediation, not prose. Confirmable from metadata alone, which makes them the most actionable output |
+| **Origin** | The Authenticode signer, plus `--first-party` to override it, so a finding in a vendor's binary is not in your queue. An identity claim, never a trust decision |
 | **Dynamic loading** | Which loader APIs each image imports, whether it restricts its search path, and which modules it names without one. Reported as a surface, because an import table does not record what `LoadLibrary` was called with |
 | **PE structure** | Sections with entropy and permissions, imports and exports, TLS callbacks, overlay, packer signals |
 | **Components and CVEs** | Third-party libraries detected offline, resolved against NVD on request |

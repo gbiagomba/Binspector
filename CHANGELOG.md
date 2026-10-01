@@ -2,6 +2,91 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.0.0] - 2026-10-01
+
+Severity is now a property of the observation rather than of the function name. Two breaking
+changes, both of which can alter a pipeline's exit code, so read these first.
+
+### Breaking
+- **Severity values change, and occurrence counts drop.** Evidence rules adjudicate each
+  occurrence from the confidence, the member's format, whether the member is a managed
+  assembly, and whether a usable import table was read. On the reference bundle, occurrences
+  fall from 331 to 244 and critical+high from 306 to 68. Nothing is hidden: `HitRecord` carries
+  `base_severity` and the list of `adjustments` that moved it, and `excluded_by_rule` tallies
+  every removal by rule.
+- **`--fail-on` now also trips on a missing exploit mitigation**, and reads the adjusted
+  severity. A bundle whose images load at a predictable address fails `--fail-on high` where
+  before it passed, because the mitigation was prose in the text report and invisible to the
+  gate. It also stops tripping on a namespace string in .NET metadata that happened to match a
+  critical function name.
+- `low_confidence_total`, `low_confidence_top`, and `MatchSummary.low_confidence` are renamed
+  `excluded_total`, `excluded_top`, and `excluded`, because four rules can now remove an
+  occurrence and the old names described a subset. The SQL tables follow.
+  `--include-low-confidence` remains as a visible alias for `--include-excluded`.
+- `Severity` gains `Low`, and `Report::severity_counts()` returns a 4-tuple.
+
+### Added
+- **`src/scan/evidence.rs`.** Three exclusion rules and five demotions, each recording what it
+  did. Four assertions hold on the reference bundle: no critical or high occurrence is anything
+  but `import` or `exact`; every critical is import-backed; the five known false criticals are
+  gone by name (four `?...@WRStrSafe@@` wrappers, which were the *countermeasure* rated
+  critical, and `cv::FileStorage::Impl::gets`); and the non-prose exclusions sum to the drop in
+  occurrences, so nothing vanished without a named reason.
+
+  Three of the rules came out of review rather than design, and each closes a real hole. A
+  usable import table is required before absence of an import counts as evidence, because
+  `Confidence::Import` is only derivable from a PE import directory and the rule would
+  otherwise have dropped every `system()` in a native ELF or Mach-O binary, and because a
+  packed or resource-only image has no import directory at all. The ordinary-word rule splits
+  on confidence: a symbolic match means the token sits inside a larger token, `h-system` in an
+  ICU locale table being the case found on the bundle, and that is never a call whatever the
+  member is. And Itanium mangling is handled, because `_ZN2cv11FileStorage4Impl4getsEv` puts a
+  length digit before the token rather than `::` or `?`, so the OpenCV false positive this
+  release fixes on a Windows build would have returned from a Linux build of the same code.
+
+- **Exploit mitigations are findings** (`src/pe/posture.rs`), one per mitigation listing its
+  images rather than one per image. On the bundle: ASLR disabled on `BIB.dll`, `BIBUtils.dll`,
+  and `CoolType.dll`, which an adversarial review called the most actionable item in the entire
+  scan and which the tool previously reported only as prose; and 179 images with no Authenticode
+  signature. Each finding carries its evidence and its fix. `Unknown` is never a finding, and
+  code-generation rules do not apply to managed assemblies.
+
+- **`/GS`, SafeSEH, and CET**, all free from goblin with no new dependency. `/GS` from the load
+  config `SecurityCookie`, SafeSEH from `SEHandlerTable` and 32-bit only, CET from the extended
+  DLL characteristics that goblin already parses. SafeSEH is `Unknown` on 64-bit, where SEH is
+  table-based and SafeSEH does not apply.
+
+- **Signer attribution** (`src/pe/signer.rs`), walking the Authenticode PKCS#7 blob to the
+  signing certificate's subject Common Name, plus `--first-party <REGEX>` to override it. On the
+  bundle this separates 131 first-party occurrences from 28 in Microsoft and .NET code, which is
+  the difference between a queue a team can act on and one they cannot. Adds `cms`, `x509-cert`,
+  and `der` from RustCrypto, nine crates; `cms` 0.3 is a pre-release and is pinned exactly.
+
+  **A signer is an identity claim, not a verified one.** No chain is validated, no revocation
+  checked, and no Authenticode hash compared against the image, so a hostile binary can
+  self-sign as anyone. The report says so. BER is deliberately refused, because `der`'s
+  indefinite-length scanner recurses per nested length and a crafted blob would abort the
+  process rather than raise a catchable error.
+
+- **Hardened CRT imports are credited.** An image can import 23 `strcpy_s` beside 5 `strcpy`,
+  and naming only the five inverts the signal. 250 hardened imports across 44 of 441 images on
+  the bundle.
+
+- `dll-search`, `gs`, and `cet` columns in the REPL mitigation matrix, with matching
+  `--missing` selectors.
+
+### Fixed
+- `repl` `parse_severity` ended `_ => High`, so an unrecognised severity loaded from a SQLite
+  report silently became `High`. With a fourth level that would turn a `low` row into a `high`
+  one, misrepresenting a report the browser only views.
+- The `--dump` highlight joined a spooled token back to the summary by function name, which
+  stops being well defined once one name can carry several adjusted severities. It now uses
+  `base_severity` deliberately, since a dump's only claim about a token is that it is a banned
+  name, and its floor moved from `Medium` to `Low`.
+- The aggregate mitigation loop matched a label string to a field with a `_` arm falling through
+  to Authenticode, so adding a label without adding an arm would have reported one mitigation's
+  state under another's name.
+
 ## [4.4.0] - 2026-09-30
 
 Windows DLL search-order coverage, every optional feature in a default build, and a
