@@ -30,6 +30,13 @@ pub mod level {
 pub enum Event<'a> {
     /// A named stage of the run began.
     Phase { name: &'a str },
+    /// One target of a multi-target run started.
+    Target {
+        label: &'a str,
+        index: usize,
+        total: usize,
+        size: u64,
+    },
     /// An archive was opened and yielded members.
     Container {
         chain: &'a str,
@@ -85,6 +92,7 @@ impl Event<'_> {
     pub fn min_level(&self) -> u8 {
         match self {
             Event::Phase { .. }
+            | Event::Target { .. }
             | Event::Container { .. }
             | Event::Timing { .. }
             | Event::Notice { .. } => level::SUMMARY,
@@ -158,6 +166,15 @@ impl Observer for Stderr {
         }
         match event {
             Event::Phase { name } => self.emit(&format!("== {}", name)),
+            Event::Target {
+                label,
+                index,
+                total,
+                size,
+            } => self.emit(&format!(
+                "== target {}/{}  {:>12} bytes  {}",
+                index, total, size, label
+            )),
             Event::Container {
                 chain,
                 format,
@@ -290,6 +307,7 @@ pub(crate) mod testing {
             }
             let s = match event {
                 Event::Phase { name } => format!("phase:{}", name),
+                Event::Target { label, index, .. } => format!("target:{}:{}", index, label),
                 Event::Container { chain, members, .. } => {
                     format!("container:{}:{}", chain, members)
                 }

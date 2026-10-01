@@ -46,9 +46,13 @@ pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Commands>,
 
-    /// Target binary or archive. Required unless a subcommand is used
-    #[arg(value_name = "BINARY")]
+    /// Target binary, archive, or directory. Required unless a subcommand is used
+    #[arg(value_name = "TARGET")]
     pub binary: Option<PathBuf>,
+
+    /// Further targets. A directory is walked for executables and archives
+    #[arg(value_name = "MORE", num_args = 0..)]
+    pub more_targets: Vec<PathBuf>,
 
     /// Project name for output labeling
     #[arg(short, long)]
@@ -162,6 +166,26 @@ pub struct Cli {
     #[arg(long)]
     pub cve: bool,
 
+    /// Write one report per target instead of one combined report
+    #[arg(long = "split")]
+    pub split: bool,
+
+    /// Scan every file found, not only executables and archives
+    #[arg(long = "all-files")]
+    pub all_files: bool,
+
+    /// Maximum directory nesting depth when walking a directory target
+    #[arg(long = "max-dir-depth", default_value_t = 16, value_name = "N")]
+    pub max_dir_depth: usize,
+
+    /// Maximum number of targets to scan in one run
+    #[arg(long = "max-targets", default_value_t = 10_000, value_name = "N")]
+    pub max_targets: usize,
+
+    /// Maximum total bytes read from disk across all targets
+    #[arg(long = "max-input-bytes", default_value_t = 64 * 1024 * 1024 * 1024, value_name = "BYTES")]
+    pub max_input_bytes: u64,
+
     /// Mark images whose file name or Authenticode signer matches this regex as first-party
     #[arg(long = "first-party", value_name = "REGEX")]
     pub first_party: Option<String>,
@@ -222,8 +246,15 @@ impl FailOn {
 /// Fully validated invocation.
 #[derive(Debug)]
 pub struct Resolved {
-    /// The target the scan runs against.
+    /// The target the scan runs against. For a multi-target run this is the first, kept so
+    /// existing single-target call sites and messages read unchanged.
     pub binary: PathBuf,
+    /// Every target named on the command line, before directory expansion.
+    pub targets: Vec<PathBuf>,
+    /// Write one report per target.
+    pub split: bool,
+    /// How a directory target is walked and filtered.
+    pub select: crate::select::SelectConfig,
     /// Verbosity level from the `-v` count.
     pub verbose: u8,
     /// Suppress the banner.
@@ -257,13 +288,16 @@ impl Cli {
             Some(Commands::Repl { report }) => return Ok(Action::Repl(report)),
             None => {}
         }
-        let binary = match self.binary {
+        let binary = match self.binary.clone() {
             Some(b) => b,
             None => bail!(
                 "no target given. Pass a binary to scan, or use `binspector fuzz --help` for \
                  the fuzzing modes."
             ),
         };
+        // The first positional plus any extras, in the order given.
+        let mut targets = vec![binary.clone()];
+        targets.extend(self.more_targets.clone());
         let mut notices = Vec::new();
 
         if self.no_ascii && self.no_utf16 {
@@ -348,6 +382,28 @@ impl Cli {
             ),
             None => None,
         };
+        // --dump writes every extracted string, and the spool holds one target's worth. Several
+        // targets would need several spools, and a dump across a directory would be enormous
+        // anyway: the reference bundle alone yields 6.5M strings. Rejected rather than silently
+        // dumping only the last target.
+        if self.dump && targets.len() > 1 {
+            bail!(
+                "--dump works on one target at a time. It writes every extracted string, and \
+                 one target already yields millions; scan targets individually."
+            );
+        }
+        // --split writes a file per target, so it cannot share stdout, mirroring the existing
+        // rule for several formats.
+        if self.split && to_stdout {
+            bail!("--split writes one report per target and cannot share stdout; pass -o FILE");
+        }
+        let select = crate::select::SelectConfig {
+            all_files: self.all_files,
+            max_dir_depth: self.max_dir_depth,
+            max_targets: self.max_targets,
+            max_input_bytes: self.max_input_bytes,
+            ..Default::default()
+        };
         let scan = ScanConfig {
             first_party,
             project: self.project,
@@ -391,6 +447,9 @@ impl Cli {
 
         Ok(Action::Scan(Box::new(Resolved {
             binary,
+            targets,
+            split: self.split,
+            select,
             verbose: self.verbose,
             no_banner: self.no_banner,
             output_is_default: self.output.is_none() && !to_stdout,

@@ -7,6 +7,7 @@ pub mod markdown;
 pub mod pe_section;
 pub mod sarif;
 pub mod sql;
+pub mod targets_section;
 pub mod text;
 
 #[cfg(feature = "sqlite")]
@@ -201,6 +202,7 @@ pub(crate) mod tests_support {
             excluded_total: 24_227,
             excluded_top: vec![("system".to_string(), 24_227)],
             include_excluded: false,
+            targets: Vec::new(),
             posture: Vec::new(),
             excluded_by_rule: Vec::new(),
             coverage: Coverage {

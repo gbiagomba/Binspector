@@ -175,48 +175,33 @@ fn run_scan(resolved: &binspector::cli::Resolved) -> Result<ExitCode> {
         eprintln!("binspector: {}", notice);
     }
 
+    // Resolve the command line into the files to scan. A directory is walked; a named path
+    // that does not exist is a hard error here, so a typo is never reported as a clean scan.
+    let plan = binspector::select::plan(&resolved.targets, &resolved.select, observer.as_ref())?;
+    for w in &plan.warnings {
+        eprintln!("binspector: {}", w);
+    }
+
+    // --split scans, writes, and drops one target at a time, so N reports never coexist.
+    if resolved.split {
+        return run_split(resolved, &plan, observer.as_ref());
+    }
+
     // Destructured so the report can be borrowed immutably while the spool is
     // borrowed mutably for streaming.
     let scan::ScanOutput {
         mut report,
         mut spool,
-    } = scan::run(&resolved.binary, &resolved.scan, observer.as_ref())?;
-
-    // Network enrichment runs after the scan and never blocks the report: a failed
-    // lookup is recorded in the output rather than aborting a completed analysis.
-    if resolved.reputation || resolved.cve {
-        let creds = intel::Credentials::load()?;
-        if resolved.reputation {
-            if creds.virustotal.is_none() && creds.metadefender.is_none() {
-                eprintln!(
-                    "binspector: {}",
-                    intel::Credentials::missing_message("reputation", "VT_API_KEY or MD_API_KEY")
-                );
-            }
-            match intel::reputation::lookup(&report.sha256, &creds) {
-                Ok(r) => report.intel.reputation = Some(r),
-                Err(e) => eprintln!("binspector: reputation lookup unavailable: {:#}", e),
-            }
-        }
-        if resolved.cve {
-            if creds.nvd.is_none() {
-                eprintln!("binspector: no NVD_API_KEY set, so the NVD rate limit will be very low");
-            }
-            let components = report.intel.components.clone();
-            if components.is_empty() {
-                eprintln!(
-                    "binspector: no third-party components were detected, so there is nothing \
-                     to resolve against NVD"
-                );
-            } else {
-                let sig_count = intel::components::Detector::new(1).signature_count();
-                match intel::cve::lookup(&components, sig_count, &creds, resolved.cve_limit) {
-                    Ok(c) => report.intel.cves = Some(c),
-                    Err(e) => eprintln!("binspector: CVE lookup unavailable: {:#}", e),
-                }
-            }
+    } = scan::run_many(&plan.targets, &resolved.scan, observer.as_ref())?;
+    // Selection warnings belong in the report, not only on stderr, so a reader of the file
+    // knows what was filtered.
+    for w in &plan.warnings {
+        if !report.warnings.contains(w) {
+            report.warnings.push(w.clone());
         }
     }
+
+    enrich(&mut report, resolved)?;
 
     // Terminal output may be colorized. File output is plain unless colour was
     // explicitly forced, since escape sequences in a saved report are noise.
@@ -291,6 +276,125 @@ fn run_scan(resolved: &binspector::cli::Resolved) -> Result<ExitCode> {
 }
 
 /// Rewind the spool so each format streams it from the start.
+/// Network enrichment, shared by the combined and split paths.
+///
+/// Runs after the scan and never blocks the report: a failed lookup is recorded in the output
+/// rather than aborting a completed analysis. Nothing here transmits file content.
+fn enrich(
+    report: &mut binspector::model::Report,
+    resolved: &binspector::cli::Resolved,
+) -> Result<()> {
+    // Network enrichment runs after the scan and never blocks the report: a failed
+    // lookup is recorded in the output rather than aborting a completed analysis.
+    if resolved.reputation || resolved.cve {
+        let creds = intel::Credentials::load()?;
+        if resolved.reputation {
+            if creds.virustotal.is_none() && creds.metadefender.is_none() {
+                eprintln!(
+                    "binspector: {}",
+                    intel::Credentials::missing_message("reputation", "VT_API_KEY or MD_API_KEY")
+                );
+            }
+            match intel::reputation::lookup(&report.sha256, &creds) {
+                Ok(r) => report.intel.reputation = Some(r),
+                Err(e) => eprintln!("binspector: reputation lookup unavailable: {:#}", e),
+            }
+        }
+        if resolved.cve {
+            if creds.nvd.is_none() {
+                eprintln!("binspector: no NVD_API_KEY set, so the NVD rate limit will be very low");
+            }
+            let components = report.intel.components.clone();
+            if components.is_empty() {
+                eprintln!(
+                    "binspector: no third-party components were detected, so there is nothing \
+                     to resolve against NVD"
+                );
+            } else {
+                let sig_count = intel::components::Detector::new(1).signature_count();
+                match intel::cve::lookup(&components, sig_count, &creds, resolved.cve_limit) {
+                    Ok(c) => report.intel.cves = Some(c),
+                    Err(e) => eprintln!("binspector: CVE lookup unavailable: {:#}", e),
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// `--split`: one report per target, written and dropped before the next is scanned.
+///
+/// Memory is the reason this is a separate path rather than a loop over the combined one: N
+/// reports never coexist, so a four-hundred-target run costs one report at a time.
+fn run_split(
+    resolved: &binspector::cli::Resolved,
+    plan: &binspector::select::Plan,
+    observer: &dyn Observer,
+) -> Result<ExitCode> {
+    // One stamp for the whole invocation, so four hundred targets do not get four hundred
+    // timestamps and the output sorts as one run.
+    let stamp = format::stamp();
+    let total = plan.targets.len();
+    let mut any_tripped = false;
+    let mut failures: Vec<String> = Vec::new();
+
+    for (i, target) in plan.targets.iter().enumerate() {
+        observer.on(&binspector::observe::Event::Target {
+            label: &target.label,
+            index: i + 1,
+            total,
+            size: target.size,
+        });
+        let one = std::slice::from_ref(target);
+        let scan::ScanOutput {
+            mut report,
+            mut spool,
+        } = scan::run_many(one, &resolved.scan, observer)?;
+        enrich(&mut report, resolved)?;
+
+        let base = format::split_stem(resolved.output.as_deref(), &target.slug, &stamp);
+        let file_theme = match resolved.color {
+            ColorChoice::Always => Theme::new(ColorChoice::Always, resolved.palette, true),
+            _ => Theme::new(ColorChoice::Never, resolved.palette, false),
+        };
+        for fmt in &resolved.formats {
+            let dump_here = resolved.dump && fmt.supports_dump();
+            // Always Append in split mode: the stamp contains dots, which is exactly why
+            // Naming::Append exists.
+            let path = format::destination(&base, *fmt, format::Naming::Append);
+            let opts = RenderOpts {
+                theme: file_theme,
+                matches_only: resolved.matches_only,
+                dump: dump_here,
+            };
+            let sp = prepare_spool(&mut spool, dump_here)?;
+            match report::render_to_path(*fmt, &path, &report, sp, &opts) {
+                Ok(()) => eprintln!("binspector: wrote {}", path.display()),
+                Err(e) => {
+                    eprintln!("binspector: {} failed: {:#}", path.display(), e);
+                    failures.push(path.display().to_string());
+                }
+            }
+        }
+        // A gate that passes because 399 of 400 targets were clean is not a gate.
+        any_tripped |= tripped(resolved, &report);
+    }
+
+    if !failures.is_empty() {
+        eprintln!(
+            "binspector: {} of {} report file(s) could not be written",
+            failures.len(),
+            total * resolved.formats.len()
+        );
+        return Ok(ExitCode::from(2));
+    }
+    Ok(if any_tripped {
+        ExitCode::from(1)
+    } else {
+        ExitCode::SUCCESS
+    })
+}
+
 fn prepare_spool(
     spool: &mut Option<binspector::spool::SpoolReader>,
     dump: bool,

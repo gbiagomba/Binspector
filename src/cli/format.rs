@@ -148,9 +148,19 @@ pub fn resolve(spec: &str) -> Result<Vec<OutputFormat>> {
 /// no extra `time` feature beyond what the crate already uses, and it cannot fail to
 /// format.
 pub fn default_stem() -> String {
+    format!("binspector_output-{}", stamp())
+}
+
+/// The timestamp component, `YYYY.MM.DD-HH.MM.SS`.
+///
+/// Extracted so a caller can compute it **once per invocation**: a split run over four hundred
+/// targets must not give four hundred different timestamps, or the output stops sorting as one
+/// run. Built from component accessors rather than a format description, so it needs no extra
+/// `time` feature and cannot fail to format.
+pub fn stamp() -> String {
     let now = time::OffsetDateTime::now_local().unwrap_or_else(|_| time::OffsetDateTime::now_utc());
     format!(
-        "binspector_output-{:04}.{:02}.{:02}-{:02}.{:02}.{:02}",
+        "{:04}.{:02}.{:02}-{:02}.{:02}.{:02}",
         now.year(),
         now.month() as u8,
         now.day(),
@@ -158,6 +168,17 @@ pub fn default_stem() -> String {
         now.minute(),
         now.second()
     )
+}
+
+/// Output stem for one target in `--split` mode.
+///
+/// With no `-o`: `binspector_<slug>-<stamp>`. With `-o name`: `name_<slug>-<stamp>`. One rule
+/// covers both, and the stamp is passed in so every target in a run shares it.
+pub fn split_stem(base: Option<&Path>, slug: &str, stamp: &str) -> PathBuf {
+    let prefix = base
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| "binspector".to_string());
+    PathBuf::from(format!("{}_{}-{}", prefix, slug, stamp))
 }
 
 /// How a format's extension is applied to the output path.
@@ -265,6 +286,46 @@ mod tests {
         let err = resolve("yaml").unwrap_err().to_string();
         assert!(err.contains("unknown output format"));
         assert!(err.contains("sarif"));
+    }
+
+    #[test]
+    fn split_stem_covers_both_naming_cases() {
+        // No -o: the product name leads, so output from one run groups together.
+        assert_eq!(
+            split_stem(None, "app.exe", "2026.10.01-09.30.00"),
+            PathBuf::from("binspector_app.exe-2026.10.01-09.30.00")
+        );
+        // With -o: the chosen name leads and the slug distinguishes the target.
+        assert_eq!(
+            split_stem(Some(Path::new("custom")), "app.exe", "2026.10.01-09.30.00"),
+            PathBuf::from("custom_app.exe-2026.10.01-09.30.00")
+        );
+        // A directory prefix survives.
+        assert_eq!(
+            split_stem(Some(Path::new("out/run")), "b.dll", "2026.10.01-09.30.00"),
+            PathBuf::from("out/run_b.dll-2026.10.01-09.30.00")
+        );
+    }
+
+    #[test]
+    fn a_split_stem_keeps_its_seconds_when_an_extension_is_appended() {
+        // The reason split mode always uses Naming::Append: the stamp has dots, and
+        // ReplaceExtension would read the seconds field as an extension and eat it.
+        let base = split_stem(None, "app.exe", "2026.10.01-09.30.00");
+        let p = destination(&base, OutputFormat::Json, Naming::Append);
+        assert_eq!(
+            p,
+            PathBuf::from("binspector_app.exe-2026.10.01-09.30.00.json")
+        );
+    }
+
+    #[test]
+    fn stamp_is_stable_within_one_invocation() {
+        // Not a clock test: the point is that a caller holds one value and reuses it, which is
+        // what keeps a 400-target split run sorting as a single run.
+        let s = stamp();
+        assert_eq!(s.len(), 19, "got {:?}", s);
+        assert_eq!(default_stem(), format!("binspector_output-{}", stamp()));
     }
 
     #[test]

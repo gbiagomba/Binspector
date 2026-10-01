@@ -106,6 +106,41 @@ impl HitRecord {
     }
 }
 
+/// One target a report covers.
+///
+/// Present even for a single-target scan, with one entry, so no consumer has to special-case
+/// arity. The scalar fields on `Report` (`binary`, `file_size`, the digests) are the first
+/// target's, which for a single-target run is exactly the same thing.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TargetInfo {
+    /// Root of this target's provenance chain, so a finding reads
+    /// `label :: inner.msix :: App.exe`. Unique across the report.
+    pub label: String,
+    /// Path on disk as reachable.
+    pub path: String,
+    pub file_size: u64,
+    pub md5: String,
+    pub sha1: String,
+    pub sha256: String,
+    pub root_format: String,
+    pub members_scanned: usize,
+    pub total_unpacked_bytes: u64,
+    pub strings_total: usize,
+    pub banned_hit_count: usize,
+    pub critical: usize,
+    pub high: usize,
+    pub medium: usize,
+    pub low: usize,
+    /// Whether this target reached a PE, ELF, or Mach-O image. A clean result from a target
+    /// that never reached real code is the failure this tool exists to prevent, so it is
+    /// tracked per target and not only in aggregate.
+    pub reached_executable: bool,
+    /// Why it was selected: "magic:pe", "extension:dmg", "all-files", or "explicit".
+    pub selected_by: String,
+    /// This target's own warnings, unprefixed.
+    pub warnings: Vec<String>,
+}
+
 /// A missing exploit mitigation, reported as a finding rather than as prose.
 ///
 /// Separate from `summary` and `hits` on purpose: a mitigation has no function name, no byte
@@ -199,6 +234,9 @@ pub struct Report {
     #[serde(default)]
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub posture: Vec<PostureFinding>,
+    /// Every target this report covers, one entry even for a single-target scan.
+    #[serde(default)]
+    pub targets: Vec<TargetInfo>,
     /// Indicators aggregated across every member.
     pub iocs: crate::pe::Iocs,
     /// Reputation and CVE enrichment. Empty unless explicitly requested.
