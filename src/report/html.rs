@@ -179,9 +179,9 @@ pub fn write(
             writeln!(w, "</ul>")?;
         }
 
-        if !r.hits.is_empty() {
+        if r.reported_hits().next().is_some() {
             writeln!(w, "<h2>Occurrences</h2>")?;
-            for h in &r.hits {
+            for h in r.reported_hits() {
                 writeln!(
                     w,
                     "<div class=\"hit\"><span class=\"marker\">{}</span> \

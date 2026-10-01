@@ -256,11 +256,11 @@ fn write_posture(w: &mut dyn Write, r: &Report) -> Result<()> {
 }
 
 fn write_occurrences(w: &mut dyn Write, r: &Report, opts: &RenderOpts) -> Result<()> {
-    if r.hits.is_empty() {
+    if r.reported_hits().next().is_none() {
         return Ok(());
     }
     writeln!(w, "Occurrences")?;
-    for h in &r.hits {
+    for h in r.reported_hits() {
         writeln!(
             w,
             "  {} {} in {} at offset 0x{:x} (string at 0x{:x}, {}, {} confidence)",
@@ -429,6 +429,8 @@ mod tests {
                     format: "pe".into(),
                     size: 1000,
                     strings: 10,
+                    imports: Vec::new(),
+                    import_source: String::new(),
                     pe: None,
                 }],
                 carved: vec![],

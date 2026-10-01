@@ -112,6 +112,7 @@ pub fn write_text(w: &mut dyn Write, r: &Report) -> Result<()> {
     }
 
     write_origin(w, r, &pes)?;
+    write_crt_surface_text(w, r)?;
 
     // String hygiene, which the banned-function list alone reports upside down: an image can
     // import 23 hardened variants beside 5 unsafe ones, and naming only the five misleads.
@@ -216,6 +217,49 @@ fn truncate(s: &str, max: usize) -> String {
         return s.to_string();
     }
     s.chars().take(max.saturating_sub(1)).collect::<String>() + "~"
+}
+
+/// Bounded memory primitives, as a counted surface rather than a list of findings.
+///
+/// Mirrors `write_dll_search_text`: a denominator, the per-function breakdown, and a statement of
+/// where the detail lives. The difference is that this one *replaces* rows in the occurrence list
+/// rather than sitting beside them, because one occurrence per function per member is a
+/// link-graph fact and on a real bundle they were a third of the report.
+pub fn write_crt_surface_text(w: &mut dyn Write, r: &Report) -> Result<()> {
+    let s = crate::scan::crt_surface::summarise(r);
+    if s.is_empty() {
+        return Ok(());
+    }
+    let images = r.pe_members().len();
+    let breakdown = s
+        .per_function
+        .iter()
+        .map(|(f, n)| format!("{} {}", f, n))
+        .collect::<Vec<_>>()
+        .join(", ");
+    writeln!(
+        w,
+        "  Bounded memory primitives: {} import(s) across {} of {} image(s) ({})",
+        thousands(s.total as u64),
+        s.members,
+        images,
+        breakdown
+    )?;
+    if s.hardened_images > 0 {
+        writeln!(
+            w,
+            "    {} of those image(s) also import hardened _s variants",
+            s.hardened_images
+        )?;
+    }
+    writeln!(
+        w,
+        "    A link-graph fact, not {} findings: every native image calls these, and the defect \
+         would be a wrong size an import table cannot show. Omitted from the occurrence list \
+         below; complete in --format json, csv, sql, sqlite, and sarif.",
+        thousands(s.total as u64)
+    )?;
+    Ok(())
 }
 
 /// Everything about DLL search order, in one place.

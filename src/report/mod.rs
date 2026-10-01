@@ -214,6 +214,8 @@ pub(crate) mod tests_support {
                     format: "pe".into(),
                     size: 1000,
                     strings: 10,
+                    imports: Vec::new(),
+                    import_source: String::new(),
                     pe: None,
                 }],
                 carved: vec![],

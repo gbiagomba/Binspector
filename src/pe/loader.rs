@@ -247,7 +247,7 @@ mod tests {
         names
             .iter()
             .map(|n| ImportRef {
-                dll: "KERNEL32.dll".to_string(),
+                library: "KERNEL32.dll".to_string(),
                 name: n.to_string(),
             })
             .collect()

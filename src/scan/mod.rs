@@ -3,6 +3,7 @@
 pub mod aggregate;
 pub mod banned;
 pub mod confidence;
+pub mod crt_surface;
 pub mod evidence;
 pub mod matcher;
 pub mod strings;
@@ -162,6 +163,27 @@ pub fn run_labeled(
             } else {
                 None
             };
+            // Imports for any executable format, not only PE. This is what makes
+            // `Confidence::Import` reachable on ELF and Mach-O, where it was structurally
+            // unavailable before 5.2.0.
+            let (member_imports, import_source) = match pe.as_ref() {
+                Some(a) => (a.imports.clone(), "pe-directory".to_string()),
+                None if cfg.analyze_pe
+                    && matches!(
+                        member.format,
+                        crate::container::Format::Elf | crate::container::Format::MachO
+                    ) =>
+                {
+                    let found = crate::exe::read(member.data);
+                    let src = if found.imports.is_empty() {
+                        String::new()
+                    } else {
+                        found.source.as_str().to_string()
+                    };
+                    (found.imports, src)
+                }
+                _ => (Vec::new(), String::new()),
+            };
 
             // An entry in the import directory is direct evidence that the binary calls
             // the function, so it outranks anything inferred from embedded text. Imports
@@ -184,9 +206,9 @@ pub fn run_labeled(
             }
 
             let mut imported: HashSet<String> = HashSet::new();
-            if let Some(analysis) = pe.as_ref() {
+            if !member_imports.is_empty() {
                 for (id, entry) in list.entries.iter().enumerate() {
-                    let dll = match analysis.importing_dll(&entry.name) {
+                    let dll = match crate::pe::importing_library(&member_imports, &entry.name) {
                         Some(d) => d.to_string(),
                         None => continue,
                     };
@@ -203,7 +225,7 @@ pub fn run_labeled(
                         start: 0,
                         end: entry.name.len(),
                         member_format: member.format,
-                        is_managed: analysis.is_managed,
+                        is_managed: pe.as_ref().is_some_and(|a| a.is_managed),
                         imports_known: true,
                     });
                     let (imp_severity, imp_adjustments) = match &ruling {
@@ -250,7 +272,14 @@ pub fn run_labeled(
                             string_offset: 0,
                             encoding: strings::Encoding::Ascii,
                             confidence: Confidence::Import,
-                            context: format!("imported from {}", dll),
+                            context: if dll.is_empty() {
+                                // ELF's flat namespace and the Mach-O symbol-table fallback
+                                // cannot say which library supplies a symbol, so the context
+                                // states the fact that holds rather than inventing a library.
+                                format!("imported ({})", import_source)
+                            } else {
+                                format!("imported from {}", dll)
+                            },
                             context_start: 0,
                             context_end: 0,
                             adjustments: imp_adjustments,
@@ -452,6 +481,8 @@ pub fn run_labeled(
                 size: member.data.len() as u64,
                 strings: extracted.len(),
                 pe,
+                imports: member_imports,
+                import_source,
             });
             Ok(())
         },

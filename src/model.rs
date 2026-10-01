@@ -173,6 +173,21 @@ pub struct CoverageEntry {
     #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pe: Option<PeAnalysis>,
+    /// Imports read from this member, whatever its format.
+    ///
+    /// Carried on the entry rather than only inside `pe` so the import-evidence path works for
+    /// ELF and Mach-O too. Before 5.2.0, `Confidence::Import` was derivable only from a PE import
+    /// directory, which made `definitive_hits()` structurally zero for every Linux and macOS
+    /// binary the tool scanned.
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub imports: Vec<crate::pe::ImportRef>,
+    /// How those imports were obtained: `pe-directory`, `elf-dynsym`, `macho-binds`,
+    /// `macho-symtab`, or empty when none were read. Recorded because the mechanisms differ in
+    /// whether they can attribute a symbol to a library.
+    #[serde(default)]
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub import_source: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -262,6 +277,22 @@ impl Report {
             }
         }
         (crit, high, med, low)
+    }
+
+    /// Occurrences a human-facing report lists.
+    ///
+    /// Excludes the bounded memory primitives, which are rolled up into a counted surface
+    /// instead: one occurrence per function per member is a link-graph fact rather than a
+    /// finding, and on a real bundle they are a third of the report.
+    ///
+    /// A single method rather than a filter repeated in each writer, because the predicate would
+    /// otherwise drift across the five sites that iterate `hits`. The machine-readable formats
+    /// deliberately do **not** call this: JSON, CSV, SQL, SQLite, and SARIF stay complete, so no
+    /// consumer silently loses rows. That asymmetry is documented in `usage.md`.
+    pub fn reported_hits(&self) -> impl Iterator<Item = &HitRecord> {
+        self.hits
+            .iter()
+            .filter(|h| !crate::scan::crt_surface::is_rolled_up(&h.function))
     }
 
     /// Members that parsed as a PE, with their analysis.

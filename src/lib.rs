@@ -7,6 +7,7 @@
 pub mod banner;
 pub mod cli;
 pub mod container;
+pub mod exe;
 pub mod fuzz;
 pub mod hashing;
 pub mod intel;

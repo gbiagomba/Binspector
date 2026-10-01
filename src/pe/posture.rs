@@ -196,6 +196,8 @@ mod tests {
             format: "pe".to_string(),
             size: 1024,
             strings: 10,
+            imports: Vec::new(),
+            import_source: String::new(),
             pe: Some(pe),
         }
     }

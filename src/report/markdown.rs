@@ -178,7 +178,7 @@ pub fn write(
             "| Function | Severity | Member | Offset | Encoding | Context |"
         )?;
         writeln!(w, "|---|---|---|---|---|---|")?;
-        for h in &r.hits {
+        for h in r.reported_hits() {
             writeln!(
                 w,
                 "| `{}` | {} | `{}` | 0x{:x} | {} | `{}` |",

@@ -23,7 +23,14 @@ pub use signer::Signature;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ImportRef {
-    pub dll: String,
+    /// The library this symbol comes from.
+    ///
+    /// Named `library` rather than `dll` because the same type now carries ELF and Mach-O
+    /// imports. Empty when the format cannot attribute a symbol to a library: ELF has a flat
+    /// namespace, and the Mach-O symbol-table fallback does not expose the library ordinal. The
+    /// JSON key stays `dll` so existing reports and consumers are unaffected.
+    #[serde(rename = "dll")]
+    pub library: String,
     pub name: String,
 }
 
@@ -92,7 +99,7 @@ impl PeAnalysis {
             .imports
             .iter()
             .map(|i| ImportRef {
-                dll: i.dll.to_string(),
+                library: i.dll.to_string(),
                 name: i.name.to_string(),
             })
             .collect();
@@ -154,10 +161,17 @@ impl PeAnalysis {
 
     /// Find the importing DLL for a function name, comparing case insensitively.
     pub fn importing_dll(&self, function: &str) -> Option<&str> {
+        importing_library(&self.imports, function)
+    }
+
+    /// Kept for the PE path's own call sites; the free function below is what the scan uses so
+    /// the same lookup serves ELF and Mach-O.
+    #[allow(dead_code)]
+    fn importing_dll_inner(&self, function: &str) -> Option<&str> {
         self.imports
             .iter()
             .find(|i| i.name.eq_ignore_ascii_case(function))
-            .map(|i| i.dll.as_str())
+            .map(|i| i.library.as_str())
     }
 
     /// Notes worth putting in front of a reviewer, beyond the raw fields.
@@ -222,6 +236,20 @@ fn subsystem_name(s: u16) -> String {
         _ => "unknown",
     }
     .to_string()
+}
+
+/// Find the library that supplies a function, comparing case insensitively.
+///
+/// A free function over the import slice rather than a method, so the one lookup serves PE, ELF,
+/// and Mach-O. Returns `Some("")` where the format cannot attribute a symbol to a library (ELF's
+/// flat namespace, the Mach-O symbol-table fallback): the symbol *is* imported, which is the fact
+/// the evidence path needs, and the empty library says attribution was unavailable rather than
+/// that there is no import.
+pub fn importing_library<'a>(imports: &'a [ImportRef], function: &str) -> Option<&'a str> {
+    imports
+        .iter()
+        .find(|i| i.name.eq_ignore_ascii_case(function))
+        .map(|i| i.library.as_str())
 }
 
 /// Hardened CRT variants an image imports, sorted and deduplicated.
@@ -332,7 +360,7 @@ mod tests {
             imports: pairs
                 .iter()
                 .map(|(dll, name)| ImportRef {
-                    dll: dll.to_string(),
+                    library: dll.to_string(),
                     name: name.to_string(),
                 })
                 .collect(),
