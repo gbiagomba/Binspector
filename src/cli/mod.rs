@@ -162,6 +162,10 @@ pub struct Cli {
     #[arg(long)]
     pub cve: bool,
 
+    /// Mark images whose file name or Authenticode signer matches this regex as first-party
+    #[arg(long = "first-party", value_name = "REGEX")]
+    pub first_party: Option<String>,
+
     /// Skip third-party component detection (offline, on by default)
     #[arg(long = "no-components")]
     pub no_components: bool,
@@ -337,7 +341,15 @@ impl Cli {
             None => None,
         };
 
+        // Compiled here so a bad pattern is a clear CLI error rather than a scan-time one.
+        let first_party = match self.first_party.as_deref() {
+            Some(p) => Some(
+                Regex::new(p).map_err(|e| anyhow::anyhow!("invalid --first-party regex: {}", e))?,
+            ),
+            None => None,
+        };
         let scan = ScanConfig {
+            first_party,
             project: self.project,
             min_len: self.min_len,
             ascii: !self.no_ascii,

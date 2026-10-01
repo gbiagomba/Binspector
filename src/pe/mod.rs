@@ -11,6 +11,7 @@ pub mod mitigations;
 pub mod packer;
 pub mod posture;
 pub mod sections;
+pub mod signer;
 
 use serde::{Deserialize, Serialize};
 
@@ -18,6 +19,7 @@ pub use ioc::Iocs;
 pub use loader::LoaderSurface;
 pub use mitigations::Mitigations;
 pub use sections::SectionInfo;
+pub use signer::Signature;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ImportRef {
@@ -48,6 +50,24 @@ pub struct PeAnalysis {
     /// the search order. A surface, not a set of findings: see `loader`.
     #[serde(default)]
     pub loader: LoaderSurface,
+    /// Who the Authenticode certificate claims signed this image.
+    ///
+    /// `None` means unsigned. `Some` with `signer: None` means signed but unreadable, which is
+    /// a different fact and is reported differently.
+    ///
+    /// **This is an identity claim, not a trust decision.** Nothing here verifies the chain,
+    /// checks revocation, or compares the Authenticode hash against the image, so a hostile
+    /// binary can self-sign as anyone. It is useful for deprioritising a finding in a vendor's
+    /// code, never for granting authority.
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signature: Option<Signature>,
+    /// Whether `--first-party` matched this image's path or its signer name.
+    ///
+    /// Explicit rather than guessed. A signer name alone cannot tell first-party code from a
+    /// vendor's, and an unsigned internal binary has no signer at all, so the caller says.
+    #[serde(default)]
+    pub first_party: bool,
     /// Hardened CRT variants the image imports, such as `strcpy_s`.
     ///
     /// Reported because the absence of this was a real complaint about the tool: an image can
@@ -80,6 +100,7 @@ impl PeAnalysis {
         let packer_hints = packer::hints(&sections, imports.len(), is_managed);
         let loader = LoaderSurface::from_imports(&imports);
         let safe_variants = collect_safe_variants(&imports);
+        let signature = signer::parse(&pe.certificates);
 
         let (subsystem, image_base) = match pe.header.optional_header {
             Some(oh) => (
@@ -117,6 +138,9 @@ impl PeAnalysis {
             has_debug_info: pe.debug_data.is_some(),
             mitigations: Mitigations::from_pe(&pe),
             loader,
+            signature,
+            // Set by the scan, which knows the member path and the --first-party pattern.
+            first_party: false,
             safe_variants,
             packer_hints,
             overlay_size,
@@ -255,6 +279,8 @@ pub(crate) mod tests_support {
                 cet: mitigations::State::Enabled,
             },
             loader: LoaderSurface::default(),
+            signature: None,
+            first_party: false,
             safe_variants: vec![],
             packer_hints: vec![],
             overlay_size: 0,
@@ -329,6 +355,8 @@ mod tests {
                 cet: mitigations::State::Unknown,
             },
             loader: LoaderSurface::default(),
+            signature: None,
+            first_party: false,
             safe_variants: vec![],
             packer_hints: vec![],
             overlay_size: 0,

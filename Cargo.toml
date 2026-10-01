@@ -32,6 +32,17 @@ cab = "0.6.0"
 binwalk-ng = { version = "4.0.0", default-features = false, optional = true }
 arbitrary = { version = "1.4.2", features = ["derive"] }
 rustyline = { version = "18.0.1", optional = true }
+# Authenticode signer identity: PKCS#7 / CMS SignedData down to the X.509 subject CN, so a
+# report can say whose code a finding is in. goblin hands over the raw blob and does no ASN.1.
+#
+# `cms` 0.3 is the line that pairs with der 0.8 and x509-cert 0.3 and reuses the const-oid
+# 0.10 already in the lock via `digest`. It is a pre-release, so it is pinned exactly: the
+# version is then reproducible rather than floating, which is the condition under which a
+# pre-release is acceptable in a tool that ships binaries. Parsing failure is never fatal, and
+# `--first-party` covers attribution without it.
+cms = { version = "=0.3.0-pre.2", features = ["std"] }
+x509-cert = { version = "0.3.0", default-features = false, features = ["std"] }
+der = { version = "0.8.2", default-features = false, features = ["alloc", "oid", "std"] }
 
 [[bin]]
 name = "binspector"

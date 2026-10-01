@@ -35,6 +35,8 @@ pub struct ScanConfig {
     pub case_sensitive: bool,
     pub banned_list: Option<PathBuf>,
     pub banned_filter: Option<Regex>,
+    /// Images whose path or signer matches are attributed to the reader's own code.
+    pub first_party: Option<Regex>,
     pub limits: Limits,
     /// Spool every extracted string so dump-capable formats can stream it.
     pub dump: bool,
@@ -62,6 +64,7 @@ impl Default for ScanConfig {
             case_sensitive: false,
             banned_list: None,
             banned_filter: None,
+            first_party: None,
             limits: Limits::default(),
             dump: false,
             max_hits: 100_000,
@@ -248,6 +251,19 @@ pub fn run(path: &Path, cfg: &ScanConfig, observer: &dyn Observer) -> Result<Sca
             // already are. Only for an image that actually loads dynamically: bare module
             // names in anything else are just text.
             if let Some(a) = pe.as_mut() {
+                if let Some(re) = cfg.first_party.as_ref() {
+                    let signer = a
+                        .signature
+                        .as_ref()
+                        .and_then(|s| s.signer.as_deref())
+                        .unwrap_or("");
+                    // The image's own file name, not the whole provenance chain. A chain
+                    // always begins with the scanned file's name, so matching it would make
+                    // `^MyProduct` attribute every member of MyProduct.msixbundle to
+                    // first-party, which is exactly the wrong answer.
+                    let leaf = crate::report::pe_section::short_name(&member_name);
+                    a.first_party = re.is_match(leaf) || re.is_match(signer);
+                }
                 if a.loader.loads_dynamically() {
                     let filter = pe_loader::ModuleFilter::new(
                         &a.libraries,

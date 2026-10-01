@@ -87,7 +87,9 @@ pub fn parse(certs: &[AttributeCertificate]) -> Option<Signature> {
 /// `AttributeCertificateRevision` `#[non_exhaustive]` and may yet do the same to
 /// `AttributeCertificateType`, and this way neither a new variant nor a wildcard arm that
 /// silently swallows one can change the behaviour here.
-fn pick_entry<'d>(certs: &[AttributeCertificate<'d>]) -> Option<&AttributeCertificate<'d>> {
+fn pick_entry<'s, 'd>(
+    certs: &'s [AttributeCertificate<'d>],
+) -> Option<&'s AttributeCertificate<'d>> {
     certs
         .iter()
         .find(|c| matches!(c.certificate_type, AttributeCertificateType::PkcsSignedData))

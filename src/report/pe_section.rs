@@ -111,6 +111,8 @@ pub fn write_text(w: &mut dyn Write, r: &Report) -> Result<()> {
         writeln!(w, "  No packer or section anomalies detected")?;
     }
 
+    write_origin(w, r, &pes)?;
+
     // String hygiene, which the banned-function list alone reports upside down: an image can
     // import 23 hardened variants beside 5 unsafe ones, and naming only the five misleads.
     let hardened: usize = pes
@@ -155,6 +157,65 @@ pub fn write_text(w: &mut dyn Write, r: &Report) -> Result<()> {
         writeln!(w)?;
     }
     Ok(())
+}
+
+/// Who the findings belong to, so a reviewer does not spend time on code they cannot patch.
+///
+/// Built from the Authenticode signer, with `--first-party` overriding it. The signer is an
+/// identity *claim*: nothing here verifies a chain or compares the Authenticode hash against
+/// the image, so this is for deprioritising a vendor's code, never for trusting it.
+fn write_origin(w: &mut dyn Write, r: &Report, pes: &[&crate::model::CoverageEntry]) -> Result<()> {
+    use std::collections::BTreeMap;
+
+    // Occurrences per origin, not images: the question is where the findings are.
+    let mut per_member: BTreeMap<&str, (Option<String>, bool)> = BTreeMap::new();
+    for e in pes {
+        let a = e.pe.as_ref().expect("filtered");
+        let signer = a.signature.as_ref().and_then(|s| s.signer.clone());
+        per_member.insert(e.member.as_str(), (signer, a.first_party));
+    }
+    let mut first_party = 0usize;
+    let mut unsigned = 0usize;
+    let mut by_signer: BTreeMap<String, usize> = BTreeMap::new();
+    let mut unattributed = 0usize;
+    for h in &r.hits {
+        match per_member.get(h.member.as_str()) {
+            Some((_, true)) => first_party += 1,
+            Some((Some(signer), false)) => *by_signer.entry(signer.clone()).or_insert(0) += 1,
+            Some((None, false)) => unsigned += 1,
+            None => unattributed += 1,
+        }
+    }
+    if by_signer.is_empty() && first_party == 0 && unsigned == 0 {
+        return Ok(());
+    }
+    writeln!(w, "  Findings by origin")?;
+    if first_party > 0 {
+        writeln!(w, "    first-party (--first-party)   {:>6}", first_party)?;
+    }
+    if unsigned > 0 {
+        writeln!(w, "    unsigned                     {:>6}", unsigned)?;
+    }
+    let mut signers: Vec<(&String, &usize)> = by_signer.iter().collect();
+    signers.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
+    for (signer, n) in signers.iter().take(8) {
+        writeln!(w, "    signed by {:<18} {:>6}", truncate(signer, 18), n)?;
+    }
+    if unattributed > 0 {
+        writeln!(w, "    not a parsed image           {:>6}", unattributed)?;
+    }
+    writeln!(
+        w,
+        "    A signer is an identity claim, not a verified one: no chain or hash is checked."
+    )?;
+    Ok(())
+}
+
+fn truncate(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        return s.to_string();
+    }
+    s.chars().take(max.saturating_sub(1)).collect::<String>() + "~"
 }
 
 /// Everything about DLL search order, in one place.
