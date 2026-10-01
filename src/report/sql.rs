@@ -35,6 +35,9 @@ CREATE INDEX IF NOT EXISTS idx_hits_severity ON hits(severity);
 CREATE INDEX IF NOT EXISTS idx_hits_confidence ON hits(confidence);
 CREATE TABLE IF NOT EXISTS excluded (function TEXT, suppressed INTEGER);
 CREATE TABLE IF NOT EXISTS excluded_by_rule (rule TEXT, occurrences INTEGER);
+CREATE TABLE IF NOT EXISTS indicators (kind TEXT, value TEXT);
+CREATE TABLE IF NOT EXISTS indicators_dropped (kind TEXT, not_collected INTEGER, cap INTEGER);
+CREATE INDEX IF NOT EXISTS idx_indicators_kind ON indicators(kind);
 ";
 
 pub fn write(
@@ -94,6 +97,47 @@ pub fn write(
                 sql_literal(name),
                 n
             )?;
+        }
+        // Indicators were in JSON and in the human reports and in neither SQL format, so the one
+        // audience that queries this output could not reach them. That matters most for
+        // `build_path`: an undeclared statically linked dependency is found by asking for every
+        // developer path, which is a query, not a thing to spot while scrolling a report.
+        let i = &r.iocs;
+        for (kind, values) in [
+            ("url", &i.urls),
+            ("ip", &i.ips),
+            ("email", &i.emails),
+            ("registry_key", &i.registry_keys),
+            ("file_path", &i.file_paths),
+            ("build_path", &i.build_paths),
+        ] {
+            for v in values {
+                writeln!(
+                    w,
+                    "INSERT INTO indicators VALUES ({},{});",
+                    sql_literal(kind),
+                    sql_literal(v)
+                )?;
+            }
+        }
+        // What was not collected, so a count from this table is never mistaken for a total.
+        let d = &i.dropped;
+        for (kind, n) in [
+            ("url", d.urls),
+            ("ip", d.ips),
+            ("email", d.emails),
+            ("registry_key", d.registry_keys),
+            ("file_path", d.file_paths),
+        ] {
+            if n > 0 {
+                writeln!(
+                    w,
+                    "INSERT INTO indicators_dropped VALUES ({},{},{});",
+                    sql_literal(kind),
+                    n,
+                    i.cap
+                )?;
+            }
         }
     }
 
@@ -168,6 +212,11 @@ mod tests {
         let out = render(&sample_report(), &opts());
         assert!(out.starts_with("BEGIN TRANSACTION;"));
         assert!(out.contains("CREATE TABLE IF NOT EXISTS hits"));
+        // Indicators reached JSON and the human reports and neither SQL format, so the audience
+        // that queries this output could not ask for them. An undeclared statically linked
+        // dependency is found by asking for every developer path, which is a query.
+        assert!(out.contains("CREATE TABLE IF NOT EXISTS indicators"));
+        assert!(out.contains("CREATE TABLE IF NOT EXISTS indicators_dropped"));
         assert!(out.trim_end().ends_with("COMMIT;"));
     }
 
@@ -195,5 +244,20 @@ mod tests {
         r.project = None;
         let out = render(&r, &opts());
         assert!(out.contains(",NULL,"));
+    }
+    #[test]
+    fn indicators_are_emitted_by_kind_with_their_drop_counts() {
+        let r = crate::report::tests_support::rich_report();
+        let mut buf: Vec<u8> = Vec::new();
+        super::write(&mut buf, &r, None, &crate::report::tests_support::opts()).expect("sql");
+        let out = String::from_utf8(buf).expect("utf8");
+        assert!(
+            out.contains("INSERT INTO indicators VALUES ('build_path'"),
+            "build paths must be queryable by kind"
+        );
+        assert!(
+            out.contains("INSERT INTO indicators_dropped VALUES ('file_path'"),
+            "and what was not collected must be recorded, or a count reads as a total"
+        );
     }
 }

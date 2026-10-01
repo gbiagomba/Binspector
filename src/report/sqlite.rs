@@ -67,6 +67,36 @@ pub fn write(
                 params![name, *n as i64],
             )?;
         }
+        // Mirrors `sql::write`, so the dump and the database answer the same queries. The schema
+        // is shared, so a table added there and not populated here would be silently empty.
+        let i = &r.iocs;
+        for (kind, values) in [
+            ("url", &i.urls),
+            ("ip", &i.ips),
+            ("email", &i.emails),
+            ("registry_key", &i.registry_keys),
+            ("file_path", &i.file_paths),
+            ("build_path", &i.build_paths),
+        ] {
+            for v in values {
+                tx.execute("INSERT INTO indicators VALUES (?,?)", params![kind, v])?;
+            }
+        }
+        let d = &i.dropped;
+        for (kind, n) in [
+            ("url", d.urls),
+            ("ip", d.ips),
+            ("email", d.emails),
+            ("registry_key", d.registry_keys),
+            ("file_path", d.file_paths),
+        ] {
+            if n > 0 {
+                tx.execute(
+                    "INSERT INTO indicators_dropped VALUES (?,?,?)",
+                    params![kind, n as i64, i.cap as i64],
+                )?;
+            }
+        }
         for h in &r.hits {
             tx.execute(
                 "INSERT INTO hits VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
