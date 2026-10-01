@@ -5,24 +5,40 @@
 </p>
 
 > **VERSION:** 5.3.0
-> **DESCRIPTION:** A fast, cross-platform Rust CLI that reviews binaries for banned C/C++ functions, exploit-mitigation gaps, and signature integrity, descending into nested containers in memory.
+> **DESCRIPTION:** Binspector reviews compiled artifacts you did not build. Vendor deliverables, dependency bundles, firmware payloads, container images and release archives all arrive as opaque blobs, and the usual answer is `strings` piped into `grep`: blind to anything compressed, unable to tell a real call from a word in a help message, and silent on whether the thing was hardened or signed at all. Binspector unpacks nested containers in memory, matches banned C/C++ functions with boundary verification, grades every finding by the evidence behind it, reads exploit mitigations and verifies signature integrity across PE, ELF and Mach-O, and reports what it could not reach. It never executes the sample and never transmits its contents.
 > **AUTHOR:** Gilles Biagomba
 > **LICENSE:** [GPLv3 or later](LICENSE)
 
 ---
 
+## Why this matters
+
+- **The problem is evidence, not detection.** Finding the string `strcpy` in a binary is trivial and nearly worthless. The question is whether it is a resolved call, a C++ method that merely shares the name, or a word inside a documentation blob. Binspector grades every occurrence by what backs it, so an import-table entry and an incidental substring are never rated alike, and the rule that demoted a finding is printed next to it.
+- **A clean result has to be falsifiable.** Most scanners report what they found and stop. This one reports what it could not reach: members it failed to open, images with no readable import table, occurrences it suppressed and under which rule, indicators it stopped collecting. A clean result from a tool that silently skipped half the bundle is worse than no result at all, because somebody will act on it.
+- **Containers are the blind spot.** A `.msixbundle`, `.jar`, `.nupkg` or `.zst` is compressed, so a byte scan of the outer file finds nothing and reports success. Binspector descends through nested containers in memory, bounded by caps on depth, expansion ratio and member count, and never writes a member to disk.
+- **Hardening is more actionable than any string match.** A missing ASLR, DEP, RELRO, PIE or stack-canary flag is confirmable from headers alone, needs no source access, and is fixed by a build flag. Those are findings here, with the field they were read from and the remediation, not prose at the bottom of a report.
+- **What it is NOT.** Static only. It does not execute the sample, disassemble it, or prove reachability, so a finding is a place to look rather than a demonstrated exploit. It is not a malware verdict, and it is not a trust decision: it verifies that a signature matches the bytes and that a chain is internally sound, then prints the anchor fingerprint for you to compare against a published thumbprint, because no code-signing root store exists to anchor against in pure Rust.
+- **Honesty note.** Where an upstream parser was unsafe on crafted input, the walk was reimplemented locally and proved equivalent by differential against the original over hundreds of real images, rather than asserted. Numbers in this README come from measured runs. Capabilities that are scoped out say so and say why.
+
+**Peer map:** Binspector = compiled-artifact review · source SAST = a peer tool · runtime and DAST = a peer tool.
+
+---
+
 ## 🧬 Background / Lore
 
-Binspector began as a Bash script that orchestrated other people's tools: peframe, binwalk,
-the VirusTotal CLI, cve-bin-tool, valgrind, zzuf. It worked, but it was only as good as the
-weakest assumption in the chain, and two of its habits were actively unsafe: `vt scan`
-uploaded the sample to a third party, and `valgrind ./$bin` executed it.
+The name is the job: it inspects binaries. The logo is an armored aperture, because that is the
+posture the tool takes toward its input. A binary you did not build is not a document to read, it
+is a sealed thing you open carefully, from the outside, without letting it run.
 
-The Rust port does the work in-process and never runs the sample. The name is the job: it
-inspects binaries, and it is built on the premise that a scanner must be honest about what it
-did not do. Coverage gaps, suppressed findings, unread import tables and unchecked signatures
-are all reported, because a clean result from a scanner that silently skipped half the bundle
-is worse than no result at all.
+It began as a Bash script that orchestrated other people's tools: peframe, binwalk, the VirusTotal
+CLI, cve-bin-tool, valgrind, zzuf. That worked, but it was only as strong as the weakest assumption
+in the chain, and two of its habits were disqualifying for the job: `vt scan` uploaded the sample
+to a third party, and `valgrind ./$bin` executed it. You cannot examine something you do not trust
+by running it, and you cannot keep an unreleased artifact confidential by uploading it.
+
+The Rust port does the work in-process. The guiding principle is that a scanner must be honest
+about what it did not do, which is why coverage gaps, suppressed findings, unread import tables and
+unverified signatures are all first-class output rather than silence.
 
 The legacy shell version is still in the tree under [legacy/](legacy/), kept for reference.
 
@@ -30,6 +46,7 @@ The legacy shell version is still in the tree under [legacy/](legacy/), kept for
 
 ## 📚 Table of Contents
 
+- [Why This Matters](#why-this-matters)
 - [Background / Lore](#-background--lore)
 - [Features](#-features)
 - [Installation](#-installation)
@@ -162,17 +179,19 @@ Resource caps (`--max-depth`, `--max-unpacked-bytes`, `--max-expansion-ratio`, `
 ### Quick Start
 
 ```bash
-# Scan a binary or bundle. Prints a summary
+# Scan anything: a PE, an ELF, a Mach-O, or an archive full of them
 binspector ./app.exe
+binspector /usr/bin/curl
+binspector ./release-bundle.zip
 
-# Several targets, or a whole directory, in one report
-binspector ./app.msixbundle ./app.appxsym ./Dependencies/
+# Several targets, or a whole vendor drop, in one report
+binspector ./app.msixbundle ./libs/ ./firmware.bin
 
 # One report per target instead
-binspector --split ./Dependencies/
+binspector --split ./vendor-deliverables/
 
 # Write a report, labeled with a project name
-binspector -p "PROJ-123" -o report.txt ./SampleApp_1.0.0_x64.msixbundle
+binspector -p "PROJ-123" -o report.txt ./release-1.0.0.tar.gz
 
 # Write every format into a directory, with a timestamped name
 binspector --format all -o out/ ./app.exe
