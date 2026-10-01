@@ -134,7 +134,7 @@ pub struct Cli {
     #[arg(long, default_value_t = 120, value_name = "N")]
     pub context: usize,
 
-    /// Also report low-confidence matches (namespace segments and documentation prose)
+    /// Also report occurrences the evidence rules excluded, each tagged with its rule
     #[arg(
         long = "include-excluded",
         alias = "include-low-confidence",
