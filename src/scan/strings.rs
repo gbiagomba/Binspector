@@ -115,6 +115,29 @@ fn is_printable_ascii(b: u8) -> bool {
     b == b'\t' || (0x20..=0x7E).contains(&b)
 }
 
+/// Clip `text` to a readable window around `[start, end)`, returning the window and
+/// the match range translated into it. Clipping respects char boundaries.
+pub fn window(text: &str, start: usize, end: usize, max: usize) -> (String, usize, usize) {
+    if text.len() <= max {
+        return (text.to_string(), start, end);
+    }
+    let hit_len = end - start;
+    let slack = max.saturating_sub(hit_len) / 2;
+    let mut from = start.saturating_sub(slack);
+    let mut to = (end + slack).min(text.len());
+    while from < text.len() && !text.is_char_boundary(from) {
+        from += 1;
+    }
+    while to > from && !text.is_char_boundary(to) {
+        to -= 1;
+    }
+    if from > start || to < end {
+        // The hit itself must always stay inside the window.
+        return (text[start..end].to_string(), 0, hit_len);
+    }
+    (text[from..to].to_string(), start - from, end - from)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
