@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Binspector report</title>
+<style>
+:root {
+  --bg: #ffffff; --fg: #1f2328; --muted: #656d76; --border: #d0d7de; --code-bg: #f6f8fa;
+  --critical: #c0392b; --high: #b7791f; --medium: #1f6feb;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0d1117; --fg: #e6edf3; --muted: #9198a1; --border: #30363d; --code-bg: #161b22;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--fg); margin: 0 auto; padding: 24px 16px;
+  max-width: 1100px;
+  font: 15px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+}
+h1 { font-size: 1.6rem; }
+h2 { font-size: 1.2rem; margin-top: 2rem; border-bottom: 1px solid var(--border); padding-bottom: .3rem; }
+code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .88em; }
+code { background: var(--code-bg); padding: .1em .35em; border-radius: 4px; }
+pre { background: var(--code-bg); padding: .7rem; border-radius: 6px; overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; margin: .6rem 0 1rem; }
+th, td { border: 1px solid var(--border); padding: .4rem .55rem; text-align: left; vertical-align: top; }
+th { background: var(--code-bg); }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+table.meta { max-width: 720px; }
+table.meta th { width: 9rem; }
+.marker { font-weight: 700; letter-spacing: -1px; }
+.sev { font-weight: 700; }
+.critical { color: var(--critical); }
+.high { color: var(--high); }
+.medium { color: var(--medium); }
+mark { background: transparent; font-weight: 700; text-decoration: underline; text-underline-offset: 2px; }
+mark.critical { color: var(--critical); }
+mark.high { color: var(--high); }
+mark.medium { color: var(--medium); }
+.warn { color: var(--high); }
+.hit { margin: .5rem 0; padding: .5rem .7rem; border-left: 3px solid var(--border); }
+pre.dump { max-height: 70vh; overflow: auto; }
+@media (max-width: 600px) { body { padding: 16px; } table { font-size: .85em; } }
+</style>
+</head><body>
+<h1>Binspector report</h1>
+<table class="meta">
+<tr><th>Binary</th><td>bundle.msixbundle</td></tr>
+<tr><th>Project</th><td>PROJ-4711</td></tr>
+<tr><th>Scanned</th><td>2026-10-01T12:00:00Z</td></tr>
+<tr><th>Size</th><td>6.0 MiB (6,291,456 bytes)</td></tr>
+<tr><th>MD5</th><td><code>11111111111111111111111111111111</code></td></tr>
+<tr><th>SHA1</th><td><code>1111111111111111111111111111111111111111</code></td></tr>
+<tr><th>SHA256</th><td><code>1111111111111111111111111111111111111111111111111111111111111111</code></td></tr>
+<tr><th>Matching</th><td>case insensitive</td></tr>
+</table>
+<h2>Findings</h2>
+<p>9 distinct functions, 9 occurrences. <span class="sev critical">critical 2</span>, <span class="sev high">high 2</span>, <span class="sev medium">medium 2</span>, <span class="sev low">low 3</span>.</p>
+<table><thead><tr><th></th><th>Function</th><th>Severity</th><th>Category</th><th class="num">Occurrences</th><th class="num">Members</th></tr></thead><tbody>
+<tr><td class="marker">-</td><td><code class="low">getenv</code></td><td><span class="sev low">low</span></td><td>other</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="marker">!</td><td><code class="medium">atoi</code></td><td><span class="sev medium">medium</span></td><td>conversion</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="marker">-</td><td><code class="low">memcpy</code></td><td><span class="sev low">low</span></td><td>memory-management</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="marker">!!</td><td><code class="high">sprintf</code></td><td><span class="sev high">high</span></td><td>format-string</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="marker">-</td><td><code class="low">memset</code></td><td><span class="sev low">low</span></td><td>memory-management</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="marker">!</td><td><code class="medium">ShellExecuteW</code></td><td><span class="sev medium">medium</span></td><td>process-creation</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="marker">!!</td><td><code class="high">LoadLibraryExW</code></td><td><span class="sev high">high</span></td><td>dll-hijacking</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="marker">!!!</td><td><code class="critical">strcpy</code></td><td><span class="sev critical">critical</span></td><td>buffer-overflow</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="marker">!!!</td><td><code class="critical">gets</code></td><td><span class="sev critical">critical</span></td><td>buffer-overflow</td><td class="num">1</td><td class="num">1</td></tr>
+</tbody></table>
+<h3>Suppressed as low confidence</h3>
+<p>144 occurrences were whole-token matches inside namespace text or documentation prose, such as <code>System.Windows.Forms</code>, rather than function references. Re-run with <code>--include-low-confidence</code> to report them.</p>
+<table><thead><tr><th>Function</th><th class="num">Suppressed</th></tr></thead><tbody>
+<tr><td><code>system</code></td><td class="num">96</td></tr>
+<tr><td><code>getenv</code></td><td class="num">30</td></tr>
+</tbody></table>
+<h2>Coverage</h2>
+<p>Container format <code>zip</code>, 6 members, 2.2 MiB unpacked, 11,200 strings.</p>
+<table><thead><tr><th>Member</th><th>Format</th><th class="num">Size</th><th class="num">Strings</th></tr></thead><tbody>
+<tr><td><code>Microsoft.VCLibs.ARM.14.00.Desktop.appx :: App.exe</code></td><td>pe</td><td class="num">1.0 MiB</td><td class="num">4,000</td></tr>
+<tr><td><code>Microsoft.VCLibs.ARM.14.00.Desktop.appx :: plugins :: Packed.dll</code></td><td>pe</td><td class="num">512.0 KiB</td><td class="num">2,500</td></tr>
+<tr><td><code>Microsoft.VCLibs.ARM.14.00.Desktop.appx :: Weak.exe</code></td><td>pe</td><td class="num">256.0 KiB</td><td class="num">1,800</td></tr>
+<tr><td><code>Payload.msix :: usr :: lib :: libthing.so</code></td><td>elf</td><td class="num">192.0 KiB</td><td class="num">1,200</td></tr>
+<tr><td><code>Microsoft.VCLibs.ARM64.14.00.Desktop.appx :: Bridge.dll</code></td><td>pe</td><td class="num">128.0 KiB</td><td class="num">900</td></tr>
+<tr><td><code>Payload.msix :: Contents :: MacOS :: Helper</code></td><td>macho</td><td class="num">96.0 KiB</td><td class="num">800</td></tr>
+</tbody></table>
+<h2>Warnings</h2><ul class="warn">
+<li>Microsoft.VCLibs.ARM.14.00.Desktop.appx: truncated central directory, 2 member(s) skipped</li>
+<li>Payload.msix :: Contents :: MacOS :: Helper: no readable import table</li>
+</ul>
+<h2>Occurrences</h2>
+<div class="hit"><span class="marker">-</span> <code class="low">getenv</code> in <code>Payload.msix :: usr :: lib :: libthing.so</code> at offset <code>0x1236d</code> (ascii)<pre>sub_401000: &lt;script&gt;alert(1)&lt;/script&gt;|x call <mark class="low">getenv</mark></pre></div>
+<div class="hit"><span class="marker">!</span> <code class="medium">atoi</code> in <code>Microsoft.VCLibs.ARM.14.00.Desktop.appx :: App.exe</code> at offset <code>0x1102d</code> (utf16le)<pre>sub_401000: &lt;script&gt;alert(1)&lt;/script&gt;|x call <mark class="medium">atoi</mark></pre></div>
+<div class="hit"><span class="marker">!!</span> <code class="high">sprintf</code> in <code>Microsoft.VCLibs.ARM.14.00.Desktop.appx :: Weak.exe</code> at offset <code>0x3102d</code> (ascii)<pre>sub_401000: &lt;script&gt;alert(1)&lt;/script&gt;|x call <mark class="high">sprintf</mark></pre></div>
+<div class="hit"><span class="marker">!</span> <code class="medium">ShellExecuteW</code> in <code>bundle.msixbundle :: assets :: readme.txt</code> at offset <code>0x6d</code> (ascii)<pre>sub_401000: &lt;script&gt;alert(1)&lt;/script&gt;|x call <mark class="medium">ShellExecuteW</mark></pre></div>
+<div class="hit"><span class="marker">!!</span> <code class="high">LoadLibraryExW</code> in <code>Microsoft.VCLibs.ARM64.14.00.Desktop.appx :: Bridge.dll</code> at offset <code>0x4102d</code> (ascii)<pre>sub_401000: &lt;script&gt;alert(1)&lt;/script&gt;|x call <mark class="high">LoadLibraryExW</mark></pre></div>
+<div class="hit"><span class="marker">!!!</span> <code class="critical">strcpy</code> in <code>Microsoft.VCLibs.ARM.14.00.Desktop.appx :: plugins :: Packed.dll</code> at offset <code>0x2302d</code> (ascii)<pre>sub_401000: &lt;script&gt;alert(1)&lt;/script&gt;|x call <mark class="critical">strcpy</mark></pre></div>
+<div class="hit"><span class="marker">!!!</span> <code class="critical">gets</code> in <code>Microsoft.VCLibs.ARM64.14.00.Desktop.appx :: Bridge.dll</code> at offset <code>0x4202d</code> (ascii)<pre>sub_401000: &lt;script&gt;alert(1)&lt;/script&gt;|x call <mark class="critical">gets</mark></pre></div>
+</body></html>

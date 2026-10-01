@@ -176,13 +176,21 @@ fn write_low_confidence(w: &mut dyn Write, r: &Report) -> Result<()> {
     // Per rule, so the total can be checked rather than believed. Each rule's premise is one
     // line, because a number with no reason attached is not auditable.
     for (rule, n) in &r.excluded_by_rule {
-        writeln!(
-            w,
-            "    {:<30} {:>9}   {}",
-            rule,
-            thousands(*n as u64),
-            rule_reason(rule)
-        )?;
+        let reason = rule_reason(rule);
+        // A rule with no prose yet prints its identifier and count alone. Appending the separator
+        // regardless left three trailing spaces on the line, which a diff of two reports shows as
+        // a change and a terminal shows as nothing.
+        if reason.is_empty() {
+            writeln!(w, "    {:<30} {:>9}", rule, thousands(*n as u64))?;
+        } else {
+            writeln!(
+                w,
+                "    {:<30} {:>9}   {}",
+                rule,
+                thousands(*n as u64),
+                reason
+            )?;
+        }
     }
     if !r.excluded_top.is_empty() {
         writeln!(w, "  Largest contributors by function:")?;

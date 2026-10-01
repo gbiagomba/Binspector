@@ -11,6 +11,13 @@ pub mod sql;
 pub mod targets_section;
 pub mod text;
 
+// The refactor safety net: a fixture in which every section renders, and goldens pinning what each
+// format produces from it. See `golden.rs` for why these exist.
+#[cfg(test)]
+mod fixtures;
+#[cfg(test)]
+mod golden;
+
 #[cfg(feature = "sqlite")]
 pub mod sqlite;
 
@@ -139,16 +146,133 @@ pub fn html_escape(s: &str) -> String {
             '>' => out.push_str("&gt;"),
             '"' => out.push_str("&quot;"),
             '\'' => out.push_str("&#39;"),
-            c if c.is_control() && c != '\n' && c != '\t' => out.push('\u{FFFD}'),
+            // `is_control` is category Cc only, so the bidi overrides in Cf have to be named.
+            c if (c.is_control() && c != '\n' && c != '\t') || is_bidi_control(c) => {
+                out.push('\u{FFFD}')
+            }
             c => out.push(c),
         }
     }
     out
 }
 
-/// Escape pipe characters so a value cannot break a Markdown table row.
+/// Make a value inert inside a Markdown cell.
+///
+/// Everything this touches is attacker-controlled: a context string is bytes lifted out of the
+/// scanned file, and a member path, signer Common Name or carved description comes from a binary the
+/// tool was pointed at. The markdown report is read in a browser and pasted into wikis, so a cell has
+/// to be inert rather than merely well-formed.
+///
+/// Four hazards, each with a reason it is not enough to handle the others:
+///
+/// * `|` ends the cell, so an unescaped one silently shifts every column after it.
+/// * A newline ends the row.
+/// * A backtick **breaks out of a code span**. Most untrusted cells are wrapped in backticks by the
+///   writer, which makes their contents literal and is why `<script>` inside one is not live. One
+///   backtick in the value defeats that, so relying on the code span alone is not safe.
+/// * `<` can open raw HTML, which Markdown permits by design. Two cells are not backticked at all
+///   (the project name and the warnings list), so inertness cannot be delegated to the writer.
+///
+/// Escaping the angle brackets means hostile text displays as `&lt;script&gt;` inside a code span
+/// rather than as the original characters. That is accepted deliberately: the text being mangled is
+/// an attack string nobody needs to read exactly, and the alternative is a cell whose safety depends
+/// on which of two call sites rendered it.
 pub fn md_cell(s: &str) -> String {
-    s.replace('|', "\\|").replace('\n', " ")
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '|' => out.push_str("\\|"),
+            '\n' | '\r' => out.push(' '),
+            // Neutralised rather than escaped: there is no escape for a backtick that works both
+            // inside and outside a code span.
+            '`' => out.push('\''),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            c if is_bidi_control(c) => out.push('\u{FFFD}'),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// Bidirectional override and isolate controls.
+///
+/// Not ASCII control characters, so `char::is_control` is false for every one of them: they are
+/// Unicode category `Cf`, where `is_control` only covers `Cc`. They reorder the glyphs that follow
+/// them in a terminal and in a browser, which makes them the one real spoofing vector in a name
+/// rendered to a reviewer. `pe::signer` already strips them from signer Common Names, but carved
+/// descriptions, loader module names, IPC API strings, section names and component names never pass
+/// through that filter, and under format parity they reach HTML and Markdown.
+///
+/// The joiners that Arabic and Indic scripts legitimately need are deliberately left alone.
+fn is_bidi_control(c: char) -> bool {
+    matches!(
+        c,
+        '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' | '\u{200e}' | '\u{200f}'
+    )
+}
+
+#[cfg(test)]
+mod escape_tests {
+    use super::{html_escape, md_cell};
+
+    #[test]
+    fn markup_is_escaped() {
+        assert_eq!(
+            html_escape("<script>alert(1)</script>"),
+            "&lt;script&gt;alert(1)&lt;/script&gt;"
+        );
+        assert_eq!(html_escape(r#"a"b'c&d"#), "a&quot;b&#39;c&amp;d");
+    }
+
+    /// The gap this closes: U+202E is Unicode category Cf, so `char::is_control()` is false and it
+    /// used to pass straight through into the HTML report, reordering every glyph after it.
+    #[test]
+    fn bidi_overrides_are_neutralised_in_both_non_text_formats() {
+        for bad in ['\u{202e}', '\u{202d}', '\u{2066}', '\u{2069}', '\u{200f}'] {
+            assert!(!bad.is_control(), "{:?} is Cf, not Cc", bad);
+            let s = format!("Microsoft{}Corporation", bad);
+            assert!(
+                !html_escape(&s).contains(bad),
+                "{:?} survived html_escape",
+                bad
+            );
+            assert!(!md_cell(&s).contains(bad), "{:?} survived md_cell", bad);
+        }
+    }
+
+    #[test]
+    fn a_pipe_cannot_break_a_markdown_row() {
+        assert_eq!(md_cell("a|b"), "a\\|b");
+        assert_eq!(md_cell("a\nb"), "a b");
+        assert_eq!(md_cell("a\rb"), "a b");
+    }
+
+    /// The subtle one: most untrusted cells are wrapped in backticks by the writer, which makes
+    /// their contents literal. A backtick in the value escapes that span, and then any markup in the
+    /// rest of the cell becomes live.
+    #[test]
+    fn a_backtick_cannot_break_out_of_a_code_span() {
+        let out = md_cell("safe` <script>alert(1)</script>");
+        assert!(!out.contains('`'), "a backtick survived: {:?}", out);
+        assert!(!out.contains('<'), "markup survived: {:?}", out);
+    }
+
+    #[test]
+    fn markup_cannot_open_in_an_unbackticked_cell() {
+        // The project name and the warnings list are not wrapped by the writer.
+        assert_eq!(md_cell("<b>x</b>"), "&lt;b&gt;x&lt;/b&gt;");
+    }
+
+    /// Scripts that need them keep them: stripping a joiner would corrupt legitimate text.
+    #[test]
+    fn legitimate_joiners_survive() {
+        for ok in ['\u{200c}', '\u{200d}'] {
+            let s = format!("a{}b", ok);
+            assert!(html_escape(&s).contains(ok), "{:?} was stripped", ok);
+            assert!(md_cell(&s).contains(ok), "{:?} was stripped", ok);
+        }
+    }
 }
 
 /// Shared fixtures for the per-format tests.
@@ -168,6 +292,8 @@ pub(crate) mod tests_support {
             dump: false,
         }
     }
+
+    pub(crate) use super::fixtures::rich_report;
 
     pub fn sample_report() -> Report {
         Report {

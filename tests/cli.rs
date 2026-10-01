@@ -331,6 +331,67 @@ fn all_files_takes_what_the_filter_skipped() {
 }
 
 #[test]
+fn many_targets_write_one_combined_report_unless_split_is_asked_for() {
+    // The property that must never regress: how many files appear is decided by the format list
+    // and by --split, never by how many targets were scanned. A directory of four hundred images
+    // must not produce four hundred reports to read through.
+    //
+    // This also pins the invariant that per-target parallelism has to preserve: threading changes
+    // the order work happens in, not the number of outputs.
+    let dir = TempDir::new().unwrap();
+    let tree = dir.path().join("tree");
+    std::fs::create_dir_all(&tree).unwrap();
+    for (name, body) in [
+        ("a.exe", &b"\x00strcpy\x00"[..]),
+        ("b.exe", &b"\x00gets\x00"[..]),
+        ("c.exe", &b"\x00system\x00"[..]),
+        ("d.exe", &b"\x00memcpy\x00"[..]),
+    ] {
+        std::fs::write(tree.join(name), fake_pe(body)).unwrap();
+    }
+    let out_dir = dir.path().join("out");
+    std::fs::create_dir_all(&out_dir).unwrap();
+
+    bin()
+        .args(["--format", "txt,json", "-o"])
+        .arg(out_dir.join("combined"))
+        .arg(&tree)
+        .assert()
+        .success();
+
+    let written: Vec<String> = std::fs::read_dir(&out_dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+        .collect();
+    assert_eq!(
+        written.len(),
+        2,
+        "four targets and two formats must give two files, not eight: {:?}",
+        written
+    );
+    assert!(
+        written.contains(&"combined.txt".to_string()),
+        "{:?}",
+        written
+    );
+    assert!(
+        written.contains(&"combined.json".to_string()),
+        "{:?}",
+        written
+    );
+
+    // And the one report genuinely covers every target rather than the last one winning.
+    let body = std::fs::read_to_string(out_dir.join("combined.txt")).unwrap();
+    for name in ["a.exe", "b.exe", "c.exe", "d.exe"] {
+        assert!(
+            body.contains(name),
+            "{} missing from the combined report",
+            name
+        );
+    }
+}
+
+#[test]
 fn split_writes_one_report_per_target_with_the_documented_names() {
     let dir = TempDir::new().unwrap();
     let tree = dir.path().join("tree");
