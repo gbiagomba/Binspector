@@ -48,6 +48,7 @@ pub fn write(
     writeln!(w)?;
 
     write_coverage(w, r)?;
+    write_posture(w, r)?;
     super::pe_section::write_text(w, r)?;
     super::pe_section::write_dll_search_text(w, r)?;
     super::pe_section::write_carve_text(w, r)?;
@@ -162,26 +163,93 @@ fn write_summary(w: &mut dyn Write, r: &Report, opts: &RenderOpts) -> Result<()>
 /// Disclose what confidence filtering removed, so suppression is auditable rather
 /// than invisible.
 fn write_low_confidence(w: &mut dyn Write, r: &Report) -> Result<()> {
-    if r.low_confidence_total == 0 || r.include_low_confidence {
+    if r.excluded_total == 0 || r.include_excluded {
         return Ok(());
     }
     writeln!(
         w,
-        "Suppressed as low confidence: {} occurrences",
-        thousands(r.low_confidence_total as u64)
+        "Excluded by evidence: {} occurrences",
+        thousands(r.excluded_total as u64)
     )?;
-    writeln!(
-        w,
-        "  These are whole-token matches inside namespace text or documentation prose,"
-    )?;
-    writeln!(
-        w,
-        "  such as System.Windows.Forms or \"Gets or sets\", not function references."
-    )?;
-    for (name, n) in &r.low_confidence_top {
-        writeln!(w, "    {:<28} {:>9}", name, thousands(*n as u64))?;
+    // Per rule, so the total can be checked rather than believed. Each rule's premise is one
+    // line, because a number with no reason attached is not auditable.
+    for (rule, n) in &r.excluded_by_rule {
+        writeln!(
+            w,
+            "    {:<30} {:>9}   {}",
+            rule,
+            thousands(*n as u64),
+            rule_reason(rule)
+        )?;
     }
-    writeln!(w, "  Re-run with --include-low-confidence to report them.")?;
+    if !r.excluded_top.is_empty() {
+        writeln!(w, "  Largest contributors by function:")?;
+        for (name, n) in &r.excluded_top {
+            writeln!(w, "    {:<30} {:>9}", name, thousands(*n as u64))?;
+        }
+    }
+    writeln!(
+        w,
+        "  Re-run with --include-excluded to report them, each tagged with its rule."
+    )?;
+    writeln!(w)?;
+    Ok(())
+}
+
+/// One line explaining why a rule removes an occurrence.
+///
+/// Stated in the report rather than only in the documentation: a reviewer reading a suppression
+/// total should not have to go and look up what the rule meant.
+fn rule_reason(rule: &str) -> &'static str {
+    match rule {
+        "prose" => "namespace text or documentation, not a function reference",
+        "symbol-definition" => "a C++ method of that name, not a call to the CRT function",
+        "ambiguous-name-no-import" => "an ordinary English word with no import backing it",
+        "managed-no-native-call" => "a managed assembly has no native call site",
+        // A rule with no prose yet prints its identifier alone, which is still auditable.
+        _ => "",
+    }
+}
+
+/// Missing exploit mitigations, which are findings rather than prose since 5.0.0.
+///
+/// Placed before the banned-function occurrences deliberately: a mitigation is confirmable
+/// from metadata alone, needs no call-site analysis, and is fixable by changing a build flag,
+/// which makes it the most actionable thing in the report.
+fn write_posture(w: &mut dyn Write, r: &Report) -> Result<()> {
+    if r.posture.is_empty() {
+        return Ok(());
+    }
+    writeln!(w, "Exploit mitigations: {} finding(s)", r.posture.len())?;
+    for p in &r.posture {
+        writeln!(
+            w,
+            "  {} {} [{}] {} image(s)",
+            Theme::marker(p.severity),
+            p.severity.as_str(),
+            p.id,
+            p.affected
+        )?;
+        writeln!(w, "      {}", p.title)?;
+        writeln!(w, "      evidence: {}", p.evidence)?;
+        writeln!(w, "      fix: {}", p.remediation)?;
+        let shown: Vec<&str> = p
+            .members
+            .iter()
+            .map(|m| super::pe_section::short_name(m))
+            .take(8)
+            .collect();
+        writeln!(
+            w,
+            "      images: {}{}",
+            shown.join(", "),
+            if p.affected > shown.len() {
+                format!(", and {} more", p.affected - shown.len())
+            } else {
+                String::new()
+            }
+        )?;
+    }
     writeln!(w)?;
     Ok(())
 }
@@ -342,12 +410,12 @@ mod tests {
                 category: Category::BufferOverflow,
                 occurrences: 5,
                 members: 2,
-                low_confidence: 0,
+                excluded: 0,
             }],
             hits: vec![],
-            low_confidence_total: 0,
-            low_confidence_top: vec![],
-            include_low_confidence: false,
+            excluded_total: 0,
+            excluded_top: vec![],
+            include_excluded: false,
             posture: Vec::new(),
             excluded_by_rule: Vec::new(),
             coverage: Coverage {

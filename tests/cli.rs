@@ -89,16 +89,18 @@ fn suppresses_namespace_and_prose_noise_by_default() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     // System.Windows.Forms and "Gets or sets" must not become findings.
     assert!(
-        stdout.contains("Suppressed as low confidence"),
+        stdout.contains("Excluded by evidence"),
         "stdout was:\n{}",
         stdout
     );
+    // The exclusion is attributed to a named rule, not just counted.
+    assert!(stdout.contains("prose"), "stdout was:\n{}", stdout);
     // The real import-shaped symbols still appear.
     assert!(stdout.contains("strcpy"));
 }
 
 #[test]
-fn include_low_confidence_reports_the_suppressed_hits() {
+fn include_excluded_reports_the_suppressed_hits() {
     let f = fixture();
     let out = bin_stdout()
         .arg(&f.target)
@@ -230,7 +232,7 @@ fn json_output_is_machine_readable() {
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(v["tool"], "binspector");
     assert!(v["coverage"]["members_scanned"].as_u64().unwrap() >= 1);
-    assert!(v["low_confidence_total"].as_u64().unwrap() > 0);
+    assert!(v["excluded_total"].as_u64().unwrap() > 0);
     // Coverage must show a real executable was reached.
     let formats: Vec<String> = v["coverage"]["entries"]
         .as_array()

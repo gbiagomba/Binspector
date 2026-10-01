@@ -17,10 +17,10 @@ CREATE TABLE IF NOT EXISTS scan (
   min_len INTEGER, case_sensitive INTEGER, banned_list_size INTEGER,
   strings_total INTEGER, banned_hit_count INTEGER, root_format TEXT,
   members_scanned INTEGER, total_unpacked_bytes INTEGER, reached_executable INTEGER,
-  low_confidence_total INTEGER, include_low_confidence INTEGER);
+  excluded_total INTEGER, include_excluded INTEGER);
 CREATE TABLE IF NOT EXISTS summary (
   function TEXT, severity TEXT, category TEXT, occurrences INTEGER, members INTEGER,
-  low_confidence INTEGER);
+  excluded INTEGER);
 CREATE TABLE IF NOT EXISTS hits (
   function TEXT, severity TEXT, category TEXT, member TEXT, offset INTEGER,
   token_len INTEGER, string_offset INTEGER, encoding TEXT, confidence TEXT,
@@ -33,7 +33,8 @@ CREATE TABLE IF NOT EXISTS strings (
 CREATE INDEX IF NOT EXISTS idx_hits_function ON hits(function);
 CREATE INDEX IF NOT EXISTS idx_hits_severity ON hits(severity);
 CREATE INDEX IF NOT EXISTS idx_hits_confidence ON hits(confidence);
-CREATE TABLE IF NOT EXISTS low_confidence (function TEXT, suppressed INTEGER);
+CREATE TABLE IF NOT EXISTS excluded (function TEXT, suppressed INTEGER);
+CREATE TABLE IF NOT EXISTS excluded_by_rule (rule TEXT, occurrences INTEGER);
 ";
 
 pub fn write(
@@ -70,8 +71,8 @@ pub fn write(
             r.coverage.members_scanned,
             r.coverage.total_unpacked_bytes,
             r.reached_executable() as u8,
-            r.low_confidence_total,
-            r.include_low_confidence as u8
+            r.excluded_total,
+            r.include_excluded as u8
         )?;
         for e in &r.coverage.entries {
             writeln!(
@@ -86,10 +87,10 @@ pub fn write(
         for warn in &r.warnings {
             writeln!(w, "INSERT INTO warnings VALUES ({});", sql_literal(warn))?;
         }
-        for (name, n) in &r.low_confidence_top {
+        for (name, n) in &r.excluded_top {
             writeln!(
                 w,
-                "INSERT INTO low_confidence VALUES ({},{});",
+                "INSERT INTO excluded VALUES ({},{});",
                 sql_literal(name),
                 n
             )?;
@@ -105,7 +106,7 @@ pub fn write(
             sql_literal(s.category.as_str()),
             s.occurrences,
             s.members,
-            s.low_confidence
+            s.excluded
         )?;
     }
 

@@ -135,8 +135,12 @@ pub struct Cli {
     pub context: usize,
 
     /// Also report low-confidence matches (namespace segments and documentation prose)
-    #[arg(long = "include-low-confidence")]
-    pub include_low_confidence: bool,
+    #[arg(
+        long = "include-excluded",
+        alias = "include-low-confidence",
+        visible_alias = "include-low-confidence"
+    )]
+    pub include_excluded: bool,
 
     /// Scan members for embedded file signatures (needs --features carve)
     #[arg(long)]
@@ -166,7 +170,8 @@ pub struct Cli {
     #[arg(long = "cve-limit", default_value_t = 10, value_name = "N")]
     pub cve_limit: usize,
 
-    /// Exit 1 when a match at or above this severity is found
+    /// Exit 1 when a finding at or above this severity is found, including a missing
+    /// exploit mitigation
     #[arg(long, value_name = "SEVERITY")]
     pub fail_on: Option<FailOn>,
 }
@@ -351,7 +356,7 @@ impl Cli {
             dump: self.dump,
             max_hits: self.max_hits,
             context_window: self.context,
-            include_low_confidence: self.include_low_confidence,
+            include_excluded: self.include_excluded,
             analyze_pe: !self.no_pe,
             ioc_cap: self.ioc_cap,
             detect_components: !self.no_components,
@@ -573,11 +578,11 @@ mod tests {
     }
 
     #[test]
-    fn low_confidence_is_excluded_by_default() {
+    fn excluded_occurrences_are_omitted_by_default() {
         let r = parse(&["file.bin"]).unwrap();
-        assert!(!r.scan.include_low_confidence);
+        assert!(!r.scan.include_excluded);
         let r = parse(&["file.bin", "--include-low-confidence"]).unwrap();
-        assert!(r.scan.include_low_confidence);
+        assert!(r.scan.include_excluded);
     }
 
     #[test]

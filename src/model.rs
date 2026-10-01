@@ -48,7 +48,7 @@ pub struct MatchSummary {
     /// Number of distinct members the function appeared in.
     pub members: usize,
     /// Occurrences excluded as low confidence (namespace or prose text).
-    pub low_confidence: usize,
+    pub excluded: usize,
 }
 
 /// One concrete occurrence, with enough provenance to verify it by hand.
@@ -182,17 +182,17 @@ pub struct Report {
     pub summary: Vec<MatchSummary>,
     pub hits: Vec<HitRecord>,
     /// Total occurrences suppressed as low confidence.
-    pub low_confidence_total: usize,
+    pub excluded_total: usize,
     /// Largest low-confidence contributors, so suppression stays auditable.
-    pub low_confidence_top: Vec<(String, usize)>,
+    pub excluded_top: Vec<(String, usize)>,
     /// Occurrences removed, per evidence rule, so none disappears without a named reason.
     ///
-    /// Sums to `low_confidence_total`. `prose` is the long-standing confidence filter; the
+    /// Sums to `excluded_total`. `prose` is the long-standing confidence filter; the
     /// rest are the 5.0.0 evidence rules.
     #[serde(default)]
     pub excluded_by_rule: Vec<(String, usize)>,
     /// Whether low-confidence hits were included in `summary` and `hits`.
-    pub include_low_confidence: bool,
+    pub include_excluded: bool,
     pub coverage: Coverage,
     /// Missing exploit mitigations. Empty when every parsed image is hardened, or when no
     /// image parsed.

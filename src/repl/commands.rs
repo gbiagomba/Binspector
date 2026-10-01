@@ -352,7 +352,7 @@ pub mod sqlite_support {
         let mut summary = Vec::new();
         {
             let mut stmt = conn.prepare(
-                "SELECT function, severity, category, occurrences, members, low_confidence \
+                "SELECT function, severity, category, occurrences, members, excluded \
                  FROM summary",
             )?;
             let mut rows = stmt.query([])?;
@@ -369,7 +369,7 @@ pub mod sqlite_support {
                     category: parse_category(&cat),
                     occurrences: row.get::<_, i64>(3)? as usize,
                     members: row.get::<_, i64>(4)? as usize,
-                    low_confidence: row.get::<_, i64>(5)? as usize,
+                    excluded: row.get::<_, i64>(5)? as usize,
                 });
             }
         }
@@ -386,7 +386,7 @@ pub mod sqlite_support {
         ) = conn
             .query_row(
                 "SELECT tool_version, binary, timestamp, strings_total, members_scanned, \
-                 total_unpacked_bytes, root_format, low_confidence_total FROM scan LIMIT 1",
+                 total_unpacked_bytes, root_format, excluded_total FROM scan LIMIT 1",
                 [],
                 |r| {
                     Ok((
@@ -435,9 +435,9 @@ pub mod sqlite_support {
             banned_hit_count,
             summary,
             hits: Vec::new(),
-            low_confidence_total: low_total,
-            low_confidence_top: Vec::new(),
-            include_low_confidence: false,
+            excluded_total: low_total,
+            excluded_top: Vec::new(),
+            include_excluded: false,
             coverage: crate::model::Coverage {
                 root_format,
                 members_scanned: members,

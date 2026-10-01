@@ -59,10 +59,10 @@ pub fn summary(r: &Report) -> String {
         thousands(med as u64),
         thousands(low as u64)
     );
-    if r.low_confidence_total > 0 && !r.include_low_confidence {
+    if r.excluded_total > 0 && !r.include_excluded {
         s.push_str(&format!(
             "  {} suppressed as low confidence (namespace or documentation text)\n",
-            thousands(r.low_confidence_total as u64)
+            thousands(r.excluded_total as u64)
         ));
     }
     s.push('\n');

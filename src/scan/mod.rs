@@ -43,7 +43,7 @@ pub struct ScanConfig {
     /// Characters of surrounding text kept with each hit.
     pub context_window: usize,
     /// Report low-confidence hits (namespace segments, documentation prose) too.
-    pub include_low_confidence: bool,
+    pub include_excluded: bool,
     /// Parse PE members for headers, sections, imports, and mitigations.
     pub analyze_pe: bool,
     /// Maximum indicators of each kind to collect.
@@ -66,7 +66,7 @@ impl Default for ScanConfig {
             dump: false,
             max_hits: 100_000,
             context_window: 120,
-            include_low_confidence: false,
+            include_excluded: false,
             analyze_pe: true,
             ioc_cap: 500,
             detect_components: true,
@@ -85,7 +85,7 @@ pub struct ScanOutput {
 struct Agg {
     occurrences: usize,
     members: HashSet<String>,
-    low_confidence: usize,
+    excluded: usize,
     /// Worst adjusted severity seen for this function. `None` until a hit is kept.
     ///
     /// Needed because evidence can give two occurrences of one name different severities, so
@@ -118,7 +118,7 @@ pub fn run(path: &Path, cfg: &ScanConfig, observer: &dyn Observer) -> Result<Sca
     let mut strings_total = 0usize;
     let mut coverage_entries: Vec<CoverageEntry> = Vec::new();
     let mut hit_cap_reached = false;
-    let mut low_confidence_total = 0usize;
+    let mut excluded_total = 0usize;
     // Per-rule exclusion tally, so no occurrence can disappear without a named reason.
     let mut excluded_by_rule: BTreeMap<String, usize> = BTreeMap::new();
     let mut iocs = ioc::Extractor::new(cfg.ioc_cap);
@@ -304,9 +304,9 @@ pub fn run(path: &Path, cfg: &ScanConfig, observer: &dyn Observer) -> Result<Sca
                             ruling.exclusion_rule()
                         };
                         if let Some(rule) = excluded_by {
-                            if !cfg.include_low_confidence {
-                                entry.low_confidence += 1;
-                                low_confidence_total += 1;
+                            if !cfg.include_excluded {
+                                entry.excluded += 1;
+                                excluded_total += 1;
                                 *excluded_by_rule.entry(rule.to_string()).or_insert(0) += 1;
                                 observer.on(&Event::Suppressed {
                                     function: &be.name,
@@ -444,7 +444,7 @@ pub fn run(path: &Path, cfg: &ScanConfig, observer: &dyn Observer) -> Result<Sca
                 category: be.category,
                 occurrences: a.occurrences,
                 members: a.members.len(),
-                low_confidence: a.low_confidence,
+                excluded: a.excluded,
             })
         })
         .collect();
@@ -477,18 +477,18 @@ pub fn run(path: &Path, cfg: &ScanConfig, observer: &dyn Observer) -> Result<Sca
     // Largest suppressed contributors, so a reviewer can audit what was filtered.
     let mut low_top: Vec<(String, usize)> = agg
         .iter()
-        .filter(|(_, a)| a.low_confidence > 0)
-        .filter_map(|(id, a)| list.get(*id).map(|be| (be.name.clone(), a.low_confidence)))
+        .filter(|(_, a)| a.excluded > 0)
+        .filter_map(|(id, a)| list.get(*id).map(|be| (be.name.clone(), a.excluded)))
         .collect();
     low_top.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
     low_top.truncate(15);
 
-    if low_confidence_total > 0 {
+    if excluded_total > 0 {
         warnings.push(format!(
             "{} occurrences were suppressed as low confidence (namespace segments or \
              documentation prose rather than function references). Pass \
              --include-low-confidence to report them.",
-            low_confidence_total
+            excluded_total
         ));
     }
 
@@ -514,10 +514,10 @@ pub fn run(path: &Path, cfg: &ScanConfig, observer: &dyn Observer) -> Result<Sca
         banned_hit_count,
         summary,
         hits,
-        low_confidence_total,
-        low_confidence_top: low_top,
+        excluded_total,
+        excluded_top: low_top,
         excluded_by_rule: excluded_by_rule.into_iter().collect(),
-        include_low_confidence: cfg.include_low_confidence,
+        include_excluded: cfg.include_excluded,
         iocs: iocs.finish(),
         intel: intel::Intel {
             reputation: None,
@@ -730,7 +730,7 @@ mod tests {
             "summary: {:?}",
             out.report.summary
         );
-        assert!(out.report.low_confidence_total >= 2);
+        assert!(out.report.excluded_total >= 2);
         assert!(out
             .report
             .warnings
@@ -739,18 +739,18 @@ mod tests {
     }
 
     #[test]
-    fn include_low_confidence_reports_the_suppressed_hits() {
+    fn include_excluded_reports_the_suppressed_hits() {
         let lf = temp_with(b"system\n");
         let target = temp_with(b"\x00System.Windows.Forms.dll\x00");
         let cfg = ScanConfig {
             banned_list: Some(lf.path().to_path_buf()),
-            include_low_confidence: true,
+            include_excluded: true,
             ..Default::default()
         };
         let out = run(target.path(), &cfg, &crate::observe::Null).unwrap();
         assert_eq!(out.report.banned_hit_count, 1);
         assert_eq!(out.report.hits[0].confidence, Confidence::Prose);
-        assert_eq!(out.report.low_confidence_total, 0);
+        assert_eq!(out.report.excluded_total, 0);
     }
 
     #[test]

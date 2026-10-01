@@ -115,7 +115,7 @@ pub fn write(
         writeln!(w)?;
     }
 
-    if r.low_confidence_total > 0 && !r.include_low_confidence {
+    if r.excluded_total > 0 && !r.include_excluded {
         writeln!(w, "### Suppressed as low confidence")?;
         writeln!(w)?;
         writeln!(
@@ -123,12 +123,12 @@ pub fn write(
             "{} occurrences were whole-token matches inside namespace text or documentation \
              prose, such as `System.Windows.Forms` or \"Gets or sets\", rather than function \
              references. Re-run with `--include-low-confidence` to report them.",
-            thousands(r.low_confidence_total as u64)
+            thousands(r.excluded_total as u64)
         )?;
         writeln!(w)?;
         writeln!(w, "| Function | Suppressed |")?;
         writeln!(w, "|---|---:|")?;
-        for (name, n) in &r.low_confidence_top {
+        for (name, n) in &r.excluded_top {
             writeln!(w, "| `{}` | {} |", md_cell(name), thousands(*n as u64))?;
         }
         writeln!(w)?;

@@ -48,8 +48,8 @@ pub fn write(
                 r.coverage.members_scanned as i64,
                 r.coverage.total_unpacked_bytes as i64,
                 r.reached_executable() as i64,
-                r.low_confidence_total as i64,
-                r.include_low_confidence as i64,
+                r.excluded_total as i64,
+                r.include_excluded as i64,
             ],
         )?;
         for e in &r.coverage.entries {
@@ -61,9 +61,9 @@ pub fn write(
         for warn in &r.warnings {
             tx.execute("INSERT INTO warnings VALUES (?)", params![warn])?;
         }
-        for (name, n) in &r.low_confidence_top {
+        for (name, n) in &r.excluded_top {
             tx.execute(
-                "INSERT INTO low_confidence VALUES (?,?)",
+                "INSERT INTO excluded VALUES (?,?)",
                 params![name, *n as i64],
             )?;
         }
@@ -96,7 +96,7 @@ pub fn write(
                 s.category.as_str(),
                 s.occurrences as i64,
                 s.members as i64,
-                s.low_confidence as i64
+                s.excluded as i64
             ],
         )?;
     }

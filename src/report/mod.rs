@@ -180,7 +180,7 @@ pub(crate) mod tests_support {
                 category: Category::BufferOverflow,
                 occurrences: 5,
                 members: 2,
-                low_confidence: 24_227,
+                excluded: 24_227,
             }],
             hits: vec![HitRecord {
                 function: "strcpy".into(),
@@ -198,9 +198,9 @@ pub(crate) mod tests_support {
                 context_end: 11,
                 adjustments: Vec::new(),
             }],
-            low_confidence_total: 24_227,
-            low_confidence_top: vec![("system".to_string(), 24_227)],
-            include_low_confidence: false,
+            excluded_total: 24_227,
+            excluded_top: vec![("system".to_string(), 24_227)],
+            include_excluded: false,
             posture: Vec::new(),
             excluded_by_rule: Vec::new(),
             coverage: Coverage {

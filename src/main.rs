@@ -307,17 +307,27 @@ fn prepare_spool(
     }
 }
 
+/// Whether `--fail-on` should trip.
+///
+/// Considers banned-function findings **and** missing exploit mitigations. The posture half is
+/// new in 5.0.0 and is a deliberate breaking change for pipelines: a bundle whose images load
+/// at a predictable address now fails `--fail-on high`, where before it passed because the
+/// mitigation was only ever prose in the text report. That was the whole complaint.
+///
+/// Severity is the adjusted value, so a gate no longer trips on a namespace string in .NET
+/// metadata that happened to match a critical function name.
+fn tripped(resolved: &binspector::cli::Resolved, report: &binspector::model::Report) -> bool {
+    let t = match resolved.fail_on {
+        Some(f) => f.threshold(),
+        None => return false,
+    };
+    report.summary.iter().any(|s| s.severity <= t) || report.posture.iter().any(|p| p.severity <= t)
+}
+
 fn exit_code(resolved: &binspector::cli::Resolved, report: &binspector::model::Report) -> ExitCode {
-    match resolved.fail_on {
-        None => ExitCode::SUCCESS,
-        Some(threshold) => {
-            let t = threshold.threshold();
-            let tripped = report.summary.iter().any(|s| s.severity <= t);
-            if tripped {
-                ExitCode::from(1)
-            } else {
-                ExitCode::SUCCESS
-            }
-        }
+    if tripped(resolved, report) {
+        ExitCode::from(1)
+    } else {
+        ExitCode::SUCCESS
     }
 }

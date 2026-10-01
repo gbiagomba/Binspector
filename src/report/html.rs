@@ -117,20 +117,20 @@ pub fn write(
         writeln!(w, "</tbody></table>")?;
     }
 
-    if r.low_confidence_total > 0 && !r.include_low_confidence {
+    if r.excluded_total > 0 && !r.include_excluded {
         writeln!(w, "<h3>Suppressed as low confidence</h3>")?;
         writeln!(
             w,
             "<p>{} occurrences were whole-token matches inside namespace text or documentation \
              prose, such as <code>System.Windows.Forms</code>, rather than function references. \
              Re-run with <code>--include-low-confidence</code> to report them.</p>",
-            thousands(r.low_confidence_total as u64)
+            thousands(r.excluded_total as u64)
         )?;
         writeln!(
             w,
             "<table><thead><tr><th>Function</th><th class=\"num\">Suppressed</th></tr></thead><tbody>"
         )?;
-        for (name, n) in &r.low_confidence_top {
+        for (name, n) in &r.excluded_top {
             writeln!(
                 w,
                 "<tr><td><code>{}</code></td><td class=\"num\">{}</td></tr>",
