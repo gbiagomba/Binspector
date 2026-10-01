@@ -61,7 +61,7 @@ pub fn write(
 
     write_coverage(w, r)?;
     super::targets_section::write_text(w, r)?;
-    write_posture(w, r)?;
+    write_posture_section(w, r)?;
     super::pe_section::write_text(w, r)?;
     super::pe_section::write_dll_search_text(w, r)?;
     super::exe_section::write_text(w, r)?;
@@ -238,7 +238,7 @@ fn rule_reason(rule: &str) -> &'static str {
 /// Placed before the banned-function occurrences deliberately: a mitigation is confirmable
 /// from metadata alone, needs no call-site analysis, and is fixable by changing a build flag,
 /// which makes it the most actionable thing in the report.
-fn write_posture(w: &mut dyn Write, r: &Report) -> Result<()> {
+pub(super) fn write_posture_section(w: &mut dyn Write, r: &Report) -> Result<()> {
     if r.posture.is_empty() {
         return Ok(());
     }

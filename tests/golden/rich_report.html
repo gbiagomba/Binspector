@@ -41,6 +41,7 @@ mark.medium { color: var(--medium); }
 .warn { color: var(--high); }
 .hit { margin: .5rem 0; padding: .5rem .7rem; border-left: 3px solid var(--border); }
 pre.dump { max-height: 70vh; overflow: auto; }
+pre.analysis { white-space: pre; line-height: 1.35; }
 @media (max-width: 600px) { body { padding: 16px; } table { font-size: .85em; } }
 </style>
 </head><body>
@@ -82,6 +83,181 @@ pre.dump { max-height: 70vh; overflow: auto; }
 <tr><td><code>Microsoft.VCLibs.ARM64.14.00.Desktop.appx :: Bridge.dll</code></td><td>pe</td><td class="num">128.0 KiB</td><td class="num">900</td></tr>
 <tr><td><code>Payload.msix :: Contents :: MacOS :: Helper</code></td><td>macho</td><td class="num">96.0 KiB</td><td class="num">800</td></tr>
 </tbody></table>
+<h2>Targets (3, 9 occurrence(s), 6 member(s) scanned, 3 of 3 reached an executable image)</h2>
+<pre class="analysis">
+  !! 2 target(s) carry their own scan warnings: Microsoft.VCLibs.ARM.14.00.Desktop.appx, vendor/bundles/arm64/Microsoft.WindowsAppRuntime.Redist.1.6/Payload.msix
+     target                                 format       size members     c/h/m/l  selected by
+  !! Microsoft.VCLibs.A~4.00.Desktop.appx#1 zip       6.0 MiB       3     1/1/2/2  extension:appx
+     !! 1 warning(s): truncated central directory, 2 member(s) skipped
+     Microsoft.VCLibs.A~4.00.Desktop.appx#2 zip      10.5 MiB       1     1/1/0/0  extension:appx
+  !! vendor/bundles/arm6~t.1.6/Payload.msix zip       2.0 MiB       2     0/0/0/1  all-files
+     !! 1 warning(s): no readable import table on 1 image
+  Worst first, not scan order: critical, then high, then total occurrences.
+  Each row counts only its own target; the totals above are their sum.
+  Per-target paths and hashes (MD5, SHA1, SHA256) are in --format json.
+</pre>
+<h2>Exploit mitigations: 10 finding(s)</h2>
+<pre class="analysis">
+  !!! critical [authenticode-digest] 1 image(s)
+      Authenticode digest mismatch: the image does not match its own signature
+      evidence: the SpcIndirectDataContent digest differs from the digest of the shipped bytes over the Authenticode range
+      fix: do not trust the signer name on this image. Re-sign from a known-good build, and establish where the modification came from
+      images: Packed.dll
+  !! high [aslr] 1 image(s)
+      ASLR disabled: the image loads at a predictable address
+      evidence: IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE absent from the optional header
+      fix: link with /DYNAMICBASE, which is the default in current toolchains
+      images: Weak.exe
+  !! high [dep] 1 image(s)
+      DEP disabled: data pages remain executable
+      evidence: IMAGE_DLLCHARACTERISTICS_NX_COMPAT absent from the optional header
+      fix: link with /NXCOMPAT
+      images: Weak.exe
+  !! high [exec-stack] 1 image(s)
+      Executable stack allowed: the image opts out of stack NX
+      evidence: MH_ALLOW_STACK_EXECUTION set in the Mach-O header flags
+      fix: drop -Wl,-allow_stack_execute from the link
+      images: Helper
+  !! high [nx] 1 image(s)
+      Executable stack: stack data can be run as code
+      evidence: PT_GNU_STACK program header carries PF_X
+      fix: link with -Wl,-z,noexecstack, and give every hand-written assembly file a .note.GNU-stack marker so it stops forcing the flag on
+      images: libthing.so
+  ! medium [authenticode] 1 image(s)
+      No Authenticode signature: the file&#39;s origin cannot be verified
+      evidence: no certificate table in the image
+      fix: sign the shipped binaries, including third-party ones you rebuild
+      images: Weak.exe
+  ! medium [cfg] 1 image(s)
+      Control Flow Guard not instrumented: indirect calls are unchecked
+      evidence: load config guard flags present without IMAGE_GUARD_CF_INSTRUMENTED
+      fix: compile and link with /guard:cf
+      images: Weak.exe
+  ! medium [gs] 1 image(s)
+      No stack cookie: a stack overflow is not detected on return
+      evidence: load config directory present with no usable SecurityCookie
+      fix: compile with /GS
+      images: Weak.exe
+  ! medium [macho-code-signature] 1 image(s)
+      No code signature: the file&#39;s origin cannot be verified
+      evidence: no LC_CODE_SIGNATURE load command in the image
+      fix: codesign the shipped binaries, including third-party ones you rebuild
+      images: Helper
+  ! medium [relro] 1 image(s)
+      RELRO not full: the GOT stays writable after relocation
+      evidence: PT_GNU_RELRO absent, or present without BIND_NOW (no DF_BIND_NOW, DF_1_NOW, or DT_BIND_NOW in the dynamic section)
+      fix: link with -Wl,-z,relro,-z,now
+      images: libthing.so
+</pre>
+<h2>Executable analysis (4 PE images)</h2>
+<pre class="analysis">
+  !! ASLR missing on 1 of 4 image(s): Weak.exe
+  !! DEP missing on 1 of 4 image(s): Weak.exe
+  !! CFG missing on 1 of 4 image(s): Weak.exe
+  !! /GS missing on 1 of 4 image(s): Weak.exe
+  !! Authenticode missing on 1 of 4 image(s): Weak.exe
+  1 managed .NET assembly (their embedded text is metadata, not native code)
+  !! Packed.dll: section .pack is both writable and executable
+  !! Packed.dll: section .pack entropy 7.93 bits/byte suggests compressed content
+  !! Bridge.dll: 3 TLS callback(s) run before the entry point
+  Findings by origin
+    first-party (--first-party)        2
+    unsigned                          2
+    signed by Plugin Vendor           2
+    signed by Evil Corp &lt;script~      1
+    not a parsed image                2
+    Authenticode digest: 2 verified, 1 mismatched, 0 not compared.
+    !! A mismatch means the shipped bytes are not the bytes that were signed, so the signer name on those images is worth nothing.
+    Certificate chain: 1 broken, 1 partial, 1 self-signed.
+    !! 1 chain(s) did not verify under the issuer they name: Packed.dll
+    A partial chain means every embedded certificate verified and the root is not in the file, which is how Authenticode normally ships.
+    3 certificate(s) are outside their validity window, which is not a defect: Authenticode is not expiry-sensitive when countersigned.
+      anchor Example Signing CA                          1  sha256:a1a1a1a1a1a1a1a1
+      anchor Internal Build CA                           1  sha256:9f9f9f9f9f9f9f9f
+      anchor Unknown Issuer                              1  sha256:
+    Verified is not trusted: no code-signing root store is consulted, because none exists in pure Rust. Compare an anchor fingerprint against its published thumbprint. Revocation is never checked.
+  Bounded memory primitives: 2 import(s) across 2 of 4 image(s) (memcpy 1, memset 1)
+    1 of those image(s) also import hardened _s variants
+    A link-graph fact, not 2 findings: every native image calls these, and the defect would be a wrong size an import table cannot show. Omitted from the occurrence list below; complete in --format json, csv, sql, sqlite, and sarif.
+  Named-pipe servers: 1 image(s), 1 importing no authorization primitive
+    !! Bridge.dll: serves ConnectNamedPipe, CreateNamedPipeW, CreateNamedPipeW \\.\pipe\&lt;script&gt;alert(1)&lt;/script&gt;|x
+       builds its own security descriptor: SetEntriesInAclW, SetSecurityDescriptorDacl
+       imports none of ImpersonateNamedPipeClient, OpenThreadToken, GetTokenInformation, CheckTokenMembership, AccessCheck
+    Narrowing, not reachability: an unauthorized verdict means no authorization primitive is linked, not that a finding here is reachable. Absence is only evidence where the import table was readable.
+  String hygiene: 3 hardened CRT import(s) across 1 of 4 image(s)
+  Imports parsed: 14
+  5 occurrence(s) confirmed by the import table rather than inferred from text
+</pre>
+<h2>Indicators (10 total)</h2>
+<pre class="analysis">
+  URLs (2)
+    https://update.example.com/v1/manifest.json
+    http://192.0.2.44/beacon
+  IPs (2)
+    192.0.2.44
+    198.51.100.7
+  Emails (2)
+    build@example.com
+    support@example.net
+  Registry keys (2)
+    HKEY_LOCAL_MACHINE\SOFTWARE\Example\Agent
+    HKCU\Software\Example\Run
+  File paths (2)
+    C:\Users\Eric\Desktop\ocv43\opencv-4.3.0\modules\core\src\system.cpp
+    C:\Program Files\Example\bin\
+</pre>
+<h2>DLL search order</h2>
+<pre class="analysis">
+  1 occurrence(s) in category dll-hijacking, listed with the other findings
+  1 occurrence(s) in category process-creation, listed with the other findings
+  1 of 4 image(s) load modules at runtime: 0 hardened, 1 unhardened, 0 naming a module with no path
+  !! no image restricts its own search path: none import SetDefaultDllDirectories or AddDllDirectory
+  A surface, not a defect: the module argument is not recoverable without disassembly. Seek to the offsets above to confirm, and note that names already resolved from the import table, the api-ms-win-* API sets, and self-references are excluded.
+</pre>
+<h2>Native analysis (2 ELF/Mach-O image(s))</h2>
+<pre class="analysis">
+  !! NX (non-executable stack) missing on 1 of 2 image(s): libthing.so
+  !! Full RELRO missing on 1 of 2 image(s): libthing.so
+  !! Non-executable stack (Mach-O) missing on 1 of 2 image(s): Helper
+  !! Code signature missing on 1 of 2 image(s): Helper
+  Imports read: 1 via elf-dynsym
+  1 of 2 image(s) had no readable import table, so for those the absence of an import is not evidence
+</pre>
+<h2>Carving (2 candidate embedded archive(s) or filesystem(s), 2 other signature(s))</h2>
+<pre class="analysis">
+  252 checksum, certificate, and text marker(s) excluded as not being embedded files.
+  A signature match is a lead, not proof. Extract with `binwalk -e` to confirm.
+  Packed.dll
+    [archive] zip at offset 0x40000 (262144 bytes)  ZIP archive, 3 entries
+    [archive] gzip at offset 0x68000 (262144 bytes) [low confidence]  original name &lt;script&gt;alert(1)&lt;/script&gt;|x
+    [embedded] pe at offset 0x71000 (262144 bytes)  PE32+ executable
+    plus 9 speculative match(es) not listed
+  Bridge.dll
+    [other] riff at offset 0x1f400 (262144 bytes) [low confidence]  unclassified
+    plus 4 speculative match(es) not listed
+</pre>
+<h2>Third-party components (3)</h2>
+<pre class="analysis">
+  openssl 1.1.1k
+  zlib 1.2.11
+  &lt;script&gt;alert(1)&lt;/script&gt;|x 0.0.1
+</pre>
+<h2>Reputation (hash lookup only, no file content transmitted)</h2>
+<pre class="analysis">
+  SHA256:       1111111111111111111111111111111111111111111111111111111111111111
+  VirusTotal:   3 of 72 engines flagged this hash
+  MetaDefender: no detections across 34 engines
+  !!! At least one service flagged this hash.
+</pre>
+<h2>Known CVEs (2 across 2 component(s))</h2>
+<pre class="analysis">
+  Highest CVSS: 7.4
+  openssl 1.1.1k
+    CVE-2021-3450 CVSS 7.4 (high)  https://nvd.nist.gov/vuln/detail/CVE-2021-3450
+    CVE-2021-3711 CVSS n/a (critical)  https://nvd.nist.gov/vuln/detail/CVE-2021-3711
+  zlib 1.2.11: lookup failed: NVD rate limit reached, retry after 30s
+  24 detectors ran; silence is not an absence of risk
+</pre>
 <h2>Warnings</h2><ul class="warn">
 <li>Microsoft.VCLibs.ARM.14.00.Desktop.appx: truncated central directory, 2 member(s) skipped</li>
 <li>Payload.msix :: Contents :: MacOS :: Helper: no readable import table</li>

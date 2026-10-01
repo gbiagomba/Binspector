@@ -183,6 +183,9 @@ pub fn write(
         }
         writeln!(w, "</tbody></table>")?;
 
+        // Every analysis section, in the same order the text report uses. HTML carried only
+        // Findings, Coverage, Warnings and Occurrences before this.
+        super::analysis::write_html(w, r, opts)?;
         if !r.warnings.is_empty() {
             writeln!(w, "<h2>Warnings</h2><ul class=\"warn\">")?;
             for warn in &r.warnings {
@@ -319,6 +322,7 @@ mark.medium {{ color: var(--medium); }}
 .warn {{ color: var(--high); }}
 .hit {{ margin: .5rem 0; padding: .5rem .7rem; border-left: 3px solid var(--border); }}
 pre.dump {{ max-height: 70vh; overflow: auto; }}
+pre.analysis {{ white-space: pre; line-height: 1.35; }}
 @media (max-width: 600px) {{ body {{ padding: 16px; }} table {{ font-size: .85em; }} }}
 ",
         crit = t.css(Severity::Critical),

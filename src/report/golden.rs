@@ -29,16 +29,7 @@ use crate::model::Report;
 ///
 /// Shrinks by one entry per migration step. When it is empty the parity test is complete and this
 /// constant, along with the allowance in `every_section_reaches_every_format`, is deleted.
-const NOT_YET_PORTED: &[&str] = &[
-    "Targets",
-    "Exploit mitigations",
-    "Executable analysis",
-    "DLL search order",
-    "Native analysis",
-    "Carving",
-    "Third-party components",
-    "Indicators",
-];
+const NOT_YET_PORTED: &[&str] = &[];
 
 /// Section headings that must appear in text, markdown and HTML once porting is done.
 const SECTIONS: &[&str] = &[

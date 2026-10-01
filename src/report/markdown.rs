@@ -170,6 +170,10 @@ pub fn write(
     }
     writeln!(w)?;
 
+    // Every analysis section, in the same order the text report uses. Before this, markdown
+    // carried Findings, Coverage, Warnings and Occurrences only, so a reader of the .md saw no
+    // mitigations, no certificates, no DLL search order and no indicators at all.
+    super::analysis::write_markdown(w, r, opts)?;
     if !r.warnings.is_empty() {
         writeln!(w, "## Warnings")?;
         writeln!(w)?;
