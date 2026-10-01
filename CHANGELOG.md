@@ -2,6 +2,34 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.4.0] - unreleased
+
+### Fixed
+- **`-o` naming a directory wrote the files beside it.** `format::destination` derives a stem
+  through `Path::file_stem()`, which discards a trailing separator, and nothing on the output path
+  called `is_dir()`. A value ending in a separator, or naming an existing directory, now resolves to
+  the timestamped default stem inside it, and the directory is created if absent.
+- **A multi-target report printed empty `MD5` and `SHA1` fields.** Those are cleared on purpose,
+  because a digest over a set of files is a manifest digest rather than a file hash, but the writers
+  printed the labels anyway. All three human formats now print one honest line naming the manifest
+  digest, and no empty field.
+- Trailing whitespace on excluded-by-rule rows when a rule had no prose reason.
+
+### Security
+- **Markdown cells were not inert.** `md_cell` escaped the pipe and the newline but not the
+  backtick, and most untrusted cells are backtick-wrapped by the writer, so one backtick in an
+  attacker-controlled value breaks out of the code span and the rest of the cell renders as live
+  markup. Two cells are not wrapped at all. Backticks are now neutralised and angle brackets escaped.
+- **`html_escape` passed bidirectional overrides through**, because it replaced a character only
+  when `char::is_control()`, which is Unicode category Cc, and U+202E is Cf. Signer names were
+  filtered elsewhere, but carved descriptions, loader module names, IPC strings, section names and
+  component names were not, and they reach HTML under the format-parity work.
+
+### Changed
+- README restructured, with six false claims corrected after an adversarial fact-check against the
+  source. `pe::authenticode` also claimed a differential test that does not exist; it now states
+  that the comparison was a one-off local run and is not committed.
+
 ## [5.3.0] - 2026-10-01
 
 ### Added

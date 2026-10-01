@@ -539,6 +539,24 @@ pub fn run_labeled(
             .then(a.function.cmp(&b.function))
     });
 
+    // Occurrences in the same order the summary and the posture findings use, because the
+    // occurrence list is read top-down and scan order buries the important rows. On a real
+    // ten-target run the first 812 of 1,355 rows were low-severity matches inside a symbol
+    // package and the first critical sat at index 812, so a reader who looked at the top of the
+    // section reasonably concluded the tool had found nothing worth reporting.
+    //
+    // Confidence is the second key, not the member, because it is what the severity was derived
+    // from: among equally severe rows the import-backed one is the one to read first. Member and
+    // offset are last and exist only to make the order total, so two runs over the same input
+    // produce byte-identical reports.
+    hits.sort_by(|a, b| {
+        a.severity
+            .cmp(&b.severity)
+            .then(a.confidence.cmp(&b.confidence))
+            .then(a.member.cmp(&b.member))
+            .then(a.offset.cmp(&b.offset))
+    });
+
     let mut warnings = outcome.warnings.clone();
     if hit_cap_reached {
         warnings.push(format!(

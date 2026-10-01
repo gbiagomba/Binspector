@@ -206,5 +206,15 @@ fn finish_aggregate(r: &mut Report) {
             .then(b.occurrences.cmp(&a.occurrences))
             .then(a.function.cmp(&b.function))
     });
+    // `merge` concatenates each target's hits, so the per-target ordering does not survive the
+    // fold. Re-sorted here with the same key `run_labeled` uses, or a multi-target report would be
+    // in target order, which is the defect this ordering exists to fix.
+    r.hits.sort_by(|a, b| {
+        a.severity
+            .cmp(&b.severity)
+            .then(a.confidence.cmp(&b.confidence))
+            .then(a.member.cmp(&b.member))
+            .then(a.offset.cmp(&b.offset))
+    });
     r.posture = super::all_posture(&r.coverage.entries);
 }
