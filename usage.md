@@ -44,6 +44,11 @@ With no `-o`, output is written to `binspector_output-<YYYY.MM.DD-HH.MM.SS>.<ext
 current directory, matching the naming the original shell implementation used so output from
 either version sorts together. `-o` overrides it, and `-o -` writes to stdout.
 
+An `-o` that ends in a path separator, or that names an existing directory, is treated as a
+directory: the timestamped stem is used inside it, and the directory is created if it does not
+exist. So `-o out/` and no `-o` at all differ only in where the files land. Any other `-o` is a
+file or a stem exactly as before.
+
 ```bash
 # Summary to the terminal
 binspector ./app.exe
@@ -91,7 +96,7 @@ binspector --banned-filter '^str' ./app.exe
 
 | Option | Description |
 |---|---|
-| `-o, --output <FILE>` | Write to a file, or a filename stem when several formats are given. `-` means stdout. Defaults to a timestamped file |
+| `-o, --output <FILE>` | Write to a file, a filename stem when several formats are given, or a **directory** when the value ends in a separator or names one. `-` means stdout. Defaults to a timestamped file |
 | `--format <FORMAT>` | See [Output formats](#output-formats). Comma separated for several |
 | `--matches-only` | Report only the matches, omitting metadata and coverage |
 | `--dump` | Include every extracted string with matches highlighted |
@@ -198,6 +203,7 @@ Combined is the default. `--split` writes one report per target:
 |---|---|
 | combined, no `-o` | `binspector_output-<stamp>.<ext>` |
 | combined, `-o name` | `name.<ext>` |
+| combined, `-o dir/` | `dir/binspector_output-<stamp>.<ext>` |
 | split, no `-o` | `binspector_<slug>-<stamp>.<ext>` |
 | split, `-o name` | `name_<slug>-<stamp>.<ext>` |
 

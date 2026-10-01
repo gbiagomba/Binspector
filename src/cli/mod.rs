@@ -261,6 +261,9 @@ pub struct Resolved {
     pub no_banner: bool,
     /// True when `output` is the timestamped default, so it is treated as a stem and gets
     /// a per-format extension.
+    ///
+    /// Also true when `-o` named a directory, because the stem inside it is that same timestamped
+    /// default and needs the same naming mode.
     pub output_is_default: bool,
     /// Network enrichment requested by the caller.
     pub reputation: bool,
@@ -276,6 +279,16 @@ pub struct Resolved {
     pub fail_on: Option<FailOn>,
     /// Non-fatal notices to print before the report, such as deprecation warnings.
     pub notices: Vec<String>,
+}
+
+/// Whether a path as written ends in a separator, which is the caller stating "directory".
+///
+/// `Path` discards a trailing separator during component iteration, so this has to look at the
+/// original text rather than ask `Path`. Both separators are accepted on Windows, where either is
+/// valid in user input.
+fn has_trailing_separator(p: &std::path::Path) -> bool {
+    let s = p.as_os_str().to_string_lossy();
+    s.ends_with('/') || (cfg!(windows) && s.ends_with('\\'))
 }
 
 impl Cli {
@@ -326,20 +339,44 @@ impl Cli {
             .output
             .as_deref()
             .is_some_and(|p| p == std::path::Path::new("-"));
+        // An `-o` that names a directory is honoured as one. Without this, `-o out/` reached
+        // `format::destination`, whose `Path::file_stem()` silently discards the trailing
+        // separator, so the request became the stem `out` and the files landed *beside* the
+        // directory rather than inside it. Reported against a real run where `tools/binspector/`
+        // already existed and eight files were written next to it.
+        //
+        // Directory-ness is decided from either signal the caller can give: a trailing separator,
+        // which is unambiguous intent, or an existing directory, which cannot be a file name.
+        let given_is_dir = self
+            .output
+            .as_deref()
+            .is_some_and(|p| !to_stdout && (has_trailing_separator(p) || p.is_dir()));
+
         let output: Option<PathBuf> = if to_stdout {
             None
         } else {
-            Some(
-                self.output
-                    .clone()
-                    .unwrap_or_else(|| PathBuf::from(format::default_stem())),
-            )
+            Some(match self.output.clone() {
+                // Inside the directory, under the same timestamped stem a bare run would use, so
+                // `-o out/` and no `-o` at all differ only in where the files land.
+                Some(dir) if given_is_dir => dir.join(format::default_stem()),
+                Some(path) => path,
+                None => PathBuf::from(format::default_stem()),
+            })
         };
         if self.output.is_none() {
             notices.push(format!(
                 "writing to {}.<format>. Pass -o FILE to choose a name, or -o - for stdout.",
                 format::default_stem()
             ));
+        }
+        if given_is_dir {
+            // Said plainly, because the resulting name is not the one the caller typed.
+            if let Some(stem) = output.as_deref() {
+                notices.push(format!(
+                    "-o names a directory, so writing to {}.<format> inside it.",
+                    stem.display()
+                ));
+            }
         }
         if to_stdout {
             if let Some(f) = formats.iter().find(|f| f.requires_path()) {
@@ -453,7 +490,10 @@ impl Cli {
             select,
             verbose: self.verbose,
             no_banner: self.no_banner,
-            output_is_default: self.output.is_none() && !to_stdout,
+            // A directory counts as default naming: the stem is the timestamped one, so it must
+            // get `Naming::Append` and keep the dots in the stamp rather than having
+            // `ReplaceExtension` treat `2026.10.01-15.34.50` as an extension to replace.
+            output_is_default: (self.output.is_none() || given_is_dir) && !to_stdout,
             reputation: self.reputation,
             cve: self.cve,
             cve_limit: self.cve_limit,
@@ -554,6 +594,66 @@ mod tests {
                 .output_is_default
         );
         assert!(!parse(&["file.bin", "-o", "-"]).unwrap().output_is_default);
+    }
+
+    /// The reported bug: `-o tools/binspector/` wrote `tools/binspector.txt` beside the directory
+    /// instead of inside it, because `format::destination` derives a stem through
+    /// `Path::file_stem()`, which discards a trailing separator.
+    #[test]
+    fn a_trailing_separator_means_a_directory_not_a_stem() {
+        let r = parse(&["file.bin", "-o", "tools/binspector/"]).unwrap();
+        let path = r.output.expect("a path");
+        assert_eq!(
+            path.parent().map(|p| p.to_string_lossy().to_string()),
+            Some("tools/binspector".to_string()),
+            "the directory must be kept, got {}",
+            path.display()
+        );
+        assert!(
+            path.file_name()
+                .map(|n| n.to_string_lossy().starts_with("binspector_output-"))
+                .unwrap_or(false),
+            "the timestamped stem goes inside it, got {}",
+            path.display()
+        );
+        assert!(
+            r.output_is_default,
+            "a directory must use Naming::Append, or ReplaceExtension eats the stamp's dots"
+        );
+        assert!(r.notices.iter().any(|n| n.contains("names a directory")));
+    }
+
+    /// The other half of the same bug: an existing directory cannot be a file name, whether or not
+    /// the caller typed a separator.
+    #[test]
+    fn an_existing_directory_is_treated_as_one() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let given = dir.path().to_string_lossy().to_string();
+        let r = parse(&["file.bin", "-o", &given]).unwrap();
+        let path = r.output.expect("a path");
+        assert_eq!(path.parent(), Some(dir.path()));
+        assert!(r.output_is_default);
+    }
+
+    /// And the case that must not change: a plain stem keeps today's exact semantics, so no
+    /// existing invocation moves.
+    #[test]
+    fn a_plain_stem_is_still_a_stem() {
+        let r = parse(&["file.bin", "-o", "out/scan"]).unwrap();
+        assert_eq!(
+            r.output.as_deref(),
+            Some(std::path::Path::new("out/scan")),
+            "a non-directory path is used verbatim"
+        );
+        assert!(!r.output_is_default);
+        assert!(!r.notices.iter().any(|n| n.contains("names a directory")));
+    }
+
+    #[test]
+    fn stdout_is_never_mistaken_for_a_directory() {
+        let r = parse(&["file.bin", "-o", "-"]).unwrap();
+        assert!(r.output.is_none());
+        assert!(!r.output_is_default);
     }
 
     #[test]

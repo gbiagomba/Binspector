@@ -57,6 +57,16 @@ pub fn render_to_path(
     spool: Option<&mut SpoolReader>,
     opts: &RenderOpts,
 ) -> Result<()> {
+    // The parent has to exist before either writer opens the file. `-o out/` now resolves to a
+    // stem inside `out`, and `-o out/sub/report.txt` was already a plausible request that failed
+    // with a bare "No such file or directory" from `File::create`. Creating it is the obvious
+    // reading of a path the caller typed, and it is their own output directory, not a scanned one.
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() && !parent.exists() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| anyhow::anyhow!("creating {}: {}", parent.display(), e))?;
+        }
+    }
     match fmt {
         #[cfg(feature = "sqlite")]
         OutputFormat::Sqlite => sqlite::write(path, report, spool, opts),
