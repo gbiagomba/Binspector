@@ -2,6 +2,81 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.1.0] - 2026-10-01
+
+Several targets, or a directory, in one run.
+
+### Added
+- **Any number of positional targets**, and a **directory target is walked** for executables and
+  archives. `binspector ./app.msixbundle ./app.appxsym ./Dependencies/` is one report.
+- **Selection is content-first.** `container::detect` reads magic and never looks at a filename,
+  so an extensionless Unix executable is found and a PE named `.txt` is still a PE. An extension
+  allowlist is a backstop with one job: catching installers whose magic the tool cannot parse
+  (`dmg`, `msi`, `pkg`, `deb`, `rpm` and similar) so they become reported coverage gaps rather
+  than silent omissions. Formats already covered by magic are deliberately absent from that list,
+  and a test keeps them absent. `--all-files` scans everything.
+- **`--split`** writes one report per target, scanning and dropping one at a time so N reports
+  never coexist. Naming is `<stem>_<slug>-<stamp>`, defaulting to `binspector_<slug>-<stamp>`,
+  with **one stamp per invocation** so a 400-target run still sorts as one run.
+- **`--max-dir-depth`** (16), **`--max-targets`** (10,000), and **`--max-input-bytes`** (64 GiB).
+  Deliberately not `--max-depth`, which means container nesting and defaults to 4: vendored and
+  staged trees routinely exceed four directories, so reusing it would silently truncate the walk.
+- **`Report.targets`**, one entry per target and present even for a single-target scan, so no
+  consumer special-cases arity. A per-target table appears in the text report when there is more
+  than one, and is silent otherwise, so single-target output is unchanged.
+- `Event::Target` at `-v`, naming each target as it starts.
+
+### Safety properties, each a test
+- **A symlink found during recursion is never followed.** `read_dir` plus `DirEntry::file_type`
+  is `lstat`-based, so a loop or an escape from the named tree is structurally impossible and
+  needs no visited-inode bookkeeping. A path named *on the command line* is followed, the same
+  boundary `find -H` draws: naming a path is an instruction.
+- Nothing but regular files and directories is opened, so a fifo cannot block a scan.
+- Entries are sorted per directory, so target order, labels, slugs, and the manifest digest are
+  identical across runs and platforms.
+- Every cap degrades to a warning plus partial results, never an error.
+- A file named twice, or named and also reachable through a directory argument, is scanned once.
+- Peak memory stays near the largest single target rather than their sum.
+
+### Error semantics
+A named path that does not exist is a hard error, keeping the exact `reading {}: {}` wording, so
+a typo is never reported as a clean scan. A discovered file or directory that cannot be read is a
+warning and the walk continues. A directory yielding zero candidates is an error that names
+`--all-files`, because a clean report over zero files is the failure this tool exists to prevent.
+`--fail-on` in split mode ORs across every report: a gate that passes because 399 of 400 targets
+were clean is not a gate.
+
+`--dump` with several targets is rejected rather than silently dumping only the last: the spool
+holds one target's strings and one target already yields millions.
+
+### Multi-target scalars
+`binary` names the set. `sha256` is a **manifest digest** over the newline-joined
+`"<sha256>  <label>"` lines in target order, which is what `sha256sum` produces and so is
+reproducible and checkable by hand; `md5` and `sha1` are cleared rather than filled with something
+that looks like a file hash and is not.
+
+### Verified
+On the real case this was built for: two named files plus a 9-file dependency tree, 10 targets in
+17 seconds. All 57 criticals across all 10 targets are import-backed, and a 120 MiB `.appxsym`
+symbol container's 797 occurrences are every one capped to `low`, 693 of them by
+`non-executable-member`, so it contributes nothing to the critical queue. The tree holds four
+copies of the same runtime `.msix` under different architecture directories, which exercises the
+label and slug collision rules: labels fall back to the relative path, slugs gain `-2`, `-3`, `-4`.
+
+### Fixed
+Three defects found by running it on a real tree rather than by tests:
+- Every table row was flagged `!!`, because the routine low-confidence disclosure counted as a
+  per-target warning. It already has its own report section, and flagging all ten rows drained the
+  marker of meaning.
+- Tail truncation made rows ambiguous: `~64/Microsoft.WindowsAppRuntime.2.msix` is
+  indistinguishable from `x64/...`. Truncation now elides the middle and keeps both ends, since
+  `bin/tool` versus `lib/tool` is the reverse case.
+- Two rows could still render identically where labels differ only in a middle segment (VCLibs ARM
+  versus ARM64). A duplicate row in a security report is a defect, so colliding display labels now
+  take a `#n` suffix and the table guarantees row identity.
+- `--split` without `-o` stamped the filename twice, because the output had already been defaulted
+  to a timestamped stem.
+
 ## [5.0.0] - 2026-10-01
 
 Severity is now a property of the observation rather than of the function name. Two breaking

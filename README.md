@@ -84,6 +84,12 @@ See [scripts/README.md](scripts/README.md) for installer options.
 # Scan a binary or bundle. Prints a summary
 binspector ./app.exe
 
+# Several targets, or a whole directory, in one report
+binspector ./app.msixbundle ./app.appxsym ./Dependencies/
+
+# One report per target instead
+binspector --split ./Dependencies/
+
 # Write a report, labeled with a project name
 binspector -p "PROJ-123" -o report.txt ./SampleApp_1.0.0_x64.msixbundle
 

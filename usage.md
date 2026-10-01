@@ -6,6 +6,7 @@ Full reference. See [README.md](README.md) for the overview and quick start.
 
 - [Invocation](#invocation)
 - [Options](#options)
+- [Several targets and directories](#several-targets-and-directories)
 - [Verbose output](#verbose-output)
 - [Exit codes](#exit-codes)
 - [Output formats](#output-formats)
@@ -27,10 +28,14 @@ Full reference. See [README.md](README.md) for the overview and quick start.
 ## Invocation
 
 ```
-binspector <BINARY> [OPTIONS]
+binspector <TARGET>... [OPTIONS]
 binspector fuzz [OPTIONS]
 binspector repl <REPORT>
 ```
+
+A target is a file or a directory. Several may be given, and a directory is walked for
+executables and archives, so `binspector ./app.msixbundle ./app.appxsym ./Dependencies/` is a
+single report covering all of them.
 
 A bare run prints a summary: metadata, coverage, findings, and occurrences. The full
 per-string dump is opt-in, because a large sample yields millions of strings.
@@ -78,6 +83,8 @@ binspector --banned-filter '^str' ./app.exe
 | `--case-sensitive` | Match case sensitively (default is case insensitive) |
 | `--no-ascii`, `--no-utf16` | Disable an extraction source (not both) |
 | `--include-excluded` | Also report occurrences the evidence rules removed, each tagged with its rule. `--include-low-confidence` is an alias |
+| `--split` | Write one report per target instead of one combined report |
+| `--all-files` | Scan every file found, not only executables and archives |
 | `--first-party <REGEX>` | Mark images whose file name or Authenticode signer matches as first-party |
 
 ### Output
@@ -117,6 +124,9 @@ sample cannot hide findings by tripping a limit.
 | `--max-member-bytes <N>` | 512 MiB | Per-member byte cap |
 | `--max-expansion-ratio <N>` | 100 | Bomb protection ratio |
 | `--max-members <N>` | 50,000 | Member count cap |
+| `--max-dir-depth <N>` | 16 | Directory nesting depth when walking a directory target. Deliberately not `--max-depth`, which is container nesting |
+| `--max-targets <N>` | 10,000 | Targets in one run |
+| `--max-input-bytes <N>` | 64 GiB | Total bytes read from disk across all targets |
 
 ### Pipeline
 
@@ -133,6 +143,78 @@ sample cannot hide findings by tripping a limit.
 
 The banner is written to stderr, and only when stderr is a terminal, so it never reaches a
 report, a pipe, or a log file. `--no-banner` suppresses it in an interactive session too.
+
+## Several targets and directories
+
+```bash
+binspector ./app.msixbundle ./app.appxsym ./Dependencies/
+```
+
+Targets are scanned in the order given, directories last-in-order by path, and each is read,
+scanned, and dropped before the next, so peak memory stays near the largest single target rather
+than their sum.
+
+**What a directory yields.** Content decides: a file is taken when its magic says executable image
+(PE, ELF, Mach-O), walkable archive, or single-stream wrapper. An extension allowlist is only a
+backstop for installers whose magic the tool cannot parse (`dmg`, `msi`, `pkg`, `deb`, `rpm`,
+`appimage` and similar), so those become reported coverage gaps rather than silent omissions. An
+extensionless Unix executable is found by magic alone, and a PE named `.txt` is still a PE.
+`--all-files` disables the filter. Every skip is counted, disclosed in the report, and named
+individually at `-vv`.
+
+**A file named on the command line is always scanned**, filter or not. Naming a path is an
+instruction.
+
+**Safety.** A symlink found while walking is never followed, which makes a recursion loop or an
+escape from the named tree structurally impossible rather than merely guarded. A path named
+explicitly *is* followed, the same boundary `find -H` draws. Nothing but regular files and
+directories is opened. Directory entries are sorted, so two runs over one tree produce identical
+output. A file named twice, or named and also reachable through a directory argument, is scanned
+once.
+
+**Caps** degrade to a warning plus partial results, never an error: `--max-dir-depth` (16),
+`--max-targets` (10,000), `--max-input-bytes` (64 GiB). The per-target caps in
+[Resource caps](#resource-caps) stay per target, because `--max-expansion-ratio` is defined
+against one root size and a shared byte budget would let the first target consume the last one's
+coverage.
+
+**Errors.** A named path that does not exist is a hard error, because a typo must never be
+reported as a clean scan. A discovered file that cannot be read is a warning and the run
+continues. A directory yielding no candidates is an error naming `--all-files`.
+
+### Labels
+
+Each target roots its own provenance chain, so a finding reads `label :: inner.msix :: App.exe`.
+A unique file name is used bare; a colliding one falls back to its path relative to the directory
+root, so `bin/a.exe` and `lib/a.exe` disambiguate by saying where they came from. This matters in
+practice: a dependency tree can hold the same runtime `.msix` under four architecture directories.
+
+### One report or many
+
+Combined is the default. `--split` writes one report per target:
+
+| Invocation | Output |
+|---|---|
+| combined, no `-o` | `binspector_output-<stamp>.<ext>` |
+| combined, `-o name` | `name.<ext>` |
+| split, no `-o` | `binspector_<slug>-<stamp>.<ext>` |
+| split, `-o name` | `name_<slug>-<stamp>.<ext>` |
+
+The stamp is computed **once per invocation**, so every file from one run carries the same one and
+sorts together. A slug is the target's file name, sanitised for a filename, with `-2`, `-3` added
+on collision. `--split` cannot share stdout, and `--fail-on` in split mode trips if *any* report
+trips.
+
+`--dump` works on one target at a time: it writes every extracted string, and one target already
+yields millions.
+
+### Multi-target metadata
+
+`Report.targets` carries one entry per target, including for a single-target scan, so nothing has
+to special-case arity. The top-level scalars describe the set: `binary` names it, and `sha256` is a
+**manifest digest** over the newline-joined `"<sha256>  <label>"` lines in target order, which is
+exactly what `sha256sum` produces and so is reproducible by hand. `md5` and `sha1` are empty for a
+multi-target run rather than carrying something that looks like a file hash and is not.
 
 ## Exit codes
 

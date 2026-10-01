@@ -352,7 +352,14 @@ fn run_split(
         } = scan::run_many(one, &resolved.scan, observer)?;
         enrich(&mut report, resolved)?;
 
-        let base = format::split_stem(resolved.output.as_deref(), &target.slug, &stamp);
+        // `resolve` already turned a missing -o into the timestamped default stem, which in
+        // split mode would stamp the name twice. The documented shape is
+        // `binspector_<slug>-<stamp>`, so a defaulted output contributes no prefix of its own.
+        let base = if resolved.output_is_default {
+            format::split_stem(None, &target.slug, &stamp)
+        } else {
+            format::split_stem(resolved.output.as_deref(), &target.slug, &stamp)
+        };
         let file_theme = match resolved.color {
             ColorChoice::Always => Theme::new(ColorChoice::Always, resolved.palette, true),
             _ => Theme::new(ColorChoice::Never, resolved.palette, false),

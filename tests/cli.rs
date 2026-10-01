@@ -222,6 +222,177 @@ fn naming_sqlite_explicitly_is_not_silently_skipped() {
 }
 
 #[test]
+fn several_targets_aggregate_into_one_report() {
+    let dir = TempDir::new().unwrap();
+    let a = dir.path().join("a.msixbundle");
+    let b = dir.path().join("b.msixbundle");
+    std::fs::write(&a, zip_bytes(&[("A.exe", &fake_pe(b"\x00strcpy\x00"))])).unwrap();
+    std::fs::write(&b, zip_bytes(&[("B.exe", &fake_pe(b"\x00gets\x00"))])).unwrap();
+
+    let out = bin_stdout()
+        .args(["--format", "json"])
+        .arg(&a)
+        .arg(&b)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let targets = v["targets"].as_array().expect("targets array");
+    assert_eq!(targets.len(), 2);
+    assert_eq!(targets[0]["label"], "a.msixbundle");
+    assert_eq!(targets[1]["label"], "b.msixbundle");
+    // Provenance still roots at the target, so a finding says which one it came from.
+    let members: Vec<String> = v["hits"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|h| h["member"].as_str().unwrap().to_string())
+        .collect();
+    assert!(
+        members.iter().any(|m| m.starts_with("a.msixbundle ::")),
+        "{:?}",
+        members
+    );
+    assert!(
+        members.iter().any(|m| m.starts_with("b.msixbundle ::")),
+        "{:?}",
+        members
+    );
+    // md5 and sha1 are cleared for a set rather than carrying a fake file hash.
+    assert_eq!(v["md5"], "");
+    assert_eq!(v["sha1"], "");
+    assert!(
+        v["sha256"].as_str().unwrap().len() == 64,
+        "a manifest digest is still a digest"
+    );
+}
+
+#[test]
+fn a_directory_target_is_walked_and_non_candidates_are_skipped() {
+    let dir = TempDir::new().unwrap();
+    let tree = dir.path().join("tree");
+    std::fs::create_dir_all(tree.join("nested")).unwrap();
+    std::fs::write(tree.join("app.exe"), fake_pe(b"\x00strcpy\x00")).unwrap();
+    std::fs::write(tree.join("nested/lib.dll"), fake_pe(b"\x00gets\x00")).unwrap();
+    std::fs::write(tree.join("README.md"), b"# not a binary, just prose\n").unwrap();
+
+    let out = bin_stdout()
+        .args(["--format", "json"])
+        .arg(&tree)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let targets = v["targets"].as_array().unwrap();
+    assert_eq!(
+        targets.len(),
+        2,
+        "the readme is not a candidate: {:?}",
+        targets
+    );
+    // The skip is disclosed in the report, not only at -vv.
+    let warnings = v["warnings"].as_array().unwrap();
+    assert!(
+        warnings
+            .iter()
+            .any(|w| w.as_str().unwrap().contains("skipped as non-candidates")),
+        "{:?}",
+        warnings
+    );
+}
+
+#[test]
+fn all_files_takes_what_the_filter_skipped() {
+    let dir = TempDir::new().unwrap();
+    let tree = dir.path().join("tree");
+    std::fs::create_dir_all(&tree).unwrap();
+    std::fs::write(tree.join("app.exe"), fake_pe(b"\x00strcpy\x00")).unwrap();
+    std::fs::write(
+        tree.join("notes.txt"),
+        b"nothing executable in here at all\n",
+    )
+    .unwrap();
+
+    let out = bin_stdout()
+        .args(["--format", "json", "--all-files"])
+        .arg(&tree)
+        .output()
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["targets"].as_array().unwrap().len(), 2);
+}
+
+#[test]
+fn split_writes_one_report_per_target_with_the_documented_names() {
+    let dir = TempDir::new().unwrap();
+    let tree = dir.path().join("tree");
+    std::fs::create_dir_all(&tree).unwrap();
+    std::fs::write(tree.join("a.exe"), fake_pe(b"\x00strcpy\x00")).unwrap();
+    std::fs::write(tree.join("b.exe"), fake_pe(b"\x00gets\x00")).unwrap();
+    let out_dir = dir.path().join("out");
+    std::fs::create_dir_all(&out_dir).unwrap();
+
+    bin()
+        .args(["--split", "--format", "txt", "-o"])
+        .arg(out_dir.join("custom"))
+        .arg(&tree)
+        .assert()
+        .success();
+
+    let written: Vec<String> = std::fs::read_dir(&out_dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+        .collect();
+    assert_eq!(written.len(), 2, "one per target: {:?}", written);
+    assert!(
+        written.iter().any(|n| n.starts_with("custom_a.exe-")),
+        "{:?}",
+        written
+    );
+    assert!(
+        written.iter().any(|n| n.starts_with("custom_b.exe-")),
+        "{:?}",
+        written
+    );
+    // One stamp for the whole run, so the output sorts as a single invocation.
+    let stamps: std::collections::BTreeSet<&str> = written
+        .iter()
+        .map(|n| n.rsplit_once('-').unwrap().1)
+        .collect();
+    assert_eq!(stamps.len(), 1, "one stamp per run: {:?}", written);
+    // The seconds field survives: the stamp has dots, so the extension must be appended.
+    assert!(written.iter().all(|n| n.ends_with(".txt")), "{:?}", written);
+}
+
+#[test]
+fn split_and_dump_are_rejected_where_they_cannot_work() {
+    let f = fixture();
+    // --split writes a file per target, so it cannot share stdout.
+    bin()
+        .args(["--split", "-o", "-"])
+        .arg(&f.target)
+        .assert()
+        .code(2)
+        .stderr(contains("cannot share stdout"));
+    // --dump holds one target's spool, and one target already yields millions of strings.
+    bin()
+        .arg("--dump")
+        .arg(&f.target)
+        .arg(&f.target)
+        .assert()
+        .code(2)
+        .stderr(contains("one target at a time"));
+}
+
+#[test]
 fn json_output_is_machine_readable() {
     let f = fixture();
     let out = bin_stdout()
