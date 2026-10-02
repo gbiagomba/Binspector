@@ -577,6 +577,21 @@ pub fn run_labeled(
             .then(a.offset.cmp(&b.offset))
     });
 
+    // Paths feed component detection after collection, not during the string pass. A statically
+    // linked library often embeds no banner, so the signature table cannot see it; the build path
+    // its objects were compiled from names it exactly. This is what makes a vendored dependency
+    // that appears in no manifest show up as a component rather than only as an indicator.
+    let collected_iocs = iocs.finish();
+    if cfg.detect_components {
+        for p in collected_iocs
+            .build_paths
+            .iter()
+            .chain(collected_iocs.file_paths.iter())
+        {
+            components.feed_path(p);
+        }
+    }
+
     let mut warnings = outcome.warnings.clone();
     if hit_cap_reached {
         warnings.push(format!(
@@ -660,7 +675,7 @@ pub fn run_labeled(
         excluded_top: low_top,
         excluded_by_rule: excluded_by_rule.into_iter().collect(),
         include_excluded: cfg.include_excluded,
-        iocs: iocs.finish(),
+        iocs: collected_iocs,
         intel: intel::Intel {
             reputation: None,
             cves: None,

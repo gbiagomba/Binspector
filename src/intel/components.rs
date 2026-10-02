@@ -108,8 +108,70 @@ const SIGNATURES: &[Signature] = &[
     },
 ];
 
+/// Libraries recognisable from a build-path directory name rather than from a banner string.
+///
+/// A statically linked library often embeds no banner at all, so the signature table above cannot
+/// see it. What survives is the path the object files were compiled from, and a directory called
+/// `opencv-4.3.0` names the library and its version exactly.
+///
+/// This is why it matters rather than being a nicety. An adversarial review of a real bundle found a
+/// vendored OpenCV 4.3.0 that appeared in no manifest and in no component list, and the only trace
+/// of it anywhere was a leaked build path. A dependency nothing is tracking receives no CVE
+/// analysis, which is the finding.
+///
+/// A fixed vocabulary rather than "any `name-version` directory", because a path is full of things
+/// shaped like one that are not libraries: `netstandard2.0`, `net6.0-windows`, `v14.42-x64`. Every
+/// entry here is a library whose source tree is conventionally named this way.
+const PATH_LIBRARIES: &[&str] = &[
+    "opencv",
+    "boost",
+    "ffmpeg",
+    "openssl",
+    "zlib",
+    "libpng",
+    "libjpeg-turbo",
+    "libjpeg",
+    "freetype",
+    "harfbuzz",
+    "icu",
+    "libxml2",
+    "libwebp",
+    "libtiff",
+    "openjpeg",
+    "protobuf",
+    "sqlite",
+    "lz4",
+    "zstd",
+    "bzip2",
+    "expat",
+    "curl",
+    "libcurl",
+    "onnxruntime",
+    "eigen",
+    "glew",
+    "glfw",
+    "sdl",
+    "libsodium",
+    "mbedtls",
+    "wolfssl",
+    "nghttp2",
+    "pcre",
+    "pcre2",
+    "jsoncpp",
+    "yaml-cpp",
+    "libuv",
+    "libevent",
+    "openexr",
+    "tbb",
+    "flatbuffers",
+    "snappy",
+    "brotli",
+];
+
 pub struct Detector {
     compiled: Vec<(&'static str, Regex)>,
+    /// `<library>-<version>` as a path segment, the shape a vendored source tree is unpacked into.
+    path_version: Regex,
     found: BTreeMap<(String, String), String>,
     cap: usize,
 }
@@ -122,8 +184,37 @@ impl Detector {
             .collect();
         Self {
             compiled,
+            // A segment boundary on both sides, so `myopencv-1.0` and a version glued to a longer
+            // token are not mistaken for the library itself.
+            path_version: Regex::new(
+                r"(?i)[\\/]([A-Za-z][A-Za-z0-9_+]*(?:-[A-Za-z]+)?)-(\d+\.\d+(?:\.\d+)?)(?:[\\/]|$)",
+            )
+            .expect("static regex"),
             found: BTreeMap::new(),
             cap,
+        }
+    }
+
+    /// Detect a component from a filesystem path, which is how a statically linked library with no
+    /// banner string becomes visible.
+    ///
+    /// Separate from `feed` because the input is different in kind: `feed` reads every extracted
+    /// string and must stay cheap, while this runs over the indicator lists once at the end.
+    pub fn feed_path(&mut self, path: &str) {
+        if self.found.len() >= self.cap {
+            return;
+        }
+        for c in self.path_version.captures_iter(path) {
+            let (Some(name), Some(version)) = (c.get(1), c.get(2)) else {
+                continue;
+            };
+            let lower = name.as_str().to_ascii_lowercase();
+            if !PATH_LIBRARIES.contains(&lower.as_str()) {
+                continue;
+            }
+            self.found
+                .entry((lower, version.as_str().to_string()))
+                .or_insert_with(|| truncate(path, 160));
         }
     }
 
@@ -155,6 +246,68 @@ impl Detector {
                 evidence,
             })
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod path_tests {
+    use super::*;
+
+    #[test]
+    fn a_vendored_source_tree_names_its_library_and_version() {
+        let mut d = Detector::new(50);
+        d.feed_path(r"C:\Users\Eric\Desktop\ocv43\opencv-4.3.0\modules\core\src\system.cpp");
+        let got = d.finish();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].name, "opencv");
+        assert_eq!(got[0].version, "4.3.0");
+        assert!(
+            got[0].evidence.contains("opencv-4.3.0"),
+            "evidence cites the path"
+        );
+    }
+
+    #[test]
+    fn unix_separators_work_too() {
+        let mut d = Detector::new(50);
+        d.feed_path("/home/bob/src/boost-1.84.0/libs/thread/src/x.cpp");
+        let got = d.finish();
+        assert_eq!(got[0].name, "boost");
+        assert_eq!(got[0].version, "1.84.0");
+    }
+
+    /// The reason this uses a vocabulary rather than any `name-version` directory: a build path is
+    /// full of things shaped like one that are not libraries.
+    #[test]
+    fn framework_monikers_and_build_dirs_are_not_components() {
+        let mut d = Detector::new(50);
+        for p in [
+            r"C:\proj\obj\Release\netstandard2.0\thing.pdb",
+            r"C:\proj\bin\net6.0-windows\app.dll",
+            "/build/toolchain-14.42/bin/cc",
+            "/src/myproject-1.0.0/main.c",
+        ] {
+            d.feed_path(p);
+        }
+        assert!(d.finish().is_empty(), "no library should be inferred");
+    }
+
+    /// A segment boundary on both sides, so a longer token that merely ends in a library name is
+    /// not credited to that library.
+    #[test]
+    fn a_similar_name_is_not_the_library() {
+        let mut d = Detector::new(50);
+        d.feed_path("/src/myopencv-1.0.0/x.c");
+        assert!(d.finish().is_empty());
+    }
+
+    #[test]
+    fn two_versions_of_one_library_are_both_reported() {
+        let mut d = Detector::new(50);
+        d.feed_path(r"C:\Users\a\opencv-4.3.0\x.cpp");
+        d.feed_path(r"C:\Users\b\opencv-4.10.0\y.cpp");
+        let got = d.finish();
+        assert_eq!(got.len(), 2, "{:?}", got);
     }
 }
 

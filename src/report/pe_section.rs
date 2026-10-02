@@ -4,6 +4,7 @@ use anyhow::Result;
 use std::io::Write;
 
 use super::fmt_util::{preview, short_name, truncate};
+use super::human_bytes;
 use super::thousands;
 use crate::model::Report;
 use crate::pe::loader::Verdict;
@@ -107,6 +108,42 @@ pub fn write_text(w: &mut dyn Write, r: &Report) -> Result<()> {
     }
     if anomalies > 20 {
         writeln!(w, "  ... and {} more anomalies", anomalies - 20)?;
+    }
+    // The number behind the sentence. `packer_hints` says a section "suggests compressed or
+    // encrypted content"; the reader then wants the value and the threshold to judge it, and the
+    // value reached JSON but no human format.
+    let mut entropic: Vec<(String, f64, u64)> = Vec::new();
+    for e in &pes {
+        let a = e.pe.as_ref().expect("filtered");
+        for sec in &a.sections {
+            if sec.is_high_entropy() && sec.raw_size > 4096 {
+                entropic.push((
+                    format!("{} `{}`", short_name(&e.member), sec.name),
+                    sec.entropy,
+                    sec.raw_size as u64,
+                ));
+            }
+        }
+    }
+    if !entropic.is_empty() {
+        entropic.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        writeln!(
+            w,
+            "  Section entropy above 7.20 of 8.00 ({} section(s)); compressed, encrypted or packed",
+            entropic.len()
+        )?;
+        for (what, value, size) in entropic.iter().take(8) {
+            writeln!(
+                w,
+                "    {:>5.2}  {:>10}  {}",
+                value,
+                human_bytes(*size),
+                truncate(what, 60)
+            )?;
+        }
+        if entropic.len() > 8 {
+            writeln!(w, "    ... and {} more", entropic.len() - 8)?;
+        }
     }
     if anomalies == 0 {
         writeln!(w, "  No packer or section anomalies detected")?;

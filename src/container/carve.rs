@@ -1,6 +1,8 @@
 //! Signature-based carving of embedded data, via the binwalk library.
 //!
-//! Behind the `carve` cargo feature, off by default.
+//! Behind the `carve` cargo feature, which is **on** by default since 4.4.0. The runtime flag
+//! `--carve` is what is off by default, because signature scanning every member costs time a
+//! default scan should not spend.
 //!
 //! Carving answers a different question from unpacking. The unpackers above open a
 //! container that declares its own member list. Carving scans for format signatures

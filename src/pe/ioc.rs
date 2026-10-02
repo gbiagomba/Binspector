@@ -189,6 +189,14 @@ impl Extractor {
                 }
                 if self.file_paths.len() < self.cap {
                     self.file_paths.insert(p.to_string());
+                } else if let Some(evictable) = self.crowded_path(p) {
+                    // The cap is full, but it is full of near-duplicates. A thousand headers from
+                    // one compiler install say one thing; this path may say something else. Drop a
+                    // member of the largest directory family to make room, and still count it as a
+                    // drop, because one indicator was lost either way.
+                    self.file_paths.remove(&evictable);
+                    self.file_paths.insert(p.to_string());
+                    self.dropped.file_paths += 1;
                 } else {
                     self.dropped.file_paths += 1;
                 }
@@ -206,6 +214,32 @@ impl Extractor {
                 }
             }
         }
+    }
+
+    /// A path to evict so a more distinctive one can be kept, or `None` when nothing is crowded.
+    ///
+    /// The cap is first-come, which is the wrong order: boilerplate is common and arrives early,
+    /// while the interesting path is rare and arrives late. Rather than reorder collection, this
+    /// trades a path from the most over-represented directory for the incoming one, but only when
+    /// the incoming path is from a *less* represented directory than the one being evicted. That
+    /// condition is what stops it thrashing: two equally common families cannot evict each other
+    /// forever, and a flood of new boilerplate cannot displace an established distinct entry.
+    fn crowded_path(&self, incoming: &str) -> Option<String> {
+        let incoming_dir = parent_dir(incoming);
+        let mut counts: std::collections::BTreeMap<String, usize> = Default::default();
+        for p in &self.file_paths {
+            *counts.entry(parent_dir(p)).or_insert(0) += 1;
+        }
+        let incoming_count = counts.get(&incoming_dir).copied().unwrap_or(0);
+        let (fullest, n) = counts.into_iter().max_by_key(|(_, n)| *n)?;
+        // Only worth evicting when one family genuinely dominates and the newcomer is rarer.
+        if n < 8 || incoming_count + 1 >= n {
+            return None;
+        }
+        self.file_paths
+            .iter()
+            .find(|p| parent_dir(p) == fullest)
+            .cloned()
     }
 
     pub fn finish(self) -> Iocs {
@@ -246,6 +280,15 @@ fn home_root(p: &str) -> String {
         }
     }
     lower
+}
+
+/// The directory a path sits in, used to measure how over-represented a family is.
+fn parent_dir(p: &str) -> String {
+    let norm = p.replace('\\', "/");
+    match norm.rfind('/') {
+        Some(i) => norm[..i].to_ascii_lowercase(),
+        None => String::new(),
+    }
 }
 
 fn is_build_path(p: &str) -> bool {
@@ -339,6 +382,44 @@ mod build_path_tests {
             out.build_paths
         );
         assert!(out.build_paths[0].contains("opencv-4.3.0"));
+    }
+
+    /// The cap is first-come, which keeps exactly the wrong paths: boilerplate is common and
+    /// arrives early, the interesting path is rare and arrives late.
+    #[test]
+    fn a_distinct_path_displaces_one_from_a_crowded_directory() {
+        let mut e = Extractor::new(12);
+        // One compiler install, many near-identical headers.
+        for i in 0..12 {
+            e.feed(&format!(r"C:\Program Files\MSVC\include\h{}.h", i));
+        }
+        // A path from a directory nothing else is in.
+        e.feed(r"C:\build\vendor\thirdparty\interesting.c");
+        let out = e.finish();
+        assert_eq!(out.file_paths.len(), 12, "the cap still holds");
+        assert!(
+            out.file_paths.iter().any(|p| p.contains("interesting.c")),
+            "the distinct path should have displaced a crowded one: {:?}",
+            out.file_paths
+        );
+        assert!(out.dropped.file_paths > 0, "and the loss is still counted");
+    }
+
+    /// The guard against thrashing: a flood of equally common paths must not keep evicting each
+    /// other, and must not displace an established distinct entry.
+    #[test]
+    fn more_boilerplate_cannot_displace_an_established_entry() {
+        let mut e = Extractor::new(12);
+        e.feed(r"C:\build\vendor\thirdparty\interesting.c");
+        for i in 0..40 {
+            e.feed(&format!(r"C:\Program Files\MSVC\include\h{}.h", i));
+        }
+        let out = e.finish();
+        assert!(
+            out.file_paths.iter().any(|p| p.contains("interesting.c")),
+            "the distinct entry must survive a flood: {:?}",
+            out.file_paths
+        );
     }
 
     #[test]

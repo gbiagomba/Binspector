@@ -155,6 +155,8 @@ Container format `zip`, 6 members, 2.2 MiB unpacked, 11,200 strings.
   !! Packed.dll: section .pack is both writable and executable
   !! Packed.dll: section .pack entropy 7.93 bits/byte suggests compressed content
   !! Bridge.dll: 3 TLS callback(s) run before the entry point
+  Section entropy above 7.20 of 8.00 (1 section(s)); compressed, encrypted or packed
+     7.93     7.5 KiB  Packed.dll `.pack`
   Findings by origin
     first-party (--first-party)        2
     unsigned                          2
