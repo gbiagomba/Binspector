@@ -345,6 +345,7 @@ pub(crate) mod tests_support {
             include_excluded: false,
             targets: Vec::new(),
             posture: Vec::new(),
+            external_imports: Vec::new(),
             excluded_by_rule: Vec::new(),
             coverage: Coverage {
                 root_format: "zip".into(),

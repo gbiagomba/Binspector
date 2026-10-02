@@ -188,7 +188,7 @@ Container format `zip`, 6 members, 2.2 MiB unpacked, 11,200 strings.
     1 image(s) import both forms, 0 only hardened, 0 only unbounded
     App.exe                                  1 unbounded, 3 hardened
     Slots are distinct import names per image, not call sites, so the same module built for four instruction sets counts four times: that is four files to change.
-  Imports parsed: 18
+  Imports parsed: 21
   5 occurrence(s) confirmed by the import table rather than inferred from text
 ```
 
@@ -229,6 +229,15 @@ Container format `zip`, 6 members, 2.2 MiB unpacked, 11,200 strings.
   1 of 4 image(s) load modules at runtime: 0 hardened, 1 unhardened, 0 naming a module with no path
   !! no image restricts its own search path: none import SetDefaultDllDirectories or AddDllDirectory
   A surface, not a defect: the module argument is not recoverable without disassembly. Seek to the offsets above to confirm, and note that names already resolved from the import table, the api-ms-win-* API sets, and self-references are excluded.
+```
+
+## Imported modules not in the package (1 module(s) across 1 image(s))
+
+```text
+  !! Weak.exe: libcrypto-3-x64.dll (3 import(s))
+       unsigned, so a substitute cannot be told from the vendor's copy, and imports no search-path hardening API
+  Absent from the package is not absent at runtime: a system DLL, a side-by-side assembly or a separately installed redistributable all resolve without shipping here. What this says is that the search order decides what satisfies the import, not the build.
+  fix: ship the dependency inside the package, and call `SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_SYSTEM32)` early in process start so a module dropped beside the executable cannot win.
 ```
 
 ## Native analysis (2 ELF/Mach-O image(s))

@@ -20,7 +20,7 @@ use crate::scan::banned::Severity;
 /// Same reasoning as `pe::posture::MEMBER_CAP`: a posture finding is a statement about a build
 /// configuration, not about 179 individual files, so the list exists to let a reviewer start
 /// somewhere rather than to be exhaustive. `affected` carries the true total.
-const MEMBER_CAP: usize = 50;
+const MEMBER_CAP: usize = 4096;
 
 /// Turn per-member mitigations into findings, one finding per mitigation listing its members.
 ///
@@ -295,7 +295,7 @@ mod tests {
         let f = findings(&members);
         assert_eq!(f.len(), 1, "100 unsigned images is one statement");
         assert_eq!(f[0].affected, 100, "the true total is kept");
-        assert_eq!(f[0].members.len(), MEMBER_CAP, "the named list is capped");
+        assert_eq!(f[0].members.len(), 100, "the whole set is recorded");
         assert_eq!(
             f[0].members[0], "img0",
             "the cap truncates, it does not sample"

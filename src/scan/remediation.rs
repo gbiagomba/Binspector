@@ -105,6 +105,26 @@ fn override_for(function: &str) -> Option<&'static str> {
 
 fn exact(f: &str) -> Option<&'static str> {
     Some(match f {
+        // The UCRT formatting backends. MSVC emits a call to one of these rather than to
+        // `sprintf`, so they have to be on the list, but the import is weaker evidence than a
+        // direct `sprintf` import and the remediation has to say so or 231 hits read as 231
+        // defects. Each backend takes a `_BufferCount` that the front end supplies: `sprintf`
+        // passes `(size_t)-1` and `snprintf` passes the real size, so linkage proves formatted
+        // output into a buffer and cannot distinguish the two.
+        //
+        // Named explicitly rather than matched by prefix, because `override_for` lowercases and
+        // strips one trailing a/w, which would not reach these.
+        "__stdio_common_vsprintf"
+        | "__stdio_common_vswprintf"
+        | "__stdio_common_vsnprintf"
+        | "__stdio_common_vsnwprintf"
+        | "__stdio_common_vfprintf"
+        | "__stdio_common_vfwprintf" => {
+            "this is the shared UCRT backend the compiler emits, not a call site: `sprintf` and \
+             `snprintf` both route through it and differ only in the buffer count they pass, so \
+             the import does not say the call is unbounded. Read the call sites, and prefer the \
+             `_s` forms or `snprintf` with an explicit size so the bound is in the source"
+        }
         "strncpy" | "wcsncpy" | "_tcsncpy" => {
             "`strncpy` does not NUL-terminate when the source fills the buffer, so a bounded call \
              still yields an unterminated string. Use `strlcpy` or `strcpy_s`, or terminate \
@@ -199,5 +219,24 @@ mod tests {
     fn an_unknown_name_falls_back_to_its_family() {
         let a = advice("CompanySpecificUnsafeCopy", Category::BufferOverflow);
         assert_eq!(a, for_category(Category::BufferOverflow));
+    }
+
+    #[test]
+    fn the_ucrt_backends_say_the_import_is_linkage_not_a_call_site() {
+        // The field report accepted the High tier and asked for exactly this: a consumer reading
+        // 231 hits at `high` would otherwise take them for 231 defects, when what the import
+        // proves is that formatted output into a buffer happens somewhere in the module.
+        for f in [
+            "__stdio_common_vsprintf",
+            "__stdio_common_vswprintf",
+            "__stdio_common_vfprintf",
+        ] {
+            let a = advice(f, Category::FormatString);
+            assert!(a.contains("shared UCRT backend"), "{}: {}", f, a);
+            assert!(a.contains("does not say the call is unbounded"), "{}", f);
+        }
+        // A direct `sprintf` import keeps the ordinary format-string advice, because there the
+        // call really is the finding.
+        assert!(!advice("sprintf", Category::FormatString).contains("shared UCRT backend"));
     }
 }

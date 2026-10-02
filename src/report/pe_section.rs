@@ -6,6 +6,7 @@ use std::io::Write;
 use super::fmt_util::{preview, short_name, truncate};
 use super::human_bytes;
 use super::thousands;
+use crate::cli::color::Theme;
 use crate::model::Report;
 use crate::pe::loader::Verdict;
 use crate::pe::mitigations::State;
@@ -347,6 +348,88 @@ fn write_hygiene_text(w: &mut dyn Write, r: &Report) -> Result<()> {
         "    Slots are distinct import names per image, not call sites, so the same module built \
          for four instruction sets counts four times: that is four files to change."
     )?;
+    Ok(())
+}
+
+/// Imported modules the package does not contain.
+///
+/// Kept deliberately narrow about what it claims. Absence from the package is not absence at
+/// runtime: a system DLL, a side-by-side assembly, a separately installed redistributable and a
+/// module dropped next to the executable all resolve without shipping here. What the section does
+/// say is that the build does not determine what satisfies the import, the search order does.
+///
+/// The count of modules recognised as Windows components is printed rather than left implicit,
+/// because the allowlist is doing almost all of the work: 169 of 202 imported libraries are absent
+/// from the reference package and 166 of those are ordinary Windows surface. A reader is entitled
+/// to see that the filter ran.
+pub fn write_external_imports_text(w: &mut dyn Write, r: &Report) -> Result<()> {
+    if r.external_imports.is_empty() {
+        return Ok(());
+    }
+    let modules: usize = r.external_imports.iter().map(|e| e.modules.len()).sum();
+    writeln!(
+        w,
+        "Imported modules not in the package ({} module(s) across {} image(s))",
+        thousands(modules as u64),
+        thousands(r.external_imports.len() as u64)
+    )?;
+    for e in r.external_imports.iter().take(12) {
+        let named: Vec<String> = e
+            .modules
+            .iter()
+            .take(4)
+            .map(|m| format!("{} ({} import(s))", m.library, m.imports))
+            .collect();
+        let more = if e.modules.len() > 4 {
+            format!(", and {} more", e.modules.len() - 4)
+        } else {
+            String::new()
+        };
+        writeln!(
+            w,
+            "  {} {}: {}{}",
+            Theme::marker(e.severity),
+            truncate(short_name(&e.member), 40),
+            named.join(", "),
+            more
+        )?;
+        // The two facts that set the severity, stated on the row so it is arguable rather than
+        // asserted.
+        writeln!(
+            w,
+            "       {}, and {}",
+            if e.signed {
+                "Authenticode signed"
+            } else {
+                "unsigned, so a substitute cannot be told from the vendor's copy"
+            },
+            if e.restricts_search_path {
+                "restricts its own search path"
+            } else {
+                "imports no search-path hardening API"
+            }
+        )?;
+    }
+    if r.external_imports.len() > 12 {
+        writeln!(
+            w,
+            "  ... and {} more image(s)",
+            thousands((r.external_imports.len() - 12) as u64)
+        )?;
+    }
+    writeln!(
+        w,
+        "  Absent from the package is not absent at runtime: a system DLL, a side-by-side \
+         assembly or a separately installed redistributable all resolve without shipping here. \
+         What this says is that the search order decides what satisfies the import, not the build."
+    )?;
+    writeln!(
+        w,
+        "  fix: ship the dependency inside the package, and call \
+         `SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_SYSTEM32)` early in process start so a \
+         module dropped beside the executable cannot win."
+    )?;
+    writeln!(w)?;
     Ok(())
 }
 

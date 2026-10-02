@@ -42,6 +42,7 @@ const SECTIONS: &[&str] = &[
     "Third-party components",
     "Indicators",
     "Build provenance",
+    "Imported modules not in the package",
     "Findings",
     "Coverage",
     "Occurrences",
@@ -56,6 +57,15 @@ fn golden_dir() -> PathBuf {
 fn report() -> Report {
     let mut r = rich_report();
     r.posture = crate::scan::all_posture(&r.coverage.entries);
+    // Same reasoning as `posture`: computed by the production rule over the fixture's members, so
+    // the golden cannot drift from the rule and the section is never vacuously absent.
+    let leaves: std::collections::BTreeSet<String> = r
+        .coverage
+        .entries
+        .iter()
+        .map(|e| crate::report::fmt_util::short_name(&e.member).to_ascii_lowercase())
+        .collect();
+    r.external_imports = crate::scan::all_external_imports(&r.coverage.entries, &leaves);
     r
 }
 

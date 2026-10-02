@@ -753,6 +753,7 @@ pub fn run_labeled(
                 .collect(),
         }],
         posture: all_posture(&coverage_entries),
+        external_imports: all_external_imports(&coverage_entries, &member_leaves),
         coverage: Coverage {
             root_format: outcome.root_format.as_str().to_string(),
             members_scanned: outcome.members_scanned,
@@ -791,6 +792,60 @@ pub fn run_labeled(
 /// One function rather than two call sites appending two lists, because concatenating two
 /// already-sorted lists is not sorted: a Medium PE finding would print above a High ELF one.
 /// The ordering here is `pe::posture`'s, applied to the union.
+/// Which images import modules the package does not carry.
+///
+/// Computed after the walk for the same reason `all_posture` is: the question is "absent from the
+/// package", and the package is only fully known once the scan has finished.
+///
+/// Severity is a property of the importer rather than of the missing module. An unsigned image
+/// that restricts nothing about its own search path is a different proposition from a
+/// vendor-signed one that calls `SetDefaultDllDirectories`, even for the same absent dependency,
+/// because what satisfies the import is decided by the search order in the first case and
+/// constrained by the build in the second.
+pub fn all_external_imports(
+    entries: &[CoverageEntry],
+    package_leaves: &std::collections::BTreeSet<String>,
+) -> Vec<crate::model::ExternalImport> {
+    let mut out: Vec<crate::model::ExternalImport> = Vec::new();
+    for e in entries {
+        let Some(a) = e.pe.as_ref() else { continue };
+        let found = crate::pe::unresolved::external_imports(&a.imports, package_leaves);
+        if found.is_empty() {
+            continue;
+        }
+        let signed = a.signature.is_some();
+        let restricts = !a.loader.hardening.is_empty();
+        // Unsigned and unrestricted is the AdobePDFL.dll case and the one worth reading first:
+        // nothing about the build constrains what satisfies the import, and nothing about the
+        // file lets a reviewer tell the vendor's copy from a substitute.
+        let severity = match (signed, restricts) {
+            (false, false) => Severity::High,
+            (_, false) => Severity::Medium,
+            _ => Severity::Low,
+        };
+        out.push(crate::model::ExternalImport {
+            member: e.member.clone(),
+            modules: found.modules,
+            signed,
+            restricts_search_path: restricts,
+            severity,
+        });
+    }
+    // Worst first, then by how much of the missing module's surface is used, then by name so the
+    // ordering is total and the output reproducible.
+    out.sort_by(|a, b| {
+        a.severity
+            .cmp(&b.severity)
+            .then_with(|| {
+                let bs: usize = b.modules.iter().map(|m| m.imports).sum();
+                let as_: usize = a.modules.iter().map(|m| m.imports).sum();
+                bs.cmp(&as_)
+            })
+            .then(a.member.cmp(&b.member))
+    });
+    out
+}
+
 pub fn all_posture(entries: &[CoverageEntry]) -> Vec<crate::model::PostureFinding> {
     let pes: Vec<&CoverageEntry> = entries.iter().filter(|e| e.pe.is_some()).collect();
     let unix: Vec<(String, crate::exe::posture::UnixMitigations, bool)> = entries

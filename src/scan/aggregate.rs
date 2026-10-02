@@ -346,4 +346,15 @@ fn finish_aggregate(r: &mut Report) {
             .then(a.offset.cmp(&b.offset))
     });
     r.posture = super::all_posture(&r.coverage.entries);
+    // Recomputed over the merged member list, not merged from the per-target results. "Absent
+    // from the package" is a question about the whole run: a DLL missing from one target may ship
+    // in a sibling target, and the loader resolves by name, so a per-target answer would report a
+    // dependency as external when the run as a whole carries it.
+    let leaves: std::collections::BTreeSet<String> = r
+        .coverage
+        .entries
+        .iter()
+        .map(|e| crate::report::fmt_util::short_name(&e.member).to_ascii_lowercase())
+        .collect();
+    r.external_imports = super::all_external_imports(&r.coverage.entries, &leaves);
 }

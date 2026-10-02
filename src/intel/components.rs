@@ -122,7 +122,18 @@ const SIGNATURES: &[Signature] = &[
     },
     Signature {
         name: "dotnet",
-        pattern: r"\.NET (?:Core )?(\d+\.\d+(?:\.\d+)?)",
+        // The framework moniker and the runtime package name, not prose mentioning a version.
+        //
+        // `\.NET (?:Core )?(\d+\.\d+)` matched the error string "Getting the contract for the
+        // initialized hostpolicy is only supported for .NET Core 3.0 or a higher version." and
+        // reported .NET 3.0 as a shipped component of a package that ships .NET 8. That is the
+        // same defect as reporting ICU 36 from a filename no member carries: a sentence that
+        // names a version is not evidence that the version is present.
+        //
+        // Both forms here are structured identifiers a build emits, so neither can appear in a
+        // sentence: `.NETCoreApp,Version=v8.0` comes from TargetFrameworkAttribute and
+        // `Microsoft.NETCore.App/8.0.11` from the runtime package reference.
+        pattern: r"(?:\.NETCoreApp,Version=v|Microsoft\.NETCore\.App[/ ])(\d+\.\d+(?:\.\d+)?)",
         confirm_file: None,
     },
     Signature {
@@ -516,5 +527,37 @@ mod tests {
         );
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].version, "1.2.13");
+    }
+
+    #[test]
+    fn prose_naming_a_dotnet_version_is_not_a_shipped_component() {
+        // The exact string from a real scan. The loose pattern reported .NET 3.0 as a component
+        // of a package that ships .NET 8, which is the `icu 36` defect in a new place: a
+        // sentence that names a version is not evidence the version is present.
+        let got = detect(&[
+            "Getting the contract for the initialized hostpolicy is only supported for \
+             .NET Core 3.0 or a higher version.",
+            ".NET 6.0",
+        ]);
+        assert!(
+            got.is_empty(),
+            "prose and a bare version string are not component evidence: {:?}",
+            got
+        );
+    }
+
+    #[test]
+    fn the_framework_moniker_and_runtime_package_are_component_evidence() {
+        // Structured identifiers a build emits, which cannot occur inside a sentence.
+        let got = detect(&[
+            "[assembly: global::System.Runtime.Versioning.TargetFrameworkAttribute(\
+             \".NETCoreApp,Version=v8.0\", FrameworkDisplayName=\"\")]",
+        ]);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].name, "dotnet");
+        assert_eq!(got[0].version, "8.0");
+
+        let got = detect(&["Microsoft.NETCore.App/8.0.11"]);
+        assert_eq!(got[0].version, "8.0.11");
     }
 }

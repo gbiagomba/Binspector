@@ -151,6 +151,9 @@ pub(crate) fn rich_report() -> Report {
             carve_ran: true,
         },
         posture: Vec::new(),
+        // Filled by the parent from `crate::scan::all_external_imports`, the same way `posture`
+        // is, so the finding comes from the real rule rather than from a hand-written record.
+        external_imports: Vec::new(),
         targets: targets(),
         iocs: iocs(),
         intel: intel(),
@@ -308,6 +311,14 @@ fn entries() -> Vec<CoverageEntry> {
     weak.mitigations.gs = State::Disabled;
     weak.mitigations.authenticode = State::Disabled;
     weak.imports = from_lib("msvcrt.dll", &["memcpy", "memset", "sprintf"]);
+    // A crypto dependency that ships nowhere in this fixture's member list and is not a Windows
+    // component, on an unsigned image that restricts nothing about its search path. That is the
+    // worst-case shape for the external-import rule and it is a real one: `AdobePDFL.dll` in the
+    // reference package imports 25 functions from a `libcrypto` the package does not carry.
+    weak.imports.extend(from_lib(
+        "libcrypto-3-x64.dll",
+        &["EVP_aes_256_cbc", "RAND_bytes", "EVP_sha256"],
+    ));
     weak.signature = None;
 
     // TLS callbacks, an overlay, dynamic loading, a pipe server, and the `--first-party` match,

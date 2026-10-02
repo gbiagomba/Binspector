@@ -39,6 +39,10 @@ CREATE TABLE IF NOT EXISTS posture (
   id TEXT, title TEXT, severity TEXT, affected INTEGER, members_listed INTEGER,
   members_truncated INTEGER, evidence TEXT, remediation TEXT);
 CREATE TABLE IF NOT EXISTS posture_members (id TEXT, member TEXT);
+CREATE TABLE IF NOT EXISTS external_imports (
+  member TEXT, library TEXT, imports INTEGER, severity TEXT,
+  signed INTEGER, restricts_search_path INTEGER);
+CREATE INDEX IF NOT EXISTS idx_external_imports_library ON external_imports(library);
 CREATE INDEX IF NOT EXISTS idx_posture_members_id ON posture_members(id);
 CREATE TABLE IF NOT EXISTS indicators (kind TEXT, value TEXT);
 CREATE TABLE IF NOT EXISTS indicators_dropped (kind TEXT, not_collected INTEGER, cap INTEGER);
@@ -173,6 +177,23 @@ pub fn write(
                     "INSERT INTO posture_members VALUES ({},{});",
                     sql_literal(&p.id),
                     sql_literal(m)
+                )?;
+            }
+        }
+
+        // One row per (image, missing module), so the obvious question is a one-line query:
+        // which images depend on a module nobody ships, and how much of it do they use.
+        for e in &r.external_imports {
+            for m in &e.modules {
+                writeln!(
+                    w,
+                    "INSERT INTO external_imports VALUES ({},{},{},{},{},{});",
+                    sql_literal(&e.member),
+                    sql_literal(&m.library),
+                    m.imports,
+                    sql_literal(e.severity.as_str()),
+                    e.signed as u8,
+                    e.restricts_search_path as u8
                 )?;
             }
         }

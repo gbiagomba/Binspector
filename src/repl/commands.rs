@@ -423,6 +423,7 @@ pub mod sqlite_support {
             // none. Not the same as a scan that found an image hardened, and the browser says
             // so rather than showing an empty posture section as though it were a clean result.
             posture: Vec::new(),
+            external_imports: Vec::new(),
             excluded_by_rule: Vec::new(),
             tool_version,
             binary,

@@ -36,9 +36,19 @@ struct Rule {
 
 /// Highest cap on members named in one finding. The rest are counted.
 ///
-/// A posture finding is about a build configuration, not about 179 individual files, so the
-/// list exists to let a reviewer start somewhere rather than to be exhaustive.
-const MEMBER_CAP: usize = 50;
+/// A posture finding is about a build configuration, not about 179 individual files, so the human
+/// reports show a handful and the record carries the set a query needs.
+///
+/// **Raised from 50 in 5.8.0, and the reason is a retraction.** The stored list is in scan order,
+/// so the first 50 of 179 images missing Authenticode all came from one vendor. A reviewer read
+/// that as representative, concluded the finding belonged to that vendor, and had to withdraw it
+/// publicly. 5.7.0 added a `posture_members` table so the set could be queried instead of
+/// eyeballed, and the table inherited this cap, which reproduced the trap it was added to remove.
+///
+/// It is still a cap rather than no cap, because a pathological input could otherwise name every
+/// member of a 4,281-member package in every finding. 4,096 is far above any real build: the
+/// largest finding on the reference package is 179.
+const MEMBER_CAP: usize = 4096;
 
 /// Derive posture findings from the images a scan parsed.
 ///
@@ -308,7 +318,27 @@ mod tests {
         let f = findings_of(&e);
         assert_eq!(f.len(), 1, "100 unsigned images is one statement");
         assert_eq!(f[0].affected, 100, "the true count is kept");
-        assert_eq!(f[0].members.len(), MEMBER_CAP, "the list is capped");
+        // Every one is recorded. Until 5.8.0 this stopped at 50, in scan order, and a reviewer
+        // who read the stored 50 of 179 as representative had to retract the conclusion.
+        assert_eq!(f[0].members.len(), 100, "the whole set is recorded");
+    }
+
+    #[test]
+    fn the_member_list_is_still_bounded_against_a_pathological_input() {
+        // Not "no cap": a crafted package could otherwise name every member of a 4,281-member
+        // archive in every finding. The bound is far above any real build.
+        let e: Vec<CoverageEntry> = (0..MEMBER_CAP + 10)
+            .map(|i| {
+                entry(
+                    &format!("img{}.dll", i),
+                    |m| m.authenticode = State::Disabled,
+                    false,
+                )
+            })
+            .collect();
+        let f = findings_of(&e);
+        assert_eq!(f[0].affected, MEMBER_CAP + 10, "the true count is kept");
+        assert_eq!(f[0].members.len(), MEMBER_CAP);
     }
 
     #[test]

@@ -161,6 +161,23 @@ pub struct PostureFinding {
     pub remediation: String,
 }
 
+/// One image and the modules it imports from outside the package.
+///
+/// Severity is a property of the *importer*, not of the missing module: an unsigned image that
+/// restricts nothing about its own search path is a different proposition from a vendor-signed
+/// one that calls `SetDefaultDllDirectories`, even for the same absent dependency.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ExternalImport {
+    pub member: String,
+    pub modules: Vec<crate::pe::unresolved::Unresolved>,
+    /// Whether the image carries an Authenticode signature at all.
+    pub signed: bool,
+    /// Whether it imports any of `SetDefaultDllDirectories`, `AddDllDirectory`,
+    /// `RemoveDllDirectory`.
+    pub restricts_search_path: bool,
+    pub severity: Severity,
+}
+
 /// What the walk actually opened, so a clean result can be distinguished from a
 /// scan that never reached any real code.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -271,6 +288,14 @@ pub struct Report {
     #[serde(default)]
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub posture: Vec<PostureFinding>,
+    /// Imported modules that no member of the package contains and that are not recognised as
+    /// Windows components.
+    ///
+    /// Filled after the walk, like `posture`, because the question needs the complete member list
+    /// and that only exists once the scan is finished.
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub external_imports: Vec<ExternalImport>,
     /// Every target this report covers, one entry even for a single-target scan.
     #[serde(default)]
     pub targets: Vec<TargetInfo>,

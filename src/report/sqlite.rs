@@ -118,6 +118,21 @@ pub fn write(
                 tx.execute("INSERT INTO posture_members VALUES (?,?)", params![p.id, m])?;
             }
         }
+        for e in &r.external_imports {
+            for m in &e.modules {
+                tx.execute(
+                    "INSERT INTO external_imports VALUES (?,?,?,?,?,?)",
+                    params![
+                        e.member,
+                        m.library,
+                        m.imports as i64,
+                        e.severity.as_str(),
+                        e.signed as i64,
+                        e.restricts_search_path as i64
+                    ],
+                )?;
+            }
+        }
         for (rule, n) in &r.excluded_by_rule {
             tx.execute(
                 "INSERT INTO excluded_by_rule VALUES (?,?)",

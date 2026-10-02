@@ -16,6 +16,7 @@ pub mod packer;
 pub mod posture;
 pub mod sections;
 pub mod signer;
+pub mod unresolved;
 
 use serde::{Deserialize, Serialize};
 

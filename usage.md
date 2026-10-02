@@ -890,6 +890,23 @@ An occurrence reports the byte offset of the matched token within its member, pl
 offset of the containing string. Seek to the first to land on the token. UTF-16LE offsets
 account for the two-bytes-per-character stride, so they are directly usable.
 
+### Verifying a UTF-16LE occurrence by hand
+
+If you reach for `strings` to confirm one, note that the BSD `strings` shipped with macOS has
+no `-e` flag. `strings -e l file` fails with `unknown flag: -e` rather than returning nothing,
+which is easy to read as "the literal is not there". A reviewer missed a UTF-16LE-only string in
+a real package for exactly that reason.
+
+GNU binutils `strings` (`gstrings` under Homebrew, `strings` on Linux) does support it:
+
+```bash
+gstrings -e l app.dll | grep -i searchpath     # GNU, UTF-16LE
+strings -e l app.dll                           # fails on macOS: unknown flag: -e
+```
+
+A byte scan avoids the question entirely, and `binspector --dump` writes every string it
+extracted with its encoding and offset, which is what the offsets above are for.
+
 ## Browsing a report
 
 Loads a report an earlier scan produced and answers questions about it:
