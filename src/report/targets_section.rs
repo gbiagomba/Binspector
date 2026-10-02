@@ -61,6 +61,35 @@ pub fn write_text(w: &mut dyn Write, r: &Report) -> Result<()> {
         thousands(reached as u64),
         thousands(total as u64)
     )?;
+    // Four numbers in one line, three of which a reader has no reason to be able to decode.
+    // A real user reported this header as the thing in the report they understood least, so
+    // each term says what it counts and, where it matters, what it does not.
+    writeln!(
+        w,
+        "  a target is a file named on the command line or found by walking a directory; a \
+         member is anything unpacked out of one, nested archives included"
+    )?;
+    writeln!(
+        w,
+        "  occurrences count every banned-name match that survived the evidence rules, so one \
+         function in one file can contribute several"
+    )?;
+    if reached < total {
+        writeln!(
+            w,
+            "  `{} of {} reached an executable image` means the other {} yielded no PE, ELF or \
+             Mach-O to analyse, so their clean rows state what was not examined",
+            thousands(reached as u64),
+            thousands(total as u64),
+            thousands((total - reached) as u64)
+        )?;
+    } else {
+        writeln!(
+            w,
+            "  every target yielded at least one PE, ELF or Mach-O image, so no row is clean \
+             merely for want of something to analyse"
+        )?;
+    }
 
     // Both easy-to-miss states are named here as well as marked on their rows. The sort is by
     // findings, so a target that reached no code has nothing to sort on and lands at the

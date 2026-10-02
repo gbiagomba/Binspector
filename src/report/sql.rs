@@ -35,6 +35,11 @@ CREATE INDEX IF NOT EXISTS idx_hits_severity ON hits(severity);
 CREATE INDEX IF NOT EXISTS idx_hits_confidence ON hits(confidence);
 CREATE TABLE IF NOT EXISTS excluded (function TEXT, suppressed INTEGER);
 CREATE TABLE IF NOT EXISTS excluded_by_rule (rule TEXT, occurrences INTEGER);
+CREATE TABLE IF NOT EXISTS posture (
+  id TEXT, title TEXT, severity TEXT, affected INTEGER, members_listed INTEGER,
+  members_truncated INTEGER, evidence TEXT, remediation TEXT);
+CREATE TABLE IF NOT EXISTS posture_members (id TEXT, member TEXT);
+CREATE INDEX IF NOT EXISTS idx_posture_members_id ON posture_members(id);
 CREATE TABLE IF NOT EXISTS indicators (kind TEXT, value TEXT);
 CREATE TABLE IF NOT EXISTS indicators_dropped (kind TEXT, not_collected INTEGER, cap INTEGER);
 CREATE INDEX IF NOT EXISTS idx_indicators_kind ON indicators(kind);
@@ -128,6 +133,7 @@ pub fn write(
             ("email", d.emails),
             ("registry_key", d.registry_keys),
             ("file_path", d.file_paths),
+            ("build_path", d.build_paths),
         ] {
             if n > 0 {
                 writeln!(
@@ -138,6 +144,49 @@ pub fn write(
                     i.cap
                 )?;
             }
+        }
+
+        // The posture findings, which existed only in JSON. A reviewer working from the
+        // database, which is what the documentation recommends, silently missed `posture.aslr`:
+        // the highest-value output the tool produces and the only one that became a filed
+        // finding on its own in a real engagement.
+        //
+        // `members_truncated` is stored because the stored list is capped and in scan order,
+        // and a reader who takes 50 of 179 for the whole set draws a conclusion about one
+        // vendor that the full list does not support. That happened and had to be retracted.
+        for p in &r.posture {
+            writeln!(
+                w,
+                "INSERT INTO posture VALUES ({},{},{},{},{},{},{},{});",
+                sql_literal(&p.id),
+                sql_literal(&p.title),
+                sql_literal(p.severity.as_str()),
+                p.affected,
+                p.members.len(),
+                (p.affected > p.members.len()) as u8,
+                sql_literal(&p.evidence),
+                sql_literal(&p.remediation)
+            )?;
+            for m in &p.members {
+                writeln!(
+                    w,
+                    "INSERT INTO posture_members VALUES ({},{});",
+                    sql_literal(&p.id),
+                    sql_literal(m)
+                )?;
+            }
+        }
+
+        // The table existed and was never filled, so a consumer could not see that 33,334
+        // occurrences were suppressed, which is the context that makes the remaining count
+        // mean anything.
+        for (rule, n) in &r.excluded_by_rule {
+            writeln!(
+                w,
+                "INSERT INTO excluded_by_rule VALUES ({},{});",
+                sql_literal(rule),
+                n
+            )?;
         }
     }
 

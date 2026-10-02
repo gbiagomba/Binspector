@@ -85,23 +85,36 @@ pub fn write_text(w: &mut dyn Write, r: &Report) -> Result<()> {
     }
 
     // Packer and section anomalies, with the member that produced each.
+    //
+    // Deduplicated on the rendered line, because a package ships the same module for several
+    // instruction sets and sometimes the very same file twice: in one real report
+    // `Microsoft.UI.Xaml.Controls.dll: 2 TLS callback(s)` appeared three times and
+    // `onnxruntime.dll` twice, and two of the architecture `.msix` members were byte-identical.
+    // Repeating a line does not add evidence, and it pushed distinct anomalies past the limit.
+    let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     let mut anomalies = 0usize;
+    let mut repeats = 0usize;
     for e in &pes {
         let a = e.pe.as_ref().expect("filtered");
-        for hint in &a.packer_hints {
-            if anomalies < 20 {
-                writeln!(w, "  !! {}: {}", short_name(&e.member), hint)?;
-            }
-            anomalies += 1;
-        }
+        let mut lines: Vec<String> = a
+            .packer_hints
+            .iter()
+            .map(|hint| format!("  !! {}: {}", short_name(&e.member), hint))
+            .collect();
         if a.tls_callbacks > 0 {
+            lines.push(format!(
+                "  !! {}: {} TLS callback(s) run before the entry point",
+                short_name(&e.member),
+                a.tls_callbacks
+            ));
+        }
+        for line in lines {
+            if !seen.insert(line.clone()) {
+                repeats += 1;
+                continue;
+            }
             if anomalies < 20 {
-                writeln!(
-                    w,
-                    "  !! {}: {} TLS callback(s) run before the entry point",
-                    short_name(&e.member),
-                    a.tls_callbacks
-                )?;
+                writeln!(w, "{}", line)?;
             }
             anomalies += 1;
         }
@@ -109,19 +122,30 @@ pub fn write_text(w: &mut dyn Write, r: &Report) -> Result<()> {
     if anomalies > 20 {
         writeln!(w, "  ... and {} more anomalies", anomalies - 20)?;
     }
+    if repeats > 0 {
+        writeln!(
+            w,
+            "  {} further anomaly line(s) were identical to one above, which is the same module \
+             shipped for another instruction set rather than another finding",
+            repeats
+        )?;
+    }
     // The number behind the sentence. `packer_hints` says a section "suggests compressed or
     // encrypted content"; the reader then wants the value and the threshold to judge it, and the
     // value reached JSON but no human format.
+    // Deduplicated for the same reason as the anomalies above: `DirectML.dll `.rsrc`` at 7.99
+    // appeared three times in one report, once per architecture package.
     let mut entropic: Vec<(String, f64, u64)> = Vec::new();
+    let mut entropy_seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for e in &pes {
         let a = e.pe.as_ref().expect("filtered");
         for sec in &a.sections {
             if sec.is_high_entropy() && sec.raw_size > 4096 {
-                entropic.push((
-                    format!("{} `{}`", short_name(&e.member), sec.name),
-                    sec.entropy,
-                    sec.raw_size as u64,
-                ));
+                let what = format!("{} `{}`", short_name(&e.member), sec.name);
+                if !entropy_seen.insert(format!("{}|{:.2}|{}", what, sec.entropy, sec.raw_size)) {
+                    continue;
+                }
+                entropic.push((what, sec.entropy, sec.raw_size as u64));
             }
         }
     }

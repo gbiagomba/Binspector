@@ -146,6 +146,17 @@ fn write_summary(w: &mut dyn Write, r: &Report, opts: &RenderOpts) -> Result<()>
         thousands(med as u64),
         thousands(low as u64)
     )?;
+    // The raw count is complete and the logical count is reviewable. Printed together, and only
+    // when they differ, so a reader never has to re-derive the second to judge the first.
+    let logical = r.logical_findings();
+    if logical > 0 && logical < r.banned_hit_count {
+        writeln!(
+            w,
+            "  {} distinct (module, function, severity) finding(s); the rest are the same module \
+             shipped for another instruction set, so reviewing them is reviewing one thing",
+            thousands(logical as u64)
+        )?;
+    }
     if r.summary.is_empty() {
         writeln!(w, "  No banned function references found.")?;
         if !r.reached_executable() {
@@ -309,6 +320,20 @@ pub(super) fn write_posture_section(w: &mut dyn Write, r: &Report) -> Result<()>
                 String::new()
             }
         )?;
+        // Two different truncations, and conflating them misleads. The line above is display
+        // truncation, where the full list is a field away. This is collection truncation: the
+        // record itself holds only `members.len()` of `affected`, in scan order, so the stored
+        // names are whatever the walk reached first. A reviewer read 50 of 179 as representative,
+        // concluded the finding belonged to one vendor, and had to retract it.
+        if p.affected > p.members.len() {
+            writeln!(
+                w,
+                "      only {} of {} image name(s) were recorded, in scan order, so this list \
+                 is not a sample to generalise from",
+                p.members.len(),
+                p.affected
+            )?;
+        }
     }
     writeln!(w)?;
     Ok(())

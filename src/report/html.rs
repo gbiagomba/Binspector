@@ -13,6 +13,62 @@ use crate::model::Report;
 use crate::scan::banned::Severity;
 use crate::spool::SpoolReader;
 
+/// A copy button on every code block, added at load time.
+///
+/// Deliberately written so no report data ever reaches JavaScript: the script is a fixed string
+/// that walks the DOM, and the text it copies is read back out of `textContent`, which is the
+/// already-escaped rendering. Nothing is interpolated, so a hostile string from a scanned binary
+/// cannot reach a script context through this path, and the escaping tests still hold.
+///
+/// It is also the only script in the document and loads nothing, so the report stays a single
+/// self-contained file that works from a `file://` URL with no network.
+pub(super) const COPY_SCRIPT: &str = r#"<script>
+(function () {
+  var blocks = document.querySelectorAll("pre");
+  for (var i = 0; i < blocks.length; i++) {
+    var pre = blocks[i];
+    var wrap = document.createElement("div");
+    wrap.className = "snip";
+    pre.parentNode.insertBefore(wrap, pre);
+    wrap.appendChild(pre);
+    var b = document.createElement("button");
+    b.type = "button";
+    b.className = "copy";
+    b.textContent = "Copy";
+    b.setAttribute("aria-label", "Copy this block to the clipboard");
+    wrap.insertBefore(b, pre);
+  }
+  document.addEventListener("click", function (e) {
+    var b = e.target;
+    if (!b || b.className !== "copy") return;
+    var pre = b.parentNode.querySelector("pre");
+    if (!pre) return;
+    var text = pre.textContent;
+    var done = function (ok) {
+      b.textContent = ok ? "Copied" : "Press Ctrl+C";
+      setTimeout(function () { b.textContent = "Copy"; }, 1200);
+    };
+    // The async clipboard API needs a secure context, which file:// is not in every browser,
+    // so selecting the text is the fallback rather than a silent failure.
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () { done(true); },
+        function () { select(pre); done(false); });
+    } else {
+      select(pre);
+      done(false);
+    }
+  });
+  function select(pre) {
+    var r = document.createRange();
+    r.selectNodeContents(pre);
+    var s = window.getSelection();
+    s.removeAllRanges();
+    s.addRange(r);
+  }
+})();
+</script>
+"#;
+
 pub fn write(
     w: &mut dyn Write,
     r: &Report,
@@ -235,6 +291,7 @@ pub fn write(
         }
     }
 
+    w.write_all(COPY_SCRIPT.as_bytes())?;
     writeln!(w, "</body></html>")?;
     Ok(())
 }
@@ -305,6 +362,14 @@ h2 {{ font-size: 1.2rem; margin-top: 2rem; border-bottom: 1px solid var(--border
 code, pre {{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .88em; }}
 code {{ background: var(--code-bg); padding: .1em .35em; border-radius: 4px; }}
 pre {{ background: var(--code-bg); padding: .7rem; border-radius: 6px; overflow-x: auto; }}
+.snip {{ position: relative; }}
+.snip > button.copy {{ position: absolute; top: .35rem; right: .35rem; font: inherit;
+  font-size: .78em; line-height: 1; padding: .3em .5em; cursor: pointer; opacity: 0;
+  transition: opacity .12s; color: var(--fg); background: var(--bg);
+  border: 1px solid var(--border); border-radius: 4px; }}
+.snip:hover > button.copy, .snip > button.copy:focus-visible {{ opacity: 1; }}
+/* Always reachable without a pointer, and never hidden from a screen reader. */
+@media (hover: none) {{ .snip > button.copy {{ opacity: 1; }} }}
 table {{ border-collapse: collapse; width: 100%; margin: .6rem 0 1rem; }}
 th, td {{ border: 1px solid var(--border); padding: .4rem .55rem; text-align: left; vertical-align: top; }}
 th {{ background: var(--code-bg); }}
@@ -350,8 +415,26 @@ mod tests {
         assert!(out.starts_with("<!DOCTYPE html>"));
         assert!(out.contains("<style>"));
         assert!(!out.contains("http://"));
-        assert!(!out.contains("<script"));
         assert!(!out.contains("src="));
+        // Exactly one script, the fixed copy-button helper, and it is inline. Counting rather
+        // than forbidding, because a second `<script` could only have come from a scanned
+        // binary's strings, which is the thing the escaping tests exist to prevent.
+        assert_eq!(out.matches("<script").count(), 1);
+        assert!(out.contains("<script>\n(function () {"));
+    }
+
+    #[test]
+    fn the_copy_helper_never_receives_report_data() {
+        // The script is a constant. If a future change starts interpolating a member name or a
+        // context string into it, that is a script-injection path and this test is the tripwire.
+        assert!(!COPY_SCRIPT.contains("{}"));
+        let mut r = sample_report();
+        r.hits[0].context = "</script><script>alert(1)</script>".into();
+        r.hits[0].context_start = 0;
+        r.hits[0].context_end = 0;
+        let out = render(&r, &opts());
+        assert_eq!(out.matches("<script").count(), 1);
+        assert!(!out.contains("alert(1)</script>"));
     }
 
     #[test]

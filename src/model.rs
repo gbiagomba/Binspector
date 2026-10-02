@@ -351,6 +351,28 @@ impl Report {
     }
 
     /// Occurrences backed by a recorded PE import rather than embedded text.
+    /// Occurrences counted once per distinct module name, function, and severity.
+    ///
+    /// The raw count is honest and routinely misread as a workload. A real 1,355-occurrence
+    /// report held 754 distinct `(module, function, severity)` triples: 207 of 314
+    /// Microsoft-redistributable occurrences were one module recompiled for another instruction
+    /// set, and 9 of those were the same bytes scanned twice, because two architecture `.msix`
+    /// members had the same sha256. Reviewing those is reviewing one thing.
+    ///
+    /// Derived from `hits`, so when the occurrence cap truncates the detail this undercounts.
+    /// It is reported beside the complete raw number rather than instead of it.
+    pub fn logical_findings(&self) -> usize {
+        let mut seen = std::collections::BTreeSet::new();
+        for h in self.reported_hits() {
+            seen.insert((
+                crate::report::fmt_util::short_name(&h.member).to_string(),
+                h.function.as_str(),
+                h.severity,
+            ));
+        }
+        seen.len()
+    }
+
     pub fn definitive_hits(&self) -> usize {
         self.hits
             .iter()

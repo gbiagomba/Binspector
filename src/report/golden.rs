@@ -190,8 +190,12 @@ fn no_golden_carries_ansi() {
 #[test]
 fn hostile_text_is_escaped_in_html() {
     let h = render(OutputFormat::Html);
+    // The report carries exactly one script, the fixed copy-button helper, which contains no
+    // report data. Removing it and then forbidding `<script` keeps the original guarantee
+    // precise: any remaining script element could only have come from a scanned binary.
+    let without_helper = h.replace(crate::report::html::COPY_SCRIPT, "");
     assert!(
-        !h.contains("<script>"),
+        !without_helper.contains("<script"),
         "an unescaped <script> reached the HTML report"
     );
     assert!(

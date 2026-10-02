@@ -119,6 +119,24 @@ struct Agg {
     /// Needed because evidence can give two occurrences of one name different severities, so
     /// the summary row cannot simply copy the family value any more.
     worst: Option<Severity>,
+    /// Occurrences per adjusted severity, in `Severity` order: critical, high, medium, low.
+    ///
+    /// Tracked per occurrence rather than derived from `worst`, because `worst` is one value for
+    /// the whole function and the evidence rules work per occurrence. Attributing all of a
+    /// function's occurrences to its worst bucket put the target rollup one off the hit rows in
+    /// a real report: medium 104 and low 72 against 103 and 73. Counted here rather than from
+    /// `hits` so the totals stay complete when the occurrence cap truncates the detail.
+    per_severity: [usize; 4],
+}
+
+/// Index into `Agg::per_severity`.
+fn severity_slot(s: Severity) -> usize {
+    match s {
+        Severity::Critical => 0,
+        Severity::High => 1,
+        Severity::Medium => 2,
+        Severity::Low => 3,
+    }
 }
 
 pub fn run(path: &Path, cfg: &ScanConfig, observer: &dyn Observer) -> Result<ScanOutput> {
@@ -302,6 +320,7 @@ pub fn run_labeled(
                         evidence::Ruling::Exclude { .. } => (entry.severity, Vec::new()),
                     };
                     agg_entry.occurrences += 1;
+                    agg_entry.per_severity[severity_slot(imp_severity)] += 1;
                     agg_entry.members.insert(member_name.clone());
                     agg_entry.worst = match agg_entry.worst {
                         Some(w) if w <= imp_severity => Some(w),
@@ -465,6 +484,7 @@ pub fn run_labeled(
                             confidence: conf,
                         });
                         entry.occurrences += 1;
+                        entry.per_severity[severity_slot(severity)] += 1;
                         entry.members.insert(member_name.clone());
                         entry.worst = match entry.worst {
                             Some(w) if w <= severity => Some(w),
@@ -650,13 +670,14 @@ pub fn run_labeled(
     // Per-severity totals for this target's row, from the summary just assembled.
     let sev_counts = {
         let (mut c, mut h, mut m, mut l) = (0usize, 0usize, 0usize, 0usize);
-        for row in &summary {
-            match row.severity {
-                Severity::Critical => c += row.occurrences,
-                Severity::High => h += row.occurrences,
-                Severity::Medium => m += row.occurrences,
-                Severity::Low => l += row.occurrences,
-            }
+        // Per occurrence, not per summary row. A summary row carries one severity for the whole
+        // function while the evidence rules decide each occurrence separately, so bucketing by
+        // the row put the rollup one off the hit table.
+        for a in agg.values() {
+            c += a.per_severity[0];
+            h += a.per_severity[1];
+            m += a.per_severity[2];
+            l += a.per_severity[3];
         }
         // The targets table renders these four beside banned_hit_count, so a reader will read a
         // failure to sum as a bug in the tool. They are derived from the same summary rows, so

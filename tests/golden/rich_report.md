@@ -76,6 +76,9 @@ Container format `zip`, 6 members, 2.2 MiB unpacked, 11,200 strings.
 ## Targets (3, 9 occurrence(s), 6 member(s) scanned, 3 of 3 reached an executable image)
 
 ```text
+  a target is a file named on the command line or found by walking a directory; a member is anything unpacked out of one, nested archives included
+  occurrences count every banned-name match that survived the evidence rules, so one function in one file can contribute several
+  every target yielded at least one PE, ELF or Mach-O image, so no row is clean merely for want of something to analyse
   !! 2 target(s) carry their own scan warnings: Microsoft.VCLibs.ARM.14.00.Desktop.appx, vendor/bundles/arm64/Microsoft.WindowsAppRuntime.Redist.1.6/Payload.msix
      target                                 format       size members     c/h/m/l  selected by
   !! Microsoft.VCLibs.A~4.00.Desktop.appx#1 zip       6.0 MiB       3     1/1/2/2  extension:appx

@@ -23,6 +23,14 @@ h2 { font-size: 1.2rem; margin-top: 2rem; border-bottom: 1px solid var(--border)
 code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .88em; }
 code { background: var(--code-bg); padding: .1em .35em; border-radius: 4px; }
 pre { background: var(--code-bg); padding: .7rem; border-radius: 6px; overflow-x: auto; }
+.snip { position: relative; }
+.snip > button.copy { position: absolute; top: .35rem; right: .35rem; font: inherit;
+  font-size: .78em; line-height: 1; padding: .3em .5em; cursor: pointer; opacity: 0;
+  transition: opacity .12s; color: var(--fg); background: var(--bg);
+  border: 1px solid var(--border); border-radius: 4px; }
+.snip:hover > button.copy, .snip > button.copy:focus-visible { opacity: 1; }
+/* Always reachable without a pointer, and never hidden from a screen reader. */
+@media (hover: none) { .snip > button.copy { opacity: 1; } }
 table { border-collapse: collapse; width: 100%; margin: .6rem 0 1rem; }
 th, td { border: 1px solid var(--border); padding: .4rem .55rem; text-align: left; vertical-align: top; }
 th { background: var(--code-bg); }
@@ -106,6 +114,9 @@ pre.analysis { white-space: pre; line-height: 1.35; }
 </pre>
 <h2>Targets (3, 9 occurrence(s), 6 member(s) scanned, 3 of 3 reached an executable image)</h2>
 <pre class="analysis">
+  a target is a file named on the command line or found by walking a directory; a member is anything unpacked out of one, nested archives included
+  occurrences count every banned-name match that survived the evidence rules, so one function in one file can contribute several
+  every target yielded at least one PE, ELF or Mach-O image, so no row is clean merely for want of something to analyse
   !! 2 target(s) carry their own scan warnings: Microsoft.VCLibs.ARM.14.00.Desktop.appx, vendor/bundles/arm64/Microsoft.WindowsAppRuntime.Redist.1.6/Payload.msix
      target                                 format       size members     c/h/m/l  selected by
   !! Microsoft.VCLibs.A~4.00.Desktop.appx#1 zip       6.0 MiB       3     1/1/2/2  extension:appx
@@ -300,4 +311,49 @@ pre.analysis { white-space: pre; line-height: 1.35; }
 <div class="hit"><span class="marker">!!</span> <code class="high">LoadLibraryExW</code> in <code>Microsoft.VCLibs.ARM64.14.00.Desktop.appx :: Bridge.dll</code> at offset <code>0x4102d</code> (ascii)<pre>sub_401000: &lt;script&gt;alert(1)&lt;/script&gt;|x call <mark class="high">LoadLibraryExW</mark></pre></div>
 <div class="hit"><span class="marker">!!!</span> <code class="critical">strcpy</code> in <code>Microsoft.VCLibs.ARM.14.00.Desktop.appx :: plugins :: Packed.dll</code> at offset <code>0x2302d</code> (ascii)<pre>sub_401000: &lt;script&gt;alert(1)&lt;/script&gt;|x call <mark class="critical">strcpy</mark></pre></div>
 <div class="hit"><span class="marker">!!!</span> <code class="critical">gets</code> in <code>Microsoft.VCLibs.ARM64.14.00.Desktop.appx :: Bridge.dll</code> at offset <code>0x4202d</code> (ascii)<pre>sub_401000: &lt;script&gt;alert(1)&lt;/script&gt;|x call <mark class="critical">gets</mark></pre></div>
+<script>
+(function () {
+  var blocks = document.querySelectorAll("pre");
+  for (var i = 0; i < blocks.length; i++) {
+    var pre = blocks[i];
+    var wrap = document.createElement("div");
+    wrap.className = "snip";
+    pre.parentNode.insertBefore(wrap, pre);
+    wrap.appendChild(pre);
+    var b = document.createElement("button");
+    b.type = "button";
+    b.className = "copy";
+    b.textContent = "Copy";
+    b.setAttribute("aria-label", "Copy this block to the clipboard");
+    wrap.insertBefore(b, pre);
+  }
+  document.addEventListener("click", function (e) {
+    var b = e.target;
+    if (!b || b.className !== "copy") return;
+    var pre = b.parentNode.querySelector("pre");
+    if (!pre) return;
+    var text = pre.textContent;
+    var done = function (ok) {
+      b.textContent = ok ? "Copied" : "Press Ctrl+C";
+      setTimeout(function () { b.textContent = "Copy"; }, 1200);
+    };
+    // The async clipboard API needs a secure context, which file:// is not in every browser,
+    // so selecting the text is the fallback rather than a silent failure.
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () { done(true); },
+        function () { select(pre); done(false); });
+    } else {
+      select(pre);
+      done(false);
+    }
+  });
+  function select(pre) {
+    var r = document.createRange();
+    r.selectNodeContents(pre);
+    var s = window.getSelection();
+    s.removeAllRanges();
+    s.addRange(r);
+  }
+})();
+</script>
 </body></html>

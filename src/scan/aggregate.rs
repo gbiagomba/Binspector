@@ -153,7 +153,11 @@ fn run_parallel(
             sink.absorb(&mut reader)?;
         }
         merged = Some(match merged {
-            None => one,
+            None => {
+                let mut one = one;
+                label_own_warnings(&mut one.report);
+                one
+            }
             Some(acc) => merge(acc, one),
         });
     }
@@ -164,6 +168,28 @@ fn run_parallel(
         None => None,
     };
     Ok(out)
+}
+
+/// Prefix a report's top-level warnings with the target each came from.
+///
+/// Called on the first report of a fold, because `merge` labels only the incoming side. The
+/// accumulator's own warnings stayed bare, so in a ten-target run the first target's warnings
+/// read as claims about the whole scan. `no executable image (PE, ELF, or Mach-O) was reached`
+/// is correct and applies to exactly one `.appxsym` target; unlabelled at the top level, two
+/// independent reviewers concluded it was stale, and it was not.
+fn label_own_warnings(r: &mut crate::model::Report) {
+    let labels: Vec<(String, Vec<String>)> = r
+        .targets
+        .iter()
+        .map(|t| (t.label.clone(), t.warnings.clone()))
+        .collect();
+    for (label, warnings) in labels {
+        for w in warnings {
+            if let Some(slot) = r.warnings.iter_mut().find(|existing| **existing == w) {
+                *slot = format!("{}: {}", label, w);
+            }
+        }
+    }
 }
 
 /// Fold one target's report into the accumulated one.

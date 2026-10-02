@@ -89,6 +89,7 @@ pub fn write(
             ("email", d.emails),
             ("registry_key", d.registry_keys),
             ("file_path", d.file_paths),
+            ("build_path", d.build_paths),
         ] {
             if n > 0 {
                 tx.execute(
@@ -96,6 +97,32 @@ pub fn write(
                     params![kind, n as i64, i.cap as i64],
                 )?;
             }
+        }
+        // See sql.rs for why these two exist: the posture findings were JSON-only, and the
+        // `excluded_by_rule` table was created and never filled.
+        for p in &r.posture {
+            tx.execute(
+                "INSERT INTO posture VALUES (?,?,?,?,?,?,?,?)",
+                params![
+                    p.id,
+                    p.title,
+                    p.severity.as_str(),
+                    p.affected as i64,
+                    p.members.len() as i64,
+                    (p.affected > p.members.len()) as i64,
+                    p.evidence,
+                    p.remediation
+                ],
+            )?;
+            for m in &p.members {
+                tx.execute("INSERT INTO posture_members VALUES (?,?)", params![p.id, m])?;
+            }
+        }
+        for (rule, n) in &r.excluded_by_rule {
+            tx.execute(
+                "INSERT INTO excluded_by_rule VALUES (?,?)",
+                params![rule, *n as i64],
+            )?;
         }
         for h in &r.hits {
             tx.execute(
