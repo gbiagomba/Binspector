@@ -464,7 +464,18 @@ fn enrich(
                 );
             } else {
                 let sig_count = intel::components::Detector::new(1).signature_count();
-                match intel::cve::lookup(&components, sig_count, &creds, resolved.cve_limit) {
+                // Its own budget, not the sweep's: NVD is a different service with a different
+                // allowance, and sharing one ceiling would let a member sweep starve the CVE lookup
+                // or the reverse. Paced at the same rate, since the loop had none at all before.
+                let mut budget =
+                    intel::budget::Budget::new(resolved.rate_limit, resolved.request_budget);
+                match intel::cve::lookup(
+                    &components,
+                    sig_count,
+                    &creds,
+                    resolved.cve_limit,
+                    &mut budget,
+                ) {
                     Ok(c) => report.intel.cves = Some(c),
                     Err(e) => eprintln!("binspector: CVE lookup unavailable: {:#}", e),
                 }

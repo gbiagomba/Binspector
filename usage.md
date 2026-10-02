@@ -891,6 +891,19 @@ Whether a given use is within a service's terms is a judgement for the operator,
 scanner can determine. A paid or enterprise key carries no such restriction, and MetaDefender draws
 hash lookups from a Reputation quota separate from uploads.
 
+### CVE lookups are paced too
+
+`--cve` queries NVD once per detected component, and that loop had no pacing at all before 6.0.0.
+Survivable at nine components, not at ninety: NVD throttles an unauthenticated caller hard and the
+failure arrived as a column of identical "rate limit reached" errors that read like a broken tool
+rather than a throttled one. It now shares the same pacing and ceiling as the sweep, with its own
+allowance, because NVD is a different service and one ceiling would let a member sweep starve the
+CVE lookup or the reverse.
+
+A component the budget refused carries that as its error rather than an empty result, since an empty
+result is indistinguishable from "this component has no CVEs" and that is exactly the confusion the
+coverage note exists to prevent.
+
 ### Component detection coverage
 
 Detection uses curated signatures anchored on library banner text or a structured build identifier, not bare version

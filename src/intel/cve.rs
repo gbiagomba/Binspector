@@ -59,15 +59,37 @@ impl CveReport {
 }
 
 /// Look up CVEs for each detected component.
+///
+/// Paced through the same [`Budget`](super::budget::Budget) the reputation sweep uses. This loop ran
+/// back to back with no pacing at all until 6.0.0, which was survivable at nine components and is
+/// not at ninety: NVD rate-limits an unauthenticated caller hard, and the failure arrived as a row
+/// of identical "rate limit reached" errors that read like a broken tool rather than a throttled one.
+///
+/// A component refused by the budget is recorded with that as its error rather than as an empty
+/// result, because an empty result is indistinguishable from "this component has no CVEs" and that
+/// is the exact confusion the coverage note exists to prevent.
 pub fn lookup(
     components: &[Component],
     signature_count: usize,
     creds: &Credentials,
     max_per_component: usize,
+    budget: &mut super::budget::Budget,
 ) -> Result<CveReport> {
     http::ensure_available()?;
     let mut out = Vec::new();
     for c in components {
+        if !budget.claim() {
+            out.push(ComponentCves {
+                component: c.clone(),
+                cves: Vec::new(),
+                error: Some(format!(
+                    "not looked up: the request budget of {} was reached, so this is an absent \
+                     result rather than a clean one",
+                    budget.spent()
+                )),
+            });
+            continue;
+        }
         let (cves, error) = match query(c, creds, max_per_component) {
             Ok(v) => (v, None),
             Err(e) => (Vec::new(), Some(http::redact(&e.to_string()))),
@@ -309,5 +331,39 @@ mod tests {
         // real bundle hit: opencv 4.3.0 was detected and returned zero.
         assert!(note.contains("'and earlier' or carry only CPE data"));
         assert!(note.contains("not a result"));
+    }
+
+    #[test]
+    fn a_component_refused_by_the_budget_says_so_instead_of_looking_clean() {
+        // An empty CVE list is indistinguishable from "this component has no CVEs", which is the
+        // exact confusion the coverage note exists to prevent, so a budget refusal is an error
+        // string rather than silence.
+        let components = vec![
+            Component {
+                name: "zlib".into(),
+                version: "1.2.11".into(),
+                evidence: "deflate 1.2.11".into(),
+            },
+            Component {
+                name: "libpng".into(),
+                version: "1.6.40".into(),
+                evidence: "libpng version 1.6.40".into(),
+            },
+        ];
+        // A budget of zero refuses everything without a single request, so this runs offline.
+        let mut budget = crate::intel::budget::Budget::dry(0, 0);
+        let r = lookup(&components, 20, &Credentials::default(), 10, &mut budget)
+            .expect("no request is attempted");
+        assert_eq!(
+            r.components.len(),
+            2,
+            "every component is still accounted for"
+        );
+        for c in &r.components {
+            assert!(c.cves.is_empty());
+            let e = c.error.as_deref().unwrap_or_default();
+            assert!(e.contains("request budget"), "{}", e);
+            assert!(e.contains("absent result rather than a clean one"), "{}", e);
+        }
     }
 }
