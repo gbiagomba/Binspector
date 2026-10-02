@@ -111,6 +111,7 @@ binspector --banned-filter '^str' ./app.exe
 |---|---|
 | `--no-exe` | Skip executable parsing for all three formats (headers, sections, imports, mitigations) |
 | `--no-pe` | Alias for `--no-exe`, kept because it was the name before 5.2.0 |
+| `--no-pdb` | Skip compiland provenance on PDB members |
 | `--carve` | Scan every member for embedded file signatures. Opt-in at runtime, not a build gate |
 | `--extract <DIR>` | Write every unpacked member into `DIR`. The only thing that makes a scan write bytes from the target |
 | `--threads <N>` | Targets to scan at once. Defaults to the number of CPU cores |
