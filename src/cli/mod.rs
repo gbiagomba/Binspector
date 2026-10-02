@@ -163,7 +163,7 @@ pub struct Cli {
     pub no_pe: bool,
 
     /// Maximum indicators of each kind to collect
-    #[arg(long = "ioc-cap", default_value_t = 500, value_name = "N")]
+    #[arg(long = "ioc-cap", default_value_t = 10_000, value_name = "N")]
     pub ioc_cap: usize,
 
     /// Look the hash up with VirusTotal and MetaDefender (hash only, never file content)

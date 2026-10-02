@@ -21,6 +21,15 @@ pub struct Component {
 struct Signature {
     name: &'static str,
     pattern: &'static str,
+    /// A member filename this component must ship under for the detection to be real, with `{}`
+    /// standing in for the captured version.
+    ///
+    /// `None` for the banner signatures, where the evidence is a copyright string the library
+    /// itself compiled in and the string's presence is the fact. Filename evidence is weaker:
+    /// `icudt(\d+)` matched `icudt36` in some module's leftover string table and reported ICU 36
+    /// as a shipped component, when the only ICU payloads in the package were `icudt74.dll` and
+    /// `icuuc74.dll`. A filename that names no member of the archive is not a component.
+    confirm_file: Option<&'static str>,
 }
 
 /// Curated signature set. Patterns are anchored on the banner text these libraries
@@ -28,83 +37,103 @@ struct Signature {
 const SIGNATURES: &[Signature] = &[
     Signature {
         name: "openssl",
-        pattern: r"OpenSSL (\d+\.\d+\.\d+[a-z]?)",
+        pattern: r"OpenSSL (\d+\.\d+(?:\.\d+)?[a-z]?)",
+        confirm_file: None,
     },
     Signature {
         name: "zlib",
-        pattern: r"(?:^|\s)(?:deflate|inflate) (\d+\.\d+\.\d+) Copyright",
+        pattern: r"(?:^|\s)(?:deflate|inflate) (\d+\.\d+(?:\.\d+)?) Copyright",
+        confirm_file: None,
     },
     Signature {
         name: "libpng",
-        pattern: r"libpng version (\d+\.\d+\.\d+)",
+        pattern: r"libpng version (\d+\.\d+(?:\.\d+)?)",
+        confirm_file: None,
     },
     Signature {
         name: "libjpeg-turbo",
-        pattern: r"libjpeg-turbo version (\d+\.\d+\.\d+)",
+        pattern: r"libjpeg-turbo version (\d+\.\d+(?:\.\d+)?)",
+        confirm_file: None,
     },
     Signature {
         name: "libcurl",
-        pattern: r"libcurl/(\d+\.\d+\.\d+)",
+        pattern: r"libcurl/(\d+\.\d+(?:\.\d+)?)",
+        confirm_file: None,
     },
     Signature {
         name: "sqlite",
-        pattern: r"SQLite version (\d+\.\d+\.\d+)",
+        pattern: r"SQLite version (\d+\.\d+(?:\.\d+)?)",
+        confirm_file: None,
     },
     Signature {
         name: "expat",
-        pattern: r"expat_(\d+\.\d+\.\d+)",
+        pattern: r"expat_(\d+\.\d+(?:\.\d+)?)",
+        confirm_file: None,
     },
     Signature {
         name: "libxml2",
-        pattern: r"libxml2-(\d+\.\d+\.\d+)",
+        pattern: r"libxml2-(\d+\.\d+(?:\.\d+)?)",
+        confirm_file: None,
     },
     Signature {
         name: "freetype",
-        pattern: r"FreeType (\d+\.\d+\.\d+)",
+        pattern: r"FreeType (\d+\.\d+(?:\.\d+)?)",
+        confirm_file: None,
     },
     Signature {
         name: "icu",
         pattern: r"icudt(\d+)",
+        confirm_file: Some("icudt{}"),
     },
     Signature {
         name: "bzip2",
-        pattern: r"bzip2-(\d+\.\d+\.\d+)",
+        pattern: r"bzip2-(\d+\.\d+(?:\.\d+)?)",
+        confirm_file: None,
     },
     Signature {
         name: "libtiff",
-        pattern: r"LIBTIFF, Version (\d+\.\d+\.\d+)",
+        pattern: r"LIBTIFF, Version (\d+\.\d+(?:\.\d+)?)",
+        confirm_file: None,
     },
     Signature {
         name: "openjpeg",
-        pattern: r"openjpeg (\d+\.\d+\.\d+)",
+        pattern: r"openjpeg (\d+\.\d+(?:\.\d+)?)",
+        confirm_file: None,
     },
     Signature {
         name: "libwebp",
-        pattern: r"libwebp (\d+\.\d+\.\d+)",
+        pattern: r"libwebp (\d+\.\d+(?:\.\d+)?)",
+        confirm_file: None,
     },
     Signature {
         name: "zstd",
-        pattern: r"Zstandard v?(\d+\.\d+\.\d+)",
+        pattern: r"Zstandard v?(\d+\.\d+(?:\.\d+)?)",
+        confirm_file: None,
     },
     Signature {
         name: "lz4",
-        pattern: r"LZ4 v?(\d+\.\d+\.\d+)",
+        pattern: r"LZ4 v?(\d+\.\d+(?:\.\d+)?)",
+        confirm_file: None,
     },
     Signature {
         name: "onnxruntime",
-        pattern: r"onnxruntime[- ]v?(\d+\.\d+\.\d+)",
+        pattern: r"onnxruntime[- ]v?(\d+\.\d+(?:\.\d+)?)",
+        confirm_file: None,
     },
     Signature {
         name: "dotnet",
-        pattern: r"\.NET (?:Core )?(\d+\.\d+\.\d+)",
+        pattern: r"\.NET (?:Core )?(\d+\.\d+(?:\.\d+)?)",
+        confirm_file: None,
     },
     Signature {
         name: "boost",
-        pattern: r"Boost (\d+\.\d+\.\d+)",
+        pattern: r"Boost (\d+\.\d+(?:\.\d+)?)",
+        confirm_file: None,
     },
     Signature {
         name: "protobuf",
-        pattern: r"protobuf[- ](\d+\.\d+\.\d+)",
+        pattern: r"protobuf[- ](\d+\.\d+(?:\.\d+)?)",
+        confirm_file: None,
     },
 ];
 
@@ -169,10 +198,14 @@ const PATH_LIBRARIES: &[&str] = &[
 ];
 
 pub struct Detector {
-    compiled: Vec<(&'static str, Regex)>,
+    compiled: Vec<(&'static str, Regex, Option<&'static str>)>,
     /// `<library>-<version>` as a path segment, the shape a vendored source tree is unpacked into.
     path_version: Regex,
     found: BTreeMap<(String, String), String>,
+    /// Detections whose evidence is a filename, and the filename each one requires.
+    ///
+    /// Resolved in `finish`, because the member list is only complete once the scan is.
+    needs_file: BTreeMap<(String, String), String>,
     cap: usize,
 }
 
@@ -180,7 +213,11 @@ impl Detector {
     pub fn new(cap: usize) -> Self {
         let compiled = SIGNATURES
             .iter()
-            .filter_map(|s| Regex::new(s.pattern).ok().map(|r| (s.name, r)))
+            .filter_map(|s| {
+                Regex::new(s.pattern)
+                    .ok()
+                    .map(|r| (s.name, r, s.confirm_file))
+            })
             .collect();
         Self {
             compiled,
@@ -191,6 +228,7 @@ impl Detector {
             )
             .expect("static regex"),
             found: BTreeMap::new(),
+            needs_file: BTreeMap::new(),
             cap,
         }
     }
@@ -227,19 +265,32 @@ impl Detector {
         if self.found.len() >= self.cap || text.len() < 5 {
             return;
         }
-        for (name, re) in &self.compiled {
+        for (name, re, confirm) in &self.compiled {
             if let Some(c) = re.captures(text) {
                 if let Some(v) = c.get(1) {
                     let key = (name.to_string(), v.as_str().to_string());
+                    if let Some(template) = confirm {
+                        self.needs_file
+                            .insert(key.clone(), template.replace("{}", v.as_str()));
+                    }
                     self.found.entry(key).or_insert_with(|| truncate(text, 160));
                 }
             }
         }
     }
 
-    pub fn finish(self) -> Vec<Component> {
+    /// Resolve the detections, dropping any whose only evidence is a filename no member carries.
+    ///
+    /// `members` is every scanned member's leaf name, lowercased. A detection that names a file
+    /// the archive does not contain is a leftover string in somebody else's string table, not a
+    /// shipped component, and reporting it puts a version in an inventory that was never there.
+    pub fn finish(self, members: &std::collections::BTreeSet<String>) -> Vec<Component> {
         self.found
             .into_iter()
+            .filter(|(key, _)| match self.needs_file.get(key) {
+                None => true,
+                Some(stem) => members.iter().any(|m| m.starts_with(stem.as_str())),
+            })
             .map(|((name, version), evidence)| Component {
                 name,
                 version,
@@ -257,7 +308,7 @@ mod path_tests {
     fn a_vendored_source_tree_names_its_library_and_version() {
         let mut d = Detector::new(50);
         d.feed_path(r"C:\Users\Eric\Desktop\ocv43\opencv-4.3.0\modules\core\src\system.cpp");
-        let got = d.finish();
+        let got = d.finish(&Default::default());
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].name, "opencv");
         assert_eq!(got[0].version, "4.3.0");
@@ -271,7 +322,7 @@ mod path_tests {
     fn unix_separators_work_too() {
         let mut d = Detector::new(50);
         d.feed_path("/home/bob/src/boost-1.84.0/libs/thread/src/x.cpp");
-        let got = d.finish();
+        let got = d.finish(&Default::default());
         assert_eq!(got[0].name, "boost");
         assert_eq!(got[0].version, "1.84.0");
     }
@@ -289,7 +340,10 @@ mod path_tests {
         ] {
             d.feed_path(p);
         }
-        assert!(d.finish().is_empty(), "no library should be inferred");
+        assert!(
+            d.finish(&Default::default()).is_empty(),
+            "no library should be inferred"
+        );
     }
 
     /// A segment boundary on both sides, so a longer token that merely ends in a library name is
@@ -298,7 +352,7 @@ mod path_tests {
     fn a_similar_name_is_not_the_library() {
         let mut d = Detector::new(50);
         d.feed_path("/src/myopencv-1.0.0/x.c");
-        assert!(d.finish().is_empty());
+        assert!(d.finish(&Default::default()).is_empty());
     }
 
     #[test]
@@ -306,7 +360,7 @@ mod path_tests {
         let mut d = Detector::new(50);
         d.feed_path(r"C:\Users\a\opencv-4.3.0\x.cpp");
         d.feed_path(r"C:\Users\b\opencv-4.10.0\y.cpp");
-        let got = d.finish();
+        let got = d.finish(&Default::default());
         assert_eq!(got.len(), 2, "{:?}", got);
     }
 }
@@ -327,11 +381,20 @@ mod tests {
     use super::*;
 
     fn detect(texts: &[&str]) -> Vec<Component> {
+        detect_in_package(texts, &["icudt74.dll"])
+    }
+
+    /// Detect with an explicit member list, which the filename-evidence signatures check
+    /// against. The default above ships the real ICU payload so banner detections are
+    /// unaffected and the ICU signature has something to confirm.
+    fn detect_in_package(texts: &[&str], members: &[&str]) -> Vec<Component> {
         let mut d = Detector::new(100);
         for t in texts {
             d.feed(t);
         }
-        d.finish()
+        let set: std::collections::BTreeSet<String> =
+            members.iter().map(|m| m.to_string()).collect();
+        d.finish(&set)
     }
 
     #[test]
@@ -387,7 +450,7 @@ mod tests {
         let mut d = Detector::new(1);
         d.feed("OpenSSL 1.1.1k");
         d.feed("libpng version 1.6.37");
-        assert_eq!(d.finish().len(), 1);
+        assert_eq!(d.finish(&Default::default()).len(), 1);
     }
 
     #[test]
@@ -402,5 +465,56 @@ mod tests {
     fn signature_count_is_reported_for_coverage() {
         assert_eq!(Detector::new(10).signature_count(), SIGNATURES.len());
         assert!(SIGNATURES.len() >= 20);
+    }
+
+    #[test]
+    fn a_two_component_version_is_detected() {
+        // zlib 1.3 exists and shipped in a real package. Requiring three dotted components
+        // missed it entirely, so a reviewer using this field as the zlib inventory was short a
+        // whole version while four others were listed.
+        let got = detect(&["deflate 1.3 Copyright 1995-2023 Jean-loup Gailly and Mark Adler"]);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].name, "zlib");
+        assert_eq!(got[0].version, "1.3");
+    }
+
+    #[test]
+    fn a_three_component_version_still_wins_over_the_shorter_match() {
+        let got = detect(&["deflate 1.2.11 Copyright 1995-2017 Jean-loup Gailly"]);
+        assert_eq!(got[0].version, "1.2.11");
+    }
+
+    #[test]
+    fn filename_evidence_is_dropped_when_the_file_is_not_in_the_package() {
+        // `icudt36` was a leftover string in some module's string table. The only ICU payloads
+        // in the real package were icudt74.dll and icuuc74.dll, so ICU 36 was an invented
+        // inventory entry that a consumer would have had to disprove by hand.
+        let got = detect_in_package(&["icudt36"], &["icudt74.dll", "icuuc74.dll"]);
+        assert!(
+            got.is_empty(),
+            "a filename naming no member is not a component: {:?}",
+            got
+        );
+    }
+
+    #[test]
+    fn filename_evidence_is_kept_when_the_file_really_ships() {
+        let got = detect_in_package(&["icudt74"], &["icudt74.dll", "icuuc74.dll"]);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].name, "icu");
+        assert_eq!(got[0].version, "74");
+    }
+
+    #[test]
+    fn banner_evidence_needs_no_file_confirmation() {
+        // The banner is a string the library compiled into itself, so its presence is the fact.
+        // Requiring a matching filename would drop every statically linked component, which is
+        // the case this detector exists for.
+        let got = detect_in_package(
+            &["deflate 1.2.13 Copyright 1995-2022 Jean-loup Gailly"],
+            &[],
+        );
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].version, "1.2.13");
     }
 }

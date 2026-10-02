@@ -92,7 +92,11 @@ impl Default for ScanConfig {
             context_window: 120,
             include_excluded: false,
             analyze_pe: true,
-            ioc_cap: 500,
+            // Per kind, not overall. 500 made the field unusable on a real 553 MB target: 618
+            // URLs and 1,902 paths were kept while 45,273 indicators were discarded, so the
+            // list was a 5% sample of scan order presenting itself as a result. Collection and
+            // display are separate concerns, and the report still truncates what it prints.
+            ioc_cap: 10_000,
             detect_components: true,
         }
     }
@@ -156,6 +160,7 @@ pub fn run_labeled(
     let mut hits: Vec<HitRecord> = Vec::new();
     let mut strings_total = 0usize;
     let mut coverage_entries: Vec<CoverageEntry> = Vec::new();
+    let mut member_leaves: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     let mut hit_cap_reached = false;
     let mut excluded_total = 0usize;
     // Per-rule exclusion tally, so no occurrence can disappear without a named reason.
@@ -180,6 +185,10 @@ pub fn run_labeled(
                 e.take(member);
             }
             let member_name = member.chain_display();
+            // Leaf names only, lowercased: enough to confirm a filename-evidence component
+            // actually ships, and cheap because the set is bounded by the member count.
+            member_leaves
+                .insert(crate::report::fmt_util::short_name(&member_name).to_ascii_lowercase());
             let mut pe = if cfg.analyze_pe && member.format == crate::container::Format::Pe {
                 PeAnalysis::parse(member.data)
             } else {
@@ -689,7 +698,7 @@ pub fn run_labeled(
             reputation: None,
             cves: None,
             components: if cfg.detect_components {
-                components.finish()
+                components.finish(&member_leaves)
             } else {
                 Vec::new()
             },

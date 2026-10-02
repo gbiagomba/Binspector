@@ -46,11 +46,18 @@ pub struct Dropped {
     pub emails: usize,
     pub registry_keys: usize,
     pub file_paths: usize,
+    /// Developer-home paths refused by the per-root quota or the build-path cap.
+    ///
+    /// Counted separately and reported, because the field it feeds is the one a reader is most
+    /// likely to mistake for an inventory. A real review counted over 1,200 distinct
+    /// `C:\\Users\\` paths against the 10 the tool printed, with nothing saying so.
+    #[serde(default)]
+    pub build_paths: usize,
 }
 
 impl Dropped {
     pub fn total(&self) -> usize {
-        self.urls + self.ips + self.emails + self.registry_keys + self.file_paths
+        self.urls + self.ips + self.emails + self.registry_keys + self.file_paths + self.build_paths
     }
 }
 
@@ -96,13 +103,18 @@ pub struct Extractor {
 
 /// Cap on developer-home paths, separate from and far below the ordinary indicator cap.
 ///
-/// Small on purpose: a handful names the machines and the vendored trees, and anything beyond that
-/// is the same few roots repeated. Separate on purpose: these must never lose a slot to boilerplate.
-const BUILD_PATH_CAP: usize = 64;
+/// Separate from and far below the ordinary indicator cap, so these never lose a slot to
+/// boilerplate. Raised from 64 in 5.7.0: a cap that small, combined with the per-root quota, left
+/// the field reading as an inventory of 10 when over 1,200 distinct developer paths were present.
+const BUILD_PATH_CAP: usize = 512;
 
-/// Paths kept per home root. Two is enough to show the shape of a tree without letting one
-/// developer's deep dependency directory crowd out every other root.
-const PER_ROOT_CAP: usize = 2;
+/// Paths kept per home root.
+///
+/// Was 2, which showed the shape of a tree but hid its extent: a review that needed the twelve
+/// zlib object files under one root got two of them and had to re-derive the rest by hand. Large
+/// enough now to carry the evidence, with the quota still present so one deep dependency
+/// directory cannot crowd out every other root.
+const PER_ROOT_CAP: usize = 48;
 
 impl Extractor {
     pub fn new(cap: usize) -> Self {
@@ -117,8 +129,14 @@ impl Extractor {
                 r"(?i)\b(?:HKEY_(?:LOCAL_MACHINE|CURRENT_USER|CLASSES_ROOT|USERS|CURRENT_CONFIG)|HKLM|HKCU)\\[A-Za-z0-9\\ _.\-]{3,}",
             )
             .expect("static regex"),
-            path: Regex::new(r"(?i)\b[A-Za-z]:\\(?:[A-Za-z0-9 _.\-]+\\){1,}[A-Za-z0-9 _.\-]*")
-                .expect("static regex"),
+            // `~` and `{}` are in the class because truncating at them manufactures entries.
+            // `C:\Users\ADMINI~1\AppData\Local\Temp\lnk{GUID}.tmp` was reported as
+            // `C:\Users\ADMINI`, and `ADMINI~1` is a Windows 8.3 short name, so the truncation
+            // invented an account name a reader would take for a real identity.
+            path: Regex::new(
+                r"(?i)\b[A-Za-z]:\\(?:[A-Za-z0-9 _.\-~{}]+\\){1,}[A-Za-z0-9 _.\-~{}]*",
+            )
+            .expect("static regex"),
             urls: BTreeSet::new(),
             ips: BTreeSet::new(),
             emails: BTreeSet::new(),
@@ -137,6 +155,9 @@ impl Extractor {
         }
         if text.contains("://") {
             for m in self.url.find_iter(text) {
+                if !has_resolvable_host(m.as_str()) {
+                    continue;
+                }
                 if self.urls.len() < self.cap {
                     self.urls.insert(m.as_str().to_string());
                 } else {
@@ -184,8 +205,15 @@ impl Extractor {
                         .count();
                     if per_root < PER_ROOT_CAP && self.build_paths.len() < BUILD_PATH_CAP {
                         self.build_paths.insert(p.to_string());
+                    } else {
+                        self.dropped.build_paths += 1;
                     }
-                    continue;
+                    // Deliberately no `continue`. Promoting a path to the build-provenance
+                    // section used to remove it from the indicator list, so 5.5.0 reported
+                    // strictly less about a component than 5.3.0 had: all three NAudio paths
+                    // were in `file_paths` before, and two of them in `build_paths` after.
+                    // A developer path is a file path as well, and the two fields answer
+                    // different questions.
                 }
                 if self.file_paths.len() < self.cap {
                     self.file_paths.insert(p.to_string());
@@ -291,6 +319,35 @@ fn parent_dir(p: &str) -> String {
     }
 }
 
+/// Whether the authority of a matched URL could name a host.
+///
+/// String extraction concatenates adjacent literals, so a `http://` at the end of one string runs
+/// into the next one and the regex happily matches it. A real report carried `http://according`,
+/// `http://familiar`, `http://interested` and
+/// `http://dictionaryperceptionrevolutionfoundationpx;height:successfulsupportersmillenniumhis`
+/// among its 618 URLs, which is prose wearing a scheme. A registrable name needs a dot, and the
+/// only dotless hosts that resolve are loopback and single-label intranet names, both of which are
+/// worth keeping when they appear deliberately.
+fn has_resolvable_host(url: &str) -> bool {
+    let after_scheme = match url.find("://") {
+        Some(i) => &url[i + 3..],
+        None => return false,
+    };
+    // The authority ends at the first path, query, or fragment delimiter.
+    let authority = after_scheme
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or_default();
+    // A port is not part of the name.
+    let host = authority.rsplit('@').next().unwrap_or(authority);
+    let host = host.split(':').next().unwrap_or(host);
+    if host.is_empty() {
+        return false;
+    }
+    const DOTLESS_BUT_REAL: &[&str] = &["localhost", "127", "0", "broadcasthost"];
+    host.contains('.') || DOTLESS_BUT_REAL.contains(&host.to_ascii_lowercase().as_str())
+}
+
 fn is_build_path(p: &str) -> bool {
     let lower = p.to_ascii_lowercase();
     let home = ["\\users\\", "/users/", "/home/"];
@@ -316,6 +373,13 @@ fn is_build_path(p: &str) -> bool {
         "gitlab-runner",
         "teamcity",
     ];
+    // MSVC link.exe temporaries. `link.exe` writes `lnk{GUID}.tmp` beside the user's temp
+    // directory, so the path carries the account name of whoever ran the linker and nothing
+    // else: no source tree, no dependency, no build machine. Two of ten reported entries in a
+    // real review were these, and one of them cost a verification cycle.
+    if lower.contains("\\appdata\\local\\temp\\lnk") || lower.contains("/temp/lnk") {
+        return false;
+    }
     let root = home_root(p);
     if let Some(user) = root.rsplit('/').next() {
         if CI_ACCOUNTS.contains(&user) {
@@ -515,5 +579,95 @@ mod tests {
         let i = extract(&["", "abc", "no indicators here"]);
         assert!(i.is_empty());
         assert_eq!(i.total(), 0);
+    }
+
+    #[test]
+    fn prose_running_into_a_scheme_is_not_a_url() {
+        // String extraction concatenates adjacent literals, so a trailing `http://` runs into
+        // the next string. A real report carried 618 URLs including `http://according` and
+        // `http://familiar`, which pushed real ones past the display limit.
+        let mut e = Extractor::new(100);
+        e.feed("see http://according to the manual");
+        e.feed("visit http://crl3.digicert.com/Example.crl0F for revocation");
+        let got = e.finish();
+        assert!(
+            got.urls.iter().all(|u| u.contains('.')),
+            "dotless hosts survived: {:?}",
+            got.urls
+        );
+        assert_eq!(got.urls.len(), 1);
+    }
+
+    #[test]
+    fn loopback_and_single_label_hosts_are_kept() {
+        let mut e = Extractor::new(100);
+        e.feed("endpoint http://localhost:8080/health");
+        let got = e.finish();
+        assert_eq!(got.urls.len(), 1, "{:?}", got.urls);
+    }
+
+    #[test]
+    fn an_eight_dot_three_short_name_is_not_truncated_into_a_phantom_account() {
+        // Truncating at `~` reported this as `C:\\Users\\ADMINI`, and `ADMINI~1` is a Windows
+        // 8.3 short name, so the truncation invented an account name a reader takes for a real
+        // identity. It cost a reviewer a verification cycle.
+        let mut e = Extractor::new(100);
+        e.feed("C:\\Users\\ADMINI~1\\AppData\\Local\\Temp\\lnk{E16D7DA7-3EF6-4F0D}.tmp");
+        let got = e.finish();
+        assert!(
+            !got.build_paths.iter().any(|p| p == "C:\\Users\\ADMINI"),
+            "phantom account name: {:?}",
+            got.build_paths
+        );
+    }
+
+    #[test]
+    fn linker_temporaries_are_not_build_provenance() {
+        // link.exe writes `lnk{GUID}.tmp` under the user's temp directory. The path carries
+        // whoever ran the linker and nothing else: no source tree, no dependency, no machine.
+        let mut e = Extractor::new(100);
+        e.feed("C:\\Users\\crbldr\\AppData\\Local\\Temp\\lnk{CA319B19-4DF1}.tmp");
+        let got = e.finish();
+        assert!(
+            got.build_paths.is_empty(),
+            "a linker temporary is not provenance: {:?}",
+            got.build_paths
+        );
+    }
+
+    #[test]
+    fn a_developer_path_stays_in_the_indicator_list_as_well() {
+        // Promoting a path to build provenance used to remove it from `file_paths`, so 5.5.0
+        // reported strictly less about one dependency than 5.3.0 had: all three NAudio paths
+        // were indicators before, and two of them were build paths after. The two fields
+        // answer different questions.
+        let p = "C:\\Users\\markh\\code\\NAudio\\NAudio.Core\\obj\\Release\\NAudio.Core.pdb";
+        let mut e = Extractor::new(100);
+        e.feed(p);
+        let got = e.finish();
+        assert!(
+            got.build_paths.iter().any(|q| q == p),
+            "{:?}",
+            got.build_paths
+        );
+        assert!(
+            got.file_paths.iter().any(|q| q == p),
+            "{:?}",
+            got.file_paths
+        );
+    }
+
+    #[test]
+    fn build_paths_refused_by_the_quota_are_counted_as_dropped() {
+        // The field a reader is most likely to mistake for an inventory. A review counted over
+        // 1,200 distinct developer paths against the 10 the tool printed, with nothing saying
+        // a cap had been reached.
+        let mut e = Extractor::new(10_000);
+        for i in 0..(PER_ROOT_CAP + 5) {
+            e.feed(&format!("C:\\Users\\dev\\proj\\src\\file{}.cpp", i));
+        }
+        let got = e.finish();
+        assert_eq!(got.build_paths.len(), PER_ROOT_CAP);
+        assert_eq!(got.dropped.build_paths, 5);
     }
 }

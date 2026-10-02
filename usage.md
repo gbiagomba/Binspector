@@ -114,7 +114,7 @@ binspector --banned-filter '^str' ./app.exe
 | `--carve` | Scan every member for embedded file signatures. Opt-in at runtime, not a build gate |
 | `--extract <DIR>` | Write every unpacked member into `DIR`. The only thing that makes a scan write bytes from the target |
 | `--threads <N>` | Targets to scan at once. Defaults to the number of CPU cores |
-| `--ioc-cap <N>` | Maximum indicators of each kind to collect (default 500) |
+| `--ioc-cap <N>` | Maximum indicators of each kind to collect (default 10,000) |
 | `--reputation` | Look the hash up with VirusTotal and MetaDefender |
 | `--cve` | Resolve detected components against NVD for known CVEs |
 | `--no-components` | Skip third-party component detection (offline, on by default) |

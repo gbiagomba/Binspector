@@ -202,7 +202,7 @@ part of the safety story rather than a footnote:
 | `--max-unpacked-bytes` | 2 GiB | Total expansion across the whole walk |
 | `--max-members` | 50,000 | An archive with a million tiny entries |
 | `--max-hits` | 100,000 | A report that cannot be opened |
-| `--ioc-cap` | 500 | Indicator collection per kind, per target |
+| `--ioc-cap` | 10,000 | Indicator collection per kind, per target |
 
 Exceeding a cap degrades to a warning and partial results, never to an abort. Run `binspector -h`
 for the complete list.
