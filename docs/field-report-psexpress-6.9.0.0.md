@@ -220,7 +220,64 @@ This would also fix `build_paths` properly, because compiland records are struct
 
 ---
 
-## 7. Method note
+## 7. Follow-up: 5.7.0 closes eight of the ten
+
+**Added 2026-10-02 after re-running the same corpus against 5.7.0** (`binspector_output-2026.10.02-13.27.29.json`). Same 10 targets, same `sha256 52e12135daf677bc80c2513025fc7408b5adc4d12d76f664102f595c07016ae1`. A 5.6.0 run also exists and is byte-identical to 5.5.0; 5.7.0 is the first version since 5.3.0 whose hit set changes.
+
+Headline numbers: hits 1,355 to 1,300, **criticals 57 to 33**, `case_sensitive` now `True`, `banned_list_size` 226 to 232, `excluded_total` 33,334 to 1,773, `safe-seh` affected 66 to 54.
+
+The `excluded_total` collapse is the nicest result in here. `prose` suppressions fell from 32,594 to 1,001, because case-sensitive matching eliminates the noise at the match stage instead of filtering it afterwards. The exclusion ledger got smaller because the matcher got better, which is the right direction.
+
+| Priority in §6 | Item | 5.7.0 |
+| --- | --- | --- |
+| 1 | §2.1 case sensitivity | ✅ **Fixed.** `SearchPath` 304 hits to 0; the pattern no longer fires at all |
+| 2 | §2.3 safe-variant credit | ❌ **Open.** Zero `_s` or StrSafe entries in `summary` |
+| 3 | §2.2 bounded string primitives | ✅ **Fixed.** New `bounded-string-primitive` rule, 37 applications; all six counted functions now medium |
+| 4 | §2.4 UCRT backends | ✅ **Fixed.** All four `__stdio_common_v*printf` fire; 281 hits, 231 import-confirmed |
+| 5 | §4 posture in SQLite and markdown | ✅ **Fixed.** New `posture` and `posture_members` tables; markdown carries the ASLR finding |
+| 6 | §3.1, §3.2 build_paths | ⬜ **Not re-examined** in this pass. Unverified either way |
+| 7 | §5 compiland provenance | ⬜ **Not implemented** |
+| 8 | §2.7 no-code-section rule | ✅ **Fixed.** New `no-code-section` exclusion, 5 suppressed. `icudt74.dll` 6 hits to 0, eliminating the five physically impossible HIGH `system` findings |
+| 9 | §2.5 leading-underscore CRT names | ✅ **Fixed.** `_mktemp` now `confidence: import`, severity `high` |
+| 10 | §2.6 safe-seh architecture gate | ✅ **Fixed.** 66 to 54 affected, zero ARM-rooted images among stored members |
+
+Two fixes I had not ranked, both landed:
+
+- **§2.8 CRT flagged for its own exports** is closed by a new `export-definition-site` exclusion rule, 24 suppressed.
+- **§4 rollup disagreement** is closed. `targets[]` and the `hits` table now reconcile exactly at 13 critical / 99 high / 118 medium / 72 low.
+
+### The one partial, stated precisely
+
+`posture_members` is the right mechanism and I am glad it exists, but it is **still capped at 50 rows per finding**: `authenticode` 50 of 179, `safe-seh` 50 of 54, `cet` 50 of 69. The table was the request; the cap was the complaint, and it carried over. `aslr` is complete only because 3 falls under the cap.
+
+The reason this matters is in §4: because the stored members are in scan order, the first 50 for `authenticode` all came from one vendor, which invites a wrong inference about ownership. I made that inference from the JSON and had to retract it publicly. A table that reproduces the cap reproduces the trap. Either lift it for `posture_members` specifically, since it is a two-column table and cheap, or emit `members_truncated` with the true count.
+
+### What the critical count looks like now
+
+33 criticals, all genuinely unbounded: `lstrcpyA`, `lstrcpyW`, `lstrcatA`, `lstrcatW`, `strcpy`, `strcat`, `wcscpy`, `wcscat`, `wsprintfW`. No counted primitive remains critical.
+
+By authorship: Microsoft redistributable 20, **Adobe 12**, third-party bundled 1 (`icuuc74.dll`). The Adobe 12 are `AdobePDFL.dll` 7, `ACE.dll` 2, `EditorManagerBridge.dll` 2, `SVGRE.dll` 1.
+
+Worth reporting back because it is the real validation: **that is exactly the set three adversarial adjudication passes had already sustained by hand**, after withdrawing the 24 bounded primitives 5.3.0 rated critical. 5.7.0 converged on the same 12 independently. This is the first run on this target whose unadjudicated critical count could be filed without correction, which is the whole point of the severity-model work.
+
+### The new UCRT family behaves well, with one caveat
+
+231 of the 281 hits are import-confirmed, which is the right tier, and 50 land in the symbol package at `exact` where they belong. 49 are Adobe-authored across 27 distinct modules.
+
+The caveat is interpretive rather than a defect: `__stdio_common_vsprintf` also backs bounded callers in some code paths, so the import is weaker evidence than a direct `sprintf` import. A consumer will read `high` severity across 231 hits as 231 defects. Consider either a distinct category for "unbounded backend, caller bound unknown" or a note in the remediation text, so the tier reflects that this is linkage to a shared backend rather than a definite unbounded call.
+
+### Still open, in priority order
+
+1. **Safe-variant credit (§2.3).** Now the highest-value remaining item. 313 safe counted or `_s` import slots across 175 members against 55 unsafe across 31, and the report still shows zero of the 313. 21 of the 31 flagged members import both forms. A product team reading this report still cannot see that its own migration is 5.7-to-1 ahead.
+2. **Posture member cap (§4, partial above).**
+3. **Compiland provenance (§5).** Unimplemented, and still the capability that produced the single most consequential finding of this engagement: a module shipping a zlib 1.2.11 core with a 1.3.1 `gz*` layer because a static-library patch lost the duplicate-symbol race. No version-based output can represent that state, and nothing in 5.7.0 would surface it.
+4. **`iocs.build_paths` (§3.1, §3.2).** Not re-examined against 5.7.0.
+
+Eight of ten in one release cycle is a fast turnaround and the two highest-impact matcher changes, case sensitivity and the bounded-string rule, are exactly the ones that moved the output from unfileable to fileable. Thank you for that.
+
+---
+
+## 8. Method note
 
 Every number here was re-derived from the artifacts rather than read out of the report, using independently written PE import-table, optional-header and certificate-directory parsers plus PDB compiland extraction. Where my own earlier conclusions were wrong they are noted as such in this document, because two of them came from trusting report fields (`confidence` on `_mktemp`, and the truncated `posture.authenticode` member list) that a reader is entitled to trust.
 

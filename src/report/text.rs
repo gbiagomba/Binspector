@@ -584,4 +584,28 @@ mod tests {
         assert!(!out.contains("Coverage"));
         assert!(out.starts_with("strcpy\t5\tcritical"));
     }
+
+    #[test]
+    fn the_headline_severity_counts_agree_with_the_occurrence_table() {
+        // These disagreed in a real 5.7.0 report: the headline said 39 critical and the `hits`
+        // table held 33, because the headline bucketed whole summary rows and a summary row
+        // carries one severity for a function whose occurrences were judged individually.
+        // Three `strcpy` and three `strcat` occurrences were the difference.
+        let r = crate::report::fixtures::rich_report();
+        let (c, h, m, l) = r.severity_counts();
+        let mut from_hits = (0usize, 0usize, 0usize, 0usize);
+        for hit in &r.hits {
+            match hit.severity {
+                Severity::Critical => from_hits.0 += 1,
+                Severity::High => from_hits.1 += 1,
+                Severity::Medium => from_hits.2 += 1,
+                Severity::Low => from_hits.3 += 1,
+            }
+        }
+        assert_eq!(
+            (c, h, m, l),
+            from_hits,
+            "headline counts must match the occurrence rows"
+        );
+    }
 }

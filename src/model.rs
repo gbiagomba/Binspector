@@ -286,19 +286,22 @@ pub struct Report {
 impl Report {
     /// Occurrences per severity, worst first: (critical, high, medium, low).
     pub fn severity_counts(&self) -> (usize, usize, usize, usize) {
-        let mut crit = 0;
-        let mut high = 0;
-        let mut med = 0;
-        let mut low = 0;
-        for s in &self.summary {
-            match s.severity {
-                Severity::Critical => crit += s.occurrences,
-                Severity::High => high += s.occurrences,
-                Severity::Medium => med += s.occurrences,
-                Severity::Low => low += s.occurrences,
-            }
-        }
-        (crit, high, med, low)
+        // Summed from the per-target rollups, which count per occurrence.
+        //
+        // This read from `summary` until 5.8.0, and a summary row carries one severity for the
+        // whole function while the evidence rules decide each occurrence separately. So every
+        // occurrence of a function was attributed to that function's worst severity, and the
+        // most prominent number in the report disagreed with its own occurrence table: 39
+        // critical against the 33 in `hits`, because three `strcpy` and three `strcat`
+        // occurrences had been demoted individually and the rollup could not see it.
+        //
+        // 5.7.0 fixed exactly this defect for the `targets[]` rollup and missed this caller, so
+        // the two then disagreed with each other. Reading the target fields rather than
+        // recomputing keeps one source of truth, and they stay complete when the occurrence cap
+        // truncates `hits`.
+        self.targets.iter().fold((0, 0, 0, 0), |(c, h, m, l), t| {
+            (c + t.critical, h + t.high, m + t.medium, l + t.low)
+        })
     }
 
     /// Occurrences a human-facing report lists.
