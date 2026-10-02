@@ -81,17 +81,36 @@ pub fn lookup(
     Ok(CveReport {
         components: out,
         signature_count,
-        coverage_note: format!(
-            "Component detection uses {} curated signatures, not an exhaustive set. A component \
-             with no detector produces no CVEs, which is not the same as having none.",
-            signature_count
-        ),
+        coverage_note: coverage_note(signature_count),
     })
 }
 
+/// The note is one string with one job: say what a zero means. There are two ways this report can
+/// stay silent about a component and neither of them is a clean bill of health, so both are named
+/// here rather than left for the reader to infer.
+fn coverage_note(signature_count: usize) -> String {
+    format!(
+        "Component detection uses {} curated signatures, not an exhaustive set, and lookup is \
+         an NVD keyword search for the name and version together. Two different silences \
+         follow and neither means clean: a component with no detector is never looked up, \
+         and a detected component can return nothing because advisories phrase it as \
+         'and earlier' or carry only CPE data, which a literal keyword match misses. Zero \
+         CVEs here is a reason to check the vendor advisories, not a result.",
+        signature_count
+    )
+}
+
 fn query(c: &Component, creds: &Credentials, max: usize) -> Result<Vec<Cve>> {
-    // keywordSearch over "<name> <version>" is the portable query. A full CPE match
-    // would be more precise but needs a per-product CPE name the detector does not have.
+    // keywordSearch over "<name> <version>" is the portable query, and its precision is the known
+    // weak point. NVD matches the literal terms against the description, so an advisory phrased
+    // "OpenCV 4.3.0 and earlier", or one carrying only CPE data, does not match and the
+    // component comes back with zero CVEs that it certainly has. Verified against a real
+    // bundle: zlib resolves, opencv does not.
+    //
+    // A `virtualMatchString` CPE query is the accurate fix and needs a vendor-to-product map
+    // the detector does not have, because the two names differ often enough to matter: icu is
+    // `icu-project:international_components_for_unicode`. That map is the work, not the query.
+    // Until it exists, the coverage note says plainly that zero here is not a clean result.
     let url = format!(
         "{}?keywordSearch={}%20{}&resultsPerPage={}",
         NVD_BASE,
@@ -281,16 +300,14 @@ mod tests {
     }
 
     #[test]
-    fn coverage_note_warns_that_absence_is_not_proof() {
-        let r = lookup_note(20);
-        assert!(r.contains("not the same as having none"));
-    }
-
-    fn lookup_note(n: usize) -> String {
-        format!(
-            "Component detection uses {} curated signatures, not an exhaustive set. A component \
-             with no detector produces no CVEs, which is not the same as having none.",
-            n
-        )
+    fn coverage_note_names_both_kinds_of_silence() {
+        let note = coverage_note(20);
+        assert!(note.contains("20 curated signatures"));
+        // A component with no detector.
+        assert!(note.contains("no detector is never looked up"));
+        // A detected component whose advisories a keyword match cannot reach. This is the one the
+        // real bundle hit: opencv 4.3.0 was detected and returned zero.
+        assert!(note.contains("'and earlier' or carry only CPE data"));
+        assert!(note.contains("not a result"));
     }
 }
