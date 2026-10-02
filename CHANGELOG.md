@@ -2,6 +2,55 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.6.0] - 2026-10-02
+
+### Added
+- **A versioned library directory is now a component signature.** `opencv-4.3.0` in a build path is
+  evidence of a statically linked dependency that the 21 banner-text signatures cannot see, because
+  a static link leaves no version banner to match. `feed_path` reads
+  `[\\/]<name>-<major.minor[.patch]>[\\/]` out of collected indicator paths and adds the component
+  with the path itself as the citation. On the real bundle this took detected components from 8 to 9,
+  recovering `opencv 4.3.0` cited to
+  `C:\Users\Eric\Desktop\ocv43\opencv-4.3.0\modules\core\src\algorithm.cpp`.
+
+  This closes the half of the Jedi Council's Family E that said the vendored OpenSSL and OpenCV were
+  invisible to the SBOM, and it closes it without touching the evidence rules. Loosening those rules
+  would have re-introduced the exact false positives the Council credited 5.0.0 with removing.
+
+- **Section entropy is printed, not just the conclusion drawn from it.** The exec-analysis section
+  carries the per-section value so a reviewer can disagree with the packer verdict. A derived
+  sentence with no number behind it is not reviewable.
+
+### Changed
+- **Indicator collection evicts a crowded path before dropping a distinctive one.** At the
+  `--ioc-cap` boundary, a path sharing a long prefix with many others yields to an incoming path
+  from a sparse root. 1,950 near-identical MSVC header paths were crowding out the one
+  developer-desktop path that carried the OpenCV evidence. The eviction refuses to run when it
+  would thrash (`n < 8 || incoming_count + 1 >= n`), so two equally crowded roots do not trade
+  places on every insert.
+
+- **Build-path provenance excludes CI service accounts.** `runneradmin`, `runner`, `vsts`,
+  `vssadministrator`, `azdevops`, `buildbot`, `jenkins`, `gitlab-runner` and `teamcity` under a home
+  root are a CI worker, not a developer workstation, and reporting them as "built outside CI" said
+  the opposite of the truth. A per-root quota of 2 keeps nine CI registry paths from filling the
+  64-slot build-path budget and hiding the one path that matters.
+
+### Fixed
+- **The CVE coverage note described one kind of silence when there are two.** A component with no
+  detector is never looked up. A *detected* component can also return nothing, because NVD
+  `keywordSearch` matches literal terms against the advisory description and an advisory phrased
+  "4.3.0 and earlier", or carrying only CPE data, never matches the query. Found by testing: the
+  synthetic OpenSSL 1.0.2k banner resolved CVE-2017-3731 and CVE-2017-3732, while the newly
+  recovered `opencv 4.3.0` returned zero CVEs with no error. Zero now reads as a reason to check
+  the vendor advisories rather than as a clean result.
+
+  A `virtualMatchString` CPE query is the accurate fix and needs a vendor-to-product map the
+  detector does not have, since the two names diverge often enough to matter: `icu` is
+  `icu-project:international_components_for_unicode`. That map is the work, not the query.
+
+  The note moved into one `coverage_note()` function because the test had pasted a second copy of
+  the string, so the assertion could pass while the report said something else.
+
 ## [5.5.0] - 2026-10-01
 
 ### Added
