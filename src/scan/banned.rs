@@ -182,12 +182,6 @@ fn classify(name: &str) -> (Severity, Category) {
     ];
     // Format-string primitives that write into a caller buffer without a bound.
     const CRITICAL_FORMAT: &[&str] = &[
-        // The UCRT backends MSVC actually emits. `sprintf` is a macro; the call in the object
-        // file is to one of these, so a list without them cannot support a build gate on an
-        // MSVC target. Named explicitly because the substring fallback below matches
-        // `sprintf` and so cannot see the wide form `vswprintf`.
-        "stdio_common_vsprintf",
-        "stdio_common_vswprintf",
         "sprintf",
         "sprintfa",
         "sprintfw",
@@ -201,7 +195,22 @@ fn classify(name: &str) -> (Severity, Category) {
         "vsprintfw",
     ];
     const HIGH_FORMAT: &[&str] = &[
-        // The counted backends. They terminate, so the weakness is the ignored return value.
+        // The UCRT backends MSVC actually emits. `sprintf` is a macro; the call in the object
+        // file is to one of these, so a list without them cannot support a build gate on an
+        // MSVC target.
+        //
+        // High and not Critical, deliberately. Every one of these takes a `_BufferCount`
+        // parameter, and the front end decides what to pass: `sprintf` passes `(size_t)-1`
+        // while `snprintf` passes the real size. So the import proves formatted output into a
+        // buffer happens and cannot tell the unbounded caller from the bounded one. Rating it
+        // Critical would be the same error as rating `strncpy` identically to `strcpy`, which
+        // this release exists to fix, committed in a new place. The call site decides, and an
+        // import table cannot see a call site.
+        //
+        // Named explicitly rather than left to the substring fallbacks, which match `sprintf`
+        // and so cannot see the wide form `vswprintf`.
+        "stdio_common_vsprintf",
+        "stdio_common_vswprintf",
         "stdio_common_vsnprintf",
         "stdio_common_vsnwprintf",
         "stdio_common_vfprintf",
@@ -523,20 +532,25 @@ mod tests {
     }
 
     #[test]
-    fn the_ucrt_formatting_backends_are_tiered_by_whether_they_take_a_count() {
+    fn the_ucrt_formatting_backends_are_high_because_the_import_cannot_see_the_count() {
         // Modern MSVC does not emit a call to `sprintf`; it emits `__stdio_common_vsprintf`.
         // 41 members of one real package imported at least one unbounded backend and the tool
         // reported none of them, which is why a clean critical count was not evidence of safe
         // formatting on an MSVC target.
-        assert_eq!(
-            classify("__stdio_common_vsprintf").0,
-            Severity::Critical,
-            "the unbounded backend is the sprintf family"
-        );
-        assert_eq!(classify("__stdio_common_vswprintf").0, Severity::Critical);
-        // The counted backends terminate, so they are the snprintf family.
-        assert_eq!(classify("__stdio_common_vsnprintf").0, Severity::High);
-        assert_eq!(classify("__stdio_common_vsnwprintf").0, Severity::High);
+        // All High, not Critical. Each backend takes a `_BufferCount` the front end supplies:
+        // `sprintf` passes `(size_t)-1`, `snprintf` passes the real size. So the import proves
+        // formatted output into a buffer and cannot distinguish the two. Critical would repeat
+        // the `strncpy`-rated-as-`strcpy` error this release fixes, in a new place.
+        for f in [
+            "__stdio_common_vsprintf",
+            "__stdio_common_vswprintf",
+            "__stdio_common_vsnprintf",
+            "__stdio_common_vsnwprintf",
+            "__stdio_common_vfprintf",
+            "__stdio_common_vfwprintf",
+        ] {
+            assert_eq!(classify(f).0, Severity::High, "{}", f);
+        }
     }
 
     #[test]

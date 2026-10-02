@@ -29,22 +29,28 @@ pub fn write_text(w: &mut dyn Write, r: &Report) -> Result<()> {
     // form had a `_` arm that fell through to Authenticode, so adding a label without adding
     // a match arm would have silently reported one mitigation's state under another's name.
     type Pick = fn(&crate::pe::Mitigations) -> State;
-    let checks: [(&str, Pick); 6] = [
-        ("ASLR", |m| m.aslr),
-        ("DEP", |m| m.dep),
-        ("CFG", |m| m.cfg),
-        ("/GS", |m| m.gs),
-        ("SafeSEH", |m| m.safe_seh),
-        ("Authenticode", |m| m.authenticode),
+    // The posture rule id travels with each label, because this block and `pe::posture` were
+    // two code paths answering the same question with different rules, and they disagreed in
+    // public: this one said SafeSEH was missing on 68 images while the posture finding in the
+    // same report said 66. The posture module was right. It exempts a managed assembly from the
+    // checks the CLR controls, and without that exemption this block reported a .NET assembly
+    // as missing /GS, which is a claim about a property the shipped file does not have.
+    let checks: [(&str, &str, Pick); 6] = [
+        ("ASLR", "aslr", |m| m.aslr),
+        ("DEP", "dep", |m| m.dep),
+        ("CFG", "cfg", |m| m.cfg),
+        ("/GS", "gs", |m| m.gs),
+        ("SafeSEH", "safe-seh", |m| m.safe_seh),
+        ("Authenticode", "authenticode", |m| m.authenticode),
     ];
     let mut off: Vec<(&str, Vec<&str>)> = Vec::new();
-    for (label, pick) in checks {
+    for (label, id, pick) in checks {
         let mut missing: Vec<&str> = Vec::new();
         for e in &pes {
             let a = e.pe.as_ref().expect("filtered");
             // Unknown is never reported as missing: a managed assembly has no load config,
             // and calling that "/GS off" would be a false claim.
-            if pick(&a.mitigations) == State::Disabled {
+            if pick(&a.mitigations) == State::Disabled && crate::pe::posture::applies(id, a) {
                 missing.push(short_name(&e.member));
             }
         }
@@ -634,5 +640,39 @@ mod tests {
         let items = vec!["a", "b", "c", "d"];
         assert_eq!(preview(&items, 10), "a, b, c, d");
         assert_eq!(preview(&items, 2), "a, b, and 2 more");
+    }
+
+    #[test]
+    fn the_mitigation_rollup_agrees_with_the_posture_findings() {
+        // These were two code paths answering the same question with different rules, and the
+        // disagreement was visible in one real report: this block said SafeSEH was missing on
+        // 68 images while the posture finding said 66. Any divergence is a defect, so assert
+        // the identity rather than the numbers.
+        let mut r = crate::report::fixtures::rich_report();
+        r.posture = crate::scan::all_posture(&r.coverage.entries);
+        let mut buf = Vec::new();
+        write_text(&mut buf, &r).unwrap();
+        let out = String::from_utf8(buf).unwrap();
+        for p in &r.posture {
+            let label = match p.id.as_str() {
+                "aslr" => "ASLR",
+                "dep" => "DEP",
+                "cfg" => "CFG",
+                "gs" => "/GS",
+                "safe-seh" => "SafeSEH",
+                "authenticode" => "Authenticode",
+                // Posture carries findings this rollup is not about, such as an Authenticode
+                // digest mismatch, which is a verification result rather than a mitigation.
+                _ => continue,
+            };
+            let want = format!("{} missing on {} of", label, p.affected);
+            assert!(
+                out.contains(&want),
+                "the rollup disagrees with posture.{}: expected `{}` in\n{}",
+                p.id,
+                want,
+                out
+            );
+        }
     }
 }

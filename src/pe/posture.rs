@@ -180,7 +180,7 @@ fn state_for(id: &str, a: &crate::pe::PeAnalysis) -> State {
 ///
 /// Scoped per rule, following the precedent in `pe::packer`: an exemption suppresses only the
 /// inference whose premise the evidence invalidates, never the whole analysis.
-fn applies(id: &str, a: &crate::pe::PeAnalysis) -> bool {
+pub(crate) fn applies(id: &str, a: &crate::pe::PeAnalysis) -> bool {
     match id {
         // The CLR controls code generation for a managed assembly, so /GS, CFG, and CET are
         // not properties of the shipped file. ASLR, DEP, and signing still are.
