@@ -753,7 +753,7 @@ pub fn run_labeled(
         include_excluded: cfg.include_excluded,
         iocs: collected_iocs,
         intel: intel::Intel {
-            reputation: None,
+            reputation: Vec::new(),
             cves: None,
             components: if cfg.detect_components {
                 components.finish(&member_leaves)

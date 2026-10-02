@@ -107,16 +107,23 @@ pub fn write_intel_text(w: &mut dyn Write, r: &Report) -> Result<()> {
         writeln!(w)?;
     }
 
-    if let Some(rep) = &r.intel.reputation {
+    if !r.intel.reputation.is_empty() {
         writeln!(
             w,
-            "Reputation (hash lookup only, no file content transmitted)"
+            "Reputation ({} hash lookup(s), no file content transmitted)",
+            thousands(r.intel.reputation.len() as u64)
         )?;
-        writeln!(w, "  SHA256:       {}", rep.sha256)?;
-        writeln!(w, "  VirusTotal:   {}", rep.virustotal.summary())?;
-        writeln!(w, "  MetaDefender: {}", rep.metadefender.summary())?;
-        if rep.virustotal.is_actionable() || rep.metadefender.is_actionable() {
-            writeln!(w, "  !!! At least one service flagged this hash.")?;
+        // One block per target, each naming the file it is about. A single unlabelled block was
+        // unreadable once a scan covered ten targets, and before 6.0.0 it was worse than
+        // unreadable: the digest it reported was a manifest digest no service could know.
+        for rep in &r.intel.reputation {
+            writeln!(w, "  {}", super::fmt_util::short_name(&rep.label))?;
+            writeln!(w, "    SHA256:       {}", rep.sha256)?;
+            writeln!(w, "    VirusTotal:   {}", rep.virustotal.summary())?;
+            writeln!(w, "    MetaDefender: {}", rep.metadefender.summary())?;
+            if rep.virustotal.is_actionable() || rep.metadefender.is_actionable() {
+                writeln!(w, "    !!! At least one service flagged this hash.")?;
+            }
         }
         writeln!(w)?;
     }

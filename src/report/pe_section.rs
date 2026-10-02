@@ -255,7 +255,7 @@ fn write_capabilities(w: &mut dyn Write, r: &Report) -> Result<()> {
     if !r.coverage.carve_ran {
         idle.push("--carve           scan members for embedded archives and filesystems");
     }
-    if r.intel.reputation.is_none() {
+    if r.intel.reputation.is_empty() {
         idle.push(
             "--reputation      look the hash up with VirusTotal and MetaDefender (hash only)",
         );

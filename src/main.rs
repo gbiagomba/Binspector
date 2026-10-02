@@ -321,8 +321,11 @@ fn enrich(
                     intel::Credentials::missing_message("reputation", "VT_API_KEY or MD_API_KEY")
                 );
             }
-            match intel::reputation::lookup(&report.sha256, &creds) {
-                Ok(r) => report.intel.reputation = Some(r),
+            // Per target, against each target's own file digest. This used to pass
+            // `report.sha256`, which on a multi-target run is the synthesized manifest digest, so
+            // the question went to a hash no service has ever seen.
+            match intel::reputation::lookup_targets(&report.targets, &creds) {
+                Ok(r) => report.intel.reputation = r,
                 Err(e) => eprintln!("binspector: reputation lookup unavailable: {:#}", e),
             }
         }

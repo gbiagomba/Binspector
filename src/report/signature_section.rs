@@ -246,7 +246,7 @@ mod capability_tests {
     fn a_default_run_names_the_analysis_it_did_not_do() {
         let mut r = rich_report();
         r.coverage.carve_ran = false;
-        r.intel.reputation = None;
+        r.intel.reputation = Vec::new();
         r.intel.cves = None;
         let out = render(&r);
         assert!(out.contains("Analysis not run"), "{}", out);

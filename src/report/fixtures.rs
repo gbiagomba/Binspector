@@ -124,11 +124,15 @@ pub(crate) fn rich_report() -> Report {
         binary: "bundle.msixbundle".into(),
         project: Some("PROJ-4711".into()),
         timestamp: "2026-10-01T12:00:00Z".into(),
-        // The scalar fields are the first target's, which is what a single-target run writes.
+        // The fixture is multi-target, so these are the *manifest* digests `finish_aggregate`
+        // writes: a digest over the newline-joined target digests, which deliberately matches no
+        // target. Seeded distinctly from every target for that reason. It used to reuse the first
+        // target's seed, which made the fixture unable to express the defect 6.0.0 fixes: a
+        // reputation lookup against the manifest digest asks about a file that does not exist.
         file_size: 6_291_456,
-        md5: digest(0x11, 32),
-        sha1: digest(0x11, 40),
-        sha256: digest(0x11, 64),
+        md5: digest(0xaf, 32),
+        sha1: digest(0xaf, 40),
+        sha256: digest(0xaf, 64),
         min_len: 4,
         case_sensitive: false,
         banned_list_size: 197,
@@ -468,15 +472,28 @@ fn intel() -> Intel {
     let openssl = component("openssl", "1.1.1k", "OpenSSL 1.1.1k  25 Mar 2021");
     let zlib = component("zlib", "1.2.11", "deflate 1.2.11 Copyright 1995-2017");
     Intel {
-        reputation: Some(Reputation {
-            sha256: digest(0x11, 64),
-            virustotal: RepVerdict::Malicious {
-                detections: 3,
-                total: 72,
+        // Two targets, so the golden exercises the per-target shape rather than the single
+        // unlabelled block 6.0.0 replaced. One flagged and one clean, because the "at least one
+        // service flagged this" line must appear against the right file and not the other.
+        reputation: vec![
+            Reputation {
+                label: "bundle.msixbundle".into(),
+                sha256: digest(0x11, 64),
+                virustotal: RepVerdict::Malicious {
+                    detections: 3,
+                    total: 72,
+                },
+                metadefender: RepVerdict::Clean { total: 34 },
+                content_transmitted: false,
             },
-            metadefender: RepVerdict::Clean { total: 34 },
-            content_transmitted: false,
-        }),
+            Reputation {
+                label: "Microsoft.VCLibs.ARM.14.00.Desktop.appx".into(),
+                sha256: digest(0x22, 64),
+                virustotal: RepVerdict::NotFound,
+                metadefender: RepVerdict::NotConfigured,
+                content_transmitted: false,
+            },
+        ],
         cves: Some(CveReport {
             components: vec![
                 ComponentCves {

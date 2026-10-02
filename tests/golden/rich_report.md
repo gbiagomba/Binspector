@@ -7,7 +7,7 @@
 | Binary | `bundle.msixbundle` |
 | Scanned | 2026-10-01T12:00:00Z |
 | Size | 6.0 MiB (6,291,456 bytes) |
-| Manifest SHA256 | `1111111111111111111111111111111111111111111111111111111111111111` (over 3 target digests, not a file hash) |
+| Manifest SHA256 | `afafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafaf` (over 3 target digests, not a file hash) |
 | Matching | case insensitive |
 | Min string length | 4 |
 | Banned names | 197 |
@@ -275,13 +275,18 @@ Container format `zip`, 6 members, 2.2 MiB unpacked, 11,200 strings.
   <script>alert(1)</script>|x 0.0.1
 ```
 
-## Reputation (hash lookup only, no file content transmitted)
+## Reputation (2 hash lookup(s), no file content transmitted)
 
 ```text
-  SHA256:       1111111111111111111111111111111111111111111111111111111111111111
-  VirusTotal:   3 of 72 engines flagged this hash
-  MetaDefender: no detections across 34 engines
-  !!! At least one service flagged this hash.
+  bundle.msixbundle
+    SHA256:       1111111111111111111111111111111111111111111111111111111111111111
+    VirusTotal:   3 of 72 engines flagged this hash
+    MetaDefender: no detections across 34 engines
+    !!! At least one service flagged this hash.
+  Microsoft.VCLibs.ARM.14.00.Desktop.appx
+    SHA256:       2222222222222222222222222222222222222222222222222222222222222222
+    VirusTotal:   hash not known to the service, which is not evidence that it is safe
+    MetaDefender: no API key configured
 ```
 
 ## Known CVEs (2 across 2 component(s))

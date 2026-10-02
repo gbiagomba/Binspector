@@ -59,7 +59,7 @@ pre.analysis { white-space: pre; line-height: 1.35; }
 <tr><th>Project</th><td>PROJ-4711</td></tr>
 <tr><th>Scanned</th><td>2026-10-01T12:00:00Z</td></tr>
 <tr><th>Size</th><td>6.0 MiB (6,291,456 bytes)</td></tr>
-<tr><th>Manifest SHA256</th><td><code>1111111111111111111111111111111111111111111111111111111111111111</code> (over 3 target digests, not a file hash)</td></tr>
+<tr><th>Manifest SHA256</th><td><code>afafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafaf</code> (over 3 target digests, not a file hash)</td></tr>
 <tr><th>Matching</th><td>case insensitive</td></tr>
 </table>
 <h2>Findings</h2>
@@ -294,12 +294,17 @@ pre.analysis { white-space: pre; line-height: 1.35; }
   zlib 1.2.11
   &lt;script&gt;alert(1)&lt;/script&gt;|x 0.0.1
 </pre>
-<h2>Reputation (hash lookup only, no file content transmitted)</h2>
+<h2>Reputation (2 hash lookup(s), no file content transmitted)</h2>
 <pre class="analysis">
-  SHA256:       1111111111111111111111111111111111111111111111111111111111111111
-  VirusTotal:   3 of 72 engines flagged this hash
-  MetaDefender: no detections across 34 engines
-  !!! At least one service flagged this hash.
+  bundle.msixbundle
+    SHA256:       1111111111111111111111111111111111111111111111111111111111111111
+    VirusTotal:   3 of 72 engines flagged this hash
+    MetaDefender: no detections across 34 engines
+    !!! At least one service flagged this hash.
+  Microsoft.VCLibs.ARM.14.00.Desktop.appx
+    SHA256:       2222222222222222222222222222222222222222222222222222222222222222
+    VirusTotal:   hash not known to the service, which is not evidence that it is safe
+    MetaDefender: no API key configured
 </pre>
 <h2>Known CVEs (2 across 2 component(s))</h2>
 <pre class="analysis">
