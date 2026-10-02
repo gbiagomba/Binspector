@@ -113,6 +113,10 @@ binspector --banned-filter '^str' ./app.exe
 | `--no-pe` | Alias for `--no-exe`, kept because it was the name before 5.2.0 |
 | `--no-pdb` | Skip compiland provenance on PDB members |
 | `--no-digests` | Skip per-member digests, and with them content deduplication |
+| `--reputation-members` | Look every distinct member hash up, worst first, within a budget |
+| `--rate-limit <N>` | Requests per minute for the sweep (default 4, 0 for no pacing) |
+| `--request-budget <N>` | Most requests one sweep may make (default 500) |
+| `--no-cache` | Do not read or write the persistent reputation cache |
 | `--carve` | Scan every member for embedded file signatures. Opt-in at runtime, not a build gate |
 | `--extract <DIR>` | Write every unpacked member into `DIR`. The only thing that makes a scan write bytes from the target |
 | `--threads <N>` | Targets to scan at once. Defaults to the number of CPU cores |
@@ -796,6 +800,96 @@ supplied on its stdin, never as `-H` arguments.
 `curl` must be on `PATH` for these lookups. It is used in place of a Rust HTTP client
 deliberately: rustls, ring, and webpki would add a large dependency tree and roughly a
 gigabyte of build output for a feature that issues a handful of requests.
+
+### Sweeping every member
+
+`--reputation` asks about each scanned target. `--reputation-members` additionally asks about every
+distinct member hash inside them, which is where the interesting files are: a package is signed, the
+unsigned executable buried four levels down inside it is not.
+
+```bash
+binspector --reputation --reputation-members ./app.msixbundle
+```
+
+**The budget runs out long before the list does, so the order is the strategy.** A free tier answers
+500 requests a day. The reference package holds 3,799 distinct hashes, roughly a week of quota. Its
+179 unsigned executables fit inside a single day, so those are asked first:
+
+1. Unsigned executables
+2. Executables signed by a third party
+3. First-party executables (`--first-party`)
+4. Non-executable members of at least 4 KiB
+
+Deduplicated by content throughout. 4,281 members hold 3,799 distinct hashes, and among PE images
+1,567 rows are 1,012 distinct files, so asking per row would spend a third of the budget re-asking
+about bytes already answered for.
+
+**An unchecked member is never reported as clean.** The section states how many distinct hashes went
+unasked and why, in those words, because "absent" and "clean" are different findings:
+
+```
+!! 1,008 distinct hash(es) went unchecked because the request budget ran out.
+   They are not clean results; they are absent ones.
+```
+
+Query it:
+
+```sql
+-- Which members a service flagged
+SELECT label, sha256, service, detections, engines FROM reputation
+WHERE scope = 'member' AND verdict = 'malicious';
+
+-- How much of the package was actually checked
+SELECT candidates, queried, from_cache, unchecked FROM reputation_coverage;
+```
+
+`scope` separates a target verdict from a member one. Conflating them would report a package as
+flagged because one member inside it was.
+
+### The reputation cache
+
+Answers persist in `~/.config/binspector/reputation.sqlite`, created mode 0600 and refused if
+anything else can read it. Override the location with `BINSPECTOR_CACHE`, or decline it per run with
+`--no-cache`.
+
+A cache hit costs nothing against the budget, so a second scan of the same package is nearly free
+and a sweep that ran out of budget can be resumed simply by running it again.
+
+**Lifetimes differ by answer, and the short one is deliberate.**
+
+| Verdict | Kept | Why |
+| --- | --- | --- |
+| Flagged | 30 days | Rarely reverses |
+| No detections | 7 days | Can become flagged when a signature lands |
+| Unknown to the service | 24 hours | The dangerous one to remember: see below |
+| Error, no key | not stored | Not an answer |
+
+"Unknown" does not mean clean. It means nobody has submitted that hash yet, which is the most
+perishable thing a service can tell you. Cached for a month, the tool would keep reporting unknown
+long after the file became known-bad, so it expires in a day.
+
+**What the file is.** An index of every binary hash looked up on this machine, across every scan and
+every engagement. For assessment work that is more revealing than its size suggests, which is why it
+is said out loud rather than left implicit:
+
+```bash
+binspector cache --show     # counts, freshness, size
+binspector cache --prune    # drop expired answers, keep the rest
+binspector cache --purge    # delete the file
+```
+
+### A terms constraint worth knowing before a bulk sweep
+
+VirusTotal's public API documentation states it "must not be used in business workflows that don't
+contribute new files to VirusTotal". Binspector never uploads file content, by design, because
+uploading an unreleased binary is a disclosure event. Those two facts are in tension: the free
+tier's bargain is contribution in exchange for queries, and this tool declines to contribute for
+good reason.
+
+So when the configured rate matches a free tier, the tool says so once per run and continues.
+Whether a given use is within a service's terms is a judgement for the operator, not something a
+scanner can determine. A paid or enterprise key carries no such restriction, and MetaDefender draws
+hash lookups from a Reputation quota separate from uploads.
 
 ### Component detection coverage
 

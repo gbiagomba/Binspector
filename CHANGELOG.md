@@ -2,6 +2,85 @@
 
 All notable changes to this project will be documented in this file.
 
+## [6.0.0] - 2026-10-02
+
+A member hash database, a reputation sweep that asks about real hashes, and a persistent verdict
+cache. The major version is for two breaking changes rather than for the size of the release:
+`Intel::reputation` is now a collection, and a new user-level file appears on disk.
+
+### Fixed
+
+- **`--reputation` asked about a hash that cannot exist.** Every multi-target reputation run to date
+  passed `report.sha256`, which `finish_aggregate` has already overwritten with a *manifest* digest:
+  the SHA-256 of the newline-joined `"<sha256>  <label>"` lines. No service has ever seen that value,
+  so the lookup returned 404 and the report printed "hash not known to the service, which is not
+  evidence that it is safe". A reader takes that as a statement about the package. It was a statement
+  about a digest the tool had synthesized seconds earlier. One labelled answer per target now, each
+  against that target's own digest, with a structural test that fails the build if `report.sha256` is
+  ever routed back in.
+
+- **MD5 and SHA-1 were missing from every multi-target report**, reported twice by a user. A manifest
+  digest cannot be looked up anywhere, so the per-target MD5, SHA-1 and SHA-256 now print as their
+  own section.
+
+- **A control character in an archive entry name reached the text report.** `is_safe_member_name`
+  guards traversal and absolute paths, which is about where a file could be written, not about what
+  the name is. A `.txt` report carrying an ANSI escape becomes active content the moment somebody
+  runs `cat` on it. Names are sanitised at the one point every archive reader obtains them, so all
+  five output formats are covered. Sanitised rather than skipped, because refusing the entry would
+  hand an attacker a way to hide a member from analysis by naming it badly.
+
+- **Tests stopped leaving reports in the repository root**, which every `make check` had been doing
+  since the default output name was introduced.
+
+### Added
+
+- **Per-member digests.** MD5, SHA-1 and SHA-256 for every unpacked member, in a `member_digests`
+  table in both SQL exports. Hash lookup by hand, build-to-build diffing by content, and content
+  identity, none of which existed: `merge` concatenates coverage entries with no content comparison.
+  On the reference package 482 of 4,281 members are byte-identical to another member and 3,799 are
+  distinct. Measured cost 1.1s of an 8.0s scan, about 15%; `--no-digests` declines it.
+
+- **`--reputation-members`,** a sweep over every distinct member hash, worst first: unsigned
+  executables, then third-party-signed, then first-party, then non-executable members of at least
+  4 KiB. A free tier answers 500 a day and the package holds 3,799 distinct hashes, but its 179
+  unsigned executables fit inside a day, which is what makes prioritisation a strategy rather than an
+  apology. `--reputation` keeps its present meaning and request count.
+
+- **A request budget**, with pacing, a ceiling and bounded backoff. There was none of this anywhere:
+  `http::get` fires immediately and `cve.rs` loops components back to back. `Retry-After` is
+  deliberately not read, because reading it needs curl's `%header{}` from curl 7.83 and an older
+  system curl fails the whole request rather than omitting the field.
+
+- **A persistent verdict cache** at `~/.config/binspector/reputation.sqlite`, created mode 0600 and
+  refused if anything else can read it, with a lifetime per verdict class. A flagged hash keeps 30
+  days, no detections 7, and **unknown just 24 hours**: unknown does not mean clean, it means nobody
+  has submitted that hash yet, and a long lifetime would keep reporting unknown after the file became
+  known-bad. `binspector cache --show | --prune | --purge`.
+
+- **Intel in the SQL exports, for the first time.** Neither writer carried reputation, components or
+  CVEs, so a reviewer working from the database the documentation recommends silently missed all
+  three. A `scope` column separates target verdicts from member ones and `reputation_coverage` carries
+  the denominator, so a query cannot read "not asked" as "came back clean".
+
+- **A stated terms constraint.** VirusTotal's public API must not be used in business workflows that
+  do not contribute new files, and this tool never uploads by design. When the configured rate matches
+  a free tier the run says so once and continues: whether a use is within a service's terms is the
+  operator's judgement, not a scanner's.
+
+### Changed
+
+- **BREAKING: `Intel::reputation` is a `Vec<Reputation>`,** and `Reputation` carries a `label`. A JSON
+  consumer reading `intel.reputation.sha256` must iterate.
+- **BREAKING: a new user-level file** may be created at `~/.config/binspector/reputation.sqlite`.
+  `--no-cache` or `BINSPECTOR_CACHE` controls it and `cache --purge` removes it.
+- **Hardened SQL emission.** The SQLite writer bound every value already, but called `execute` per
+  row and re-prepared the same statement each time; the five high-volume loops now prepare once.
+  `sql_literal` additionally neutralises NUL and control bytes, which quote doubling alone does not
+  handle, while still leaving backslashes alone because escaping them would corrupt every Windows
+  path in the report. An injection test loads a hostile report's dump into a real database and checks
+  every table survived.
+
 ## [5.9.0] - 2026-10-02
 
 Compiland provenance: which source trees were linked into each image, read from its PDB. The

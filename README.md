@@ -255,6 +255,9 @@ export VT_API_KEY=... NVD_API_KEY=...
 binspector --reputation --cve ./app.exe
 binspector --reputation --cve --credentials ./ci-keys ./app.exe
 
+# Ask about every distinct member hash too, worst first, within a request budget
+binspector --reputation --reputation-members ./app.msixbundle
+
 # Fuzz Binspector's own parsers against a sample. Never executes the sample
 binspector fuzz --differential ./app.exe --iterations 20000
 
