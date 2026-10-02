@@ -2,6 +2,150 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.7.0] - 2026-10-02
+
+Prompted by a field report comparing four versions against one 553 MB Windows
+application across three adversarial adjudication passes, in which every number was
+re-derived from the artifacts rather than read out of the tool's own output. The report is
+in `docs/field-report-psexpress-6.9.0.0.md`. Two of its claims did not survive checking and
+are noted below; the rest did.
+
+### Changed
+
+- **Matching is case-exact, and there is no flag for the other mode.** The banned pattern
+  `SearchPath` was matching the camelCase local `searchPath` recovered from a PDB symbol stream:
+  304 occurrences, 22% of a 1,355-occurrence report, all restatements of one variable name. All
+  226 list entries were verified to carry correct API casing, so nothing real is lost.
+  `--ignore-case` was removed in 4.0.0 and a `--case-insensitive` would be that flag renamed, so
+  the only thing the insensitive mode does is reproduce this defect. `--case-sensitive` is still
+  accepted and now asks for the default.
+
+- **Counted string primitives are no longer rated as unbounded writes.** `strncpy`, `wcsncpy`,
+  `strncat`, `lstrcpyn` and family take an explicit count, so the defect is a wrong count or a
+  destination left unterminated ([CWE-170](https://cwe.mitre.org/data/definitions/170.html)),
+  not the unbounded overflow of [CWE-787](https://cwe.mitre.org/data/definitions/787.html). 24
+  of 57 criticals were counted primitives rated identically to `strcpy`, 15 of them `strncpy`
+  alone. `snprintf` is deliberately excluded: it terminates, so crediting it here would claim a
+  property it does not have.
+
+- **SafeSEH gates on architecture, not bitness.** `/SAFESEH` validates entries in the x86-32
+  stack-based exception chain; ARM, ARM64 and x64 use table-driven unwind through `.pdata` and
+  `.xdata` and have nothing for it to protect. The old `!is_64` gate reported `concrt140.dll`
+  from the ARM VCLibs package as a finding, an `armnt` image.
+
+- **The indicator cap was collecting 5%.** The default of 500 per kind kept 618 URLs and 1,902
+  paths while discarding 45,273 indicators, so the list was a sample of scan order presenting
+  itself as a result. The default is 10,000 per kind; the printed lists are unchanged, because
+  collection and display are separate concerns.
+
+### Added
+
+- **The UCRT formatting backends are on the list.** MSVC does not emit a call to `sprintf`; it
+  emits `__stdio_common_vsprintf`. 41 members of the real package imported at least one backend
+  and the tool reported none, so a clean critical count was not evidence of safe formatting.
+  They are tiered **High, not Critical**: each takes a `_BufferCount` the front end supplies, so
+  the import proves formatted output into a buffer and cannot distinguish `sprintf` from
+  `snprintf`. Rating them Critical would repeat the counted-primitive error above in a new
+  place, and did, briefly, at 268 criticals before being corrected to 39.
+
+- **A `no-code-section` exclusion rule.** `icudt74.dll` is one 34 MiB `.rdata` section of CLDR
+  locale data with no import directory, and it drew five HIGH `system` findings on
+  numbering-system keys. The rule requires positive evidence of no code, so a member that never
+  parsed as a PE is untouched: a packed image is where a hidden `system` matters most.
+
+- **An `export-definition-site` exclusion rule.** `vcruntime140_cor3.dll` was reported for
+  `memcpy`, `memmove`, `memset` and `memcmp`: the C runtime flagged for supplying the primitives
+  it exists to supply, matching its own export-directory name entries.
+
+- **`posture` and `posture_members` tables in the SQL and SQLite exports**, plus the
+  `excluded_by_rule` table that was created and never filled. A reviewer working from the
+  database, which is what the documentation recommends, silently missed `posture.aslr`: the
+  highest-value output the tool produces, and could not see that 33,334 occurrences had been
+  suppressed.
+
+- **A logical findings count beside the raw one.** 1,300 occurrences on the real target set hold
+  515 distinct (module, function, severity) triples; most of the remainder are one module
+  recompiled for another instruction set, and some are the same bytes scanned twice because two
+  architecture `.msix` members share a sha256.
+
+- **Copy buttons on the HTML code blocks.** One fixed script, the only script in the document,
+  loading nothing, so the report stays a self-contained file that works from a `file://` URL. It
+  copies `textContent`, so no report data reaches a script context.
+
+- **The targets header explains itself**, in all three human formats, after a user reported it
+  as the line in the report they understood least.
+
+### Fixed
+
+- **Import lookup tolerates the MSVC leading underscore.** The UCRT exports `_mktemp`, never
+  `mktemp`, so an exact compare missed a whole family of real imports and reported them at the
+  tier used for text with no import backing, under-rating a genuine
+  [CWE-377](https://cwe.mitre.org/data/definitions/377.html) finding.
+
+- **Template instantiations are recognised as definitions.** The MSVC mangling sigil is `?`, `??`
+  or `??$`, and requiring the token at index 1 let every template through, so
+  `??$sprintf@...@StringUtils@internal@ngl@`, an allocating wrapper returning
+  `std::basic_string`, survived as three findings.
+
+- **The two mitigation rollups disagreed in public.** The exec-analysis block said SafeSEH was
+  missing on 68 images while the posture finding in the same report said 66. The posture module
+  was right: it exempts a managed assembly from the checks the CLR controls. A test now asserts
+  the identity rather than the numbers.
+
+- **The target rollup was one off the hit table**, medium 104 and low 72 against 103 and 73,
+  because a summary row carries one severity for a whole function while the evidence rules decide
+  each occurrence separately.
+
+- **Paths no longer truncate at `~` or `{`.**
+  `C:\Users\ADMINI~1\AppData\Local\Temp\lnk{GUID}.tmp` was reported as `C:\Users\ADMINI`, and
+  because `ADMINI~1` is a Windows 8.3 short name the truncation invented an account name a
+  reader takes for a real identity. MSVC `link.exe` temporaries are now excluded from build
+  provenance outright.
+
+- **A developer path stays in the indicator list as well as the provenance section.** Promoting
+  it used to remove it, so 5.5.0 reported strictly less about one dependency than 5.3.0 had.
+  Build-path drops are counted now, and the per-root quota rises from 2 to 48 with the cap from
+  64 to 512: the real target set goes from 10 reported developer paths to 111.
+
+- **Prose running into a scheme is no longer a URL.** String extraction concatenates adjacent
+  literals, so `http://according` and `http://familiar` were among 618 reported URLs, pushing
+  real ones past the display limit.
+
+- **Component versions can have two parts**, so `deflate 1.3` is detected. A reviewer using the
+  field as the zlib inventory was short a whole version while four others were listed.
+
+- **Filename evidence is confirmed against the member list.** `icudt(\d+)` matched `icudt36` in
+  some module's leftover string table and reported ICU 36 as shipped, when the only ICU payloads
+  present were `icudt74.dll` and `icuuc74.dll`.
+
+- **Posture member lists say when they are a sample.** The stored list is capped at 50 in scan
+  order, and a reviewer read 50 of 179 as representative, concluded the finding belonged to one
+  vendor, and had to retract it.
+
+- **Warnings name their target.** The merge labelled the incoming side of the fold and never the
+  accumulator, so `no executable image (PE, ELF, or Mach-O) was reached`, which is correct and
+  applies to exactly one `.appxsym`, read at the top level as a claim about the whole scan. Two
+  independent reviewers concluded it was stale.
+
+- **Repeated anomaly and entropy lines are collapsed**, with a count. The same module ships for
+  several instruction sets, so `Microsoft.UI.Xaml.Controls.dll: 2 TLS callback(s)` appeared three
+  times and added no evidence while pushing distinct anomalies past the display limit.
+
+### Two field-report claims that did not survive checking
+
+Recorded because the report was right about everything else, and a fix built on a false premise
+is worse than no fix.
+
+- **"The report shows zero of the 313 safe variants."** It does not. The exec-analysis section
+  prints `String hygiene: 838 hardened CRT import(s) across 209 of 1567 image(s)` and
+  cross-references them against the bounded-primitive roll-up. The claim came from reading the
+  `hits` table, which is about findings. A per-member safe-to-unsafe ratio is still worth adding
+  and is not in this release.
+
+- **"`coverage.carve_ran` is False with no stated reason."** 5.6.0 already names every analysis
+  that was available and did not run, in an `Analysis not run` section. When `--carve` is passed
+  the report carries a full `Carving` section.
+
 ## [5.6.0] - 2026-10-02
 
 ### Added
