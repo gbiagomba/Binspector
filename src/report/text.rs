@@ -79,6 +79,7 @@ pub fn write(
     super::pe_section::write_text(w, r)?;
     super::pe_section::write_dll_search_text(w, r)?;
     super::pe_section::write_external_imports_text(w, r)?;
+    super::pdb_section::write_text(w, r)?;
     super::exe_section::write_text(w, r)?;
     super::intel_section::write_carve_text(w, r)?;
     super::intel_section::write_intel_text(w, r)?;
@@ -525,6 +526,7 @@ mod tests {
                 members_scanned: 3,
                 total_unpacked_bytes: 400_000_000,
                 entries: vec![CoverageEntry {
+                    pdb: None,
                     vendor: None,
                     member: "b :: app.msix :: App.exe".into(),
                     format: "pe".into(),

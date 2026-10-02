@@ -81,6 +81,143 @@ const COMPONENTS: &[&str] = &[
     "giflib",
 ];
 
+/// Source file names that identify a component wherever its objects end up.
+///
+/// **Why this is needed and not optional.** The motivating finding is a zlib whose core came from
+/// one tree and whose `gz*` layer came from another, inside one DLL. The real records are:
+///
+/// ```text
+/// obj=...\xmp\toolkit\public\libraries\windows_x64\Release\XMPFilesStaticRelease.lib
+/// mod=XMPFilesStatic.dir\Release\deflate.obj
+///
+/// obj=...\camera_raw\opencv\3rdparty\lib\Release\zlib.lib
+/// mod=zlib.dir\Release\gzclose.obj
+/// ```
+///
+/// The second names zlib in its archive. **The first does not name zlib anywhere**: not in the
+/// archive (`XMPFilesStaticRelease.lib`), not in any path segment (`xmp`, `toolkit`, `libraries`).
+/// The only thing identifying it is `deflate.obj`, which is a zlib source file. Without this table
+/// that tree is attributed to no component, the two never compare, and the finding this module
+/// exists for is invisible.
+///
+/// Only components whose source file names are distinctive enough to be safe appear here. zlib's
+/// twelve are unmistakable; a table entry for a library with generic file names such as `util.c`
+/// would produce false attributions, so there is none. That asymmetry is why a vendored zlib is
+/// detected and another vendored library may not be, and it is a coverage limit rather than a bug.
+const OBJECT_FINGERPRINTS: &[(&str, &[&str])] = &[
+    (
+        "zlib",
+        &[
+            "adler32", "crc32", "deflate", "gzclose", "gzlib", "gzread", "gzwrite", "infback",
+            "inffast", "inflate", "inftrees", "trees", "zutil",
+        ],
+    ),
+    // bzip2 is here because leaving it out caused a false finding rather than a missed one.
+    // `compress.c` and `decompress.c` belong to bzip2 as well as zlib, and with only zlib in the
+    // table a bzip2 archive's `compress.obj` was attributed to zlib, inventing a third zlib tree
+    // in an image that has two. Naming bzip2's own files fixes the attribution; dropping the two
+    // shared names from zlib's list is what fixes the collision.
+    (
+        "bzip2",
+        &[
+            "blocksort",
+            "bzlib",
+            "crctable",
+            "huffman",
+            "randtable",
+            "compress",
+            "decompress",
+        ],
+    ),
+];
+
+/// Names that appear in more than one component's file set, and so identify nothing.
+///
+/// Checked before the tables so a future entry cannot silently reintroduce the collision above.
+/// A name here is a coverage gap, deliberately, because a wrong attribution is worse than none:
+/// the whole value of this module is a reviewer trusting that two trees means two copies.
+const AMBIGUOUS_OBJECTS: &[&str] = &[
+    "compress",
+    "decompress",
+    "util",
+    "common",
+    "crc",
+    "checksum",
+];
+
+/// The component a single compiland belongs to, from the most specific evidence available.
+///
+/// Three sources in descending confidence, because the real data needs all three:
+///
+/// 1. The archive basename. `zlib.lib` is unambiguous.
+/// 2. The object basename, against [`OBJECT_FINGERPRINTS`]. This is what identifies zlib objects
+///    inside somebody else's static library.
+/// 3. A path segment, which catches a vendored source tree such as `3rdparty/zlib`.
+///
+/// Path segments come last on purpose. Taking them first attributed twelve vendored zlib objects
+/// to OpenCV, because they sit under an `opencv` directory, and that hid the mixed-version zlib.
+pub fn component_of_compiland(object_file_name: &str, module_name: &str) -> Option<String> {
+    for name in [object_file_name, module_name] {
+        if let Some(c) = component_from_file_name(name) {
+            return Some(c);
+        }
+    }
+    for name in [object_file_name, module_name] {
+        if let Some(c) = component_of(&name.replace('\\', "/")) {
+            return Some(c);
+        }
+    }
+    None
+}
+
+/// Match the basename of a path against the archive and object-fingerprint tables.
+fn component_from_file_name(path: &str) -> Option<String> {
+    let base = path
+        .replace('\\', "/")
+        .rsplit('/')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let stem = base.rsplit_once('.').map(|(a, _)| a).unwrap_or(&base);
+    if stem.is_empty() {
+        return None;
+    }
+    // An archive or object named for the component outright: `zlib.lib`, `libpng.lib`.
+    if COMPONENTS.contains(&stem) {
+        return Some(stem.to_string());
+    }
+    // A component's own source file inside somebody else's archive, which is the case that
+    // matters. Ambiguous names are refused first: `compress.obj` belongs to zlib and to bzip2, so
+    // it identifies neither.
+    if AMBIGUOUS_OBJECTS.contains(&stem) {
+        return None;
+    }
+    for (component, files) in OBJECT_FINGERPRINTS {
+        if files.contains(&stem) {
+            return Some((*component).to_string());
+        }
+    }
+    None
+}
+
+/// Collapse a tree that names the component down to the component's own directory.
+///
+/// `.../build/boost/boost/filesystem` and `.../build/boost/boost/regex` are two libraries inside
+/// one Boost checkout, not two Boost versions, and they were reported as a mixed source. When a
+/// path segment names the component, the tree *is* that component's directory and everything below
+/// it is internal structure, so the root truncates there.
+///
+/// Left alone when the component appears nowhere in the path, which is the zlib case: neither
+/// `.../xmp/toolkit/public/libraries/windows_x64` nor `.../opencv/3rdparty` contains a `zlib`
+/// segment, so both survive as the two distinct trees they are.
+pub fn narrow_to_component(root: &str, component: &str) -> String {
+    let parts: Vec<&str> = root.split('/').collect();
+    match parts.iter().position(|p| p.eq_ignore_ascii_case(component)) {
+        Some(i) => parts[..=i].join("/"),
+        None => root.to_string(),
+    }
+}
+
 /// The source tree a compiland came from.
 ///
 /// Prefers the object file name, because for a static-library member that is the `.lib` and names
@@ -283,5 +420,69 @@ mod tests {
         let root = source_root(&deep, "").expect("a path");
         assert!(root.len() <= 163, "{} chars", root.len());
         assert!(root.ends_with("..."));
+    }
+
+    #[test]
+    fn the_real_mixed_zlib_records_resolve_to_one_component_and_two_trees() {
+        // Verbatim from the reference package. This is the acceptance test for the whole module:
+        // if these two do not come back as one component from two trees, the finding is invisible.
+        let xmp_obj = r"D:\B\workspace\Harmony-release\ThirdParty\adobe\PSXImageCore\camera_raw\camera_raw\xmp\toolkit\public\libraries\windows_x64\Release\XMPFilesStaticRelease.lib";
+        let xmp_mod = r"XMPFilesStatic.dir\Release\deflate.obj";
+        let ocv_obj = r"D:\B\workspace\Harmony-release\ThirdParty\adobe\PSXImageCore\camera_raw\camera_raw\opencv\3rdparty\lib\Release\zlib.lib";
+        let ocv_mod = r"zlib.dir\Release\gzclose.obj";
+
+        // The XMP archive names zlib nowhere: not in `XMPFilesStaticRelease.lib`, not in any path
+        // segment. Only `deflate.obj` identifies it.
+        assert_eq!(
+            component_of_compiland(xmp_obj, xmp_mod).as_deref(),
+            Some("zlib")
+        );
+        assert_eq!(
+            component_of_compiland(ocv_obj, ocv_mod).as_deref(),
+            Some("zlib")
+        );
+
+        let xmp_root = source_root(xmp_obj, xmp_mod).expect("a root");
+        let ocv_root = source_root(ocv_obj, ocv_mod).expect("a root");
+        assert_ne!(xmp_root, ocv_root, "two trees, or there is no finding");
+        assert!(xmp_root.contains("xmp/toolkit"), "{}", xmp_root);
+        assert!(ocv_root.ends_with("opencv/3rdparty"), "{}", ocv_root);
+    }
+
+    #[test]
+    fn an_archive_naming_the_component_wins_over_the_enclosing_tree() {
+        // `...\opencv\3rdparty\lib\Release\zlib.lib` is zlib, not OpenCV. Reading the path
+        // segment first attributed twelve vendored zlib objects to OpenCV.
+        let obj = r"C:\src\opencv\3rdparty\lib\Release\zlib.lib";
+        assert_eq!(
+            component_of_compiland(obj, r"zlib.dir\Release\adler32.obj").as_deref(),
+            Some("zlib")
+        );
+    }
+
+    #[test]
+    fn an_object_with_no_component_evidence_is_attributed_to_none() {
+        // First-party code. Guessing a component here would put a fictional one in every image.
+        let obj = r"D:\B\workspace\Harmony-release\PSExpress\_build\x64\Release\EditorManagerBridge\obj\EditManager.obj";
+        assert_eq!(component_of_compiland(obj, obj), None);
+    }
+
+    #[test]
+    fn a_generic_object_name_is_not_a_fingerprint() {
+        // The fingerprint table holds only names distinctive enough to be safe. `util.obj` or
+        // `compress.obj` inside an unrelated library must not become zlib on the strength of a
+        // common word, so `compress` is in the table but only matches as a whole stem.
+        assert_eq!(component_from_file_name("util.obj"), None);
+        assert_eq!(component_from_file_name("decompressor.obj"), None);
+        assert_eq!(component_from_file_name("myinflate.obj"), None);
+        // And the real ones still match.
+        assert_eq!(
+            component_from_file_name("inflate.obj").as_deref(),
+            Some("zlib")
+        );
+        assert_eq!(
+            component_from_file_name("zlib.lib").as_deref(),
+            Some("zlib")
+        );
     }
 }

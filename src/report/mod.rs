@@ -8,6 +8,7 @@ pub mod html;
 pub mod intel_section;
 pub mod json;
 pub mod markdown;
+pub mod pdb_section;
 pub mod pe_section;
 pub mod sarif;
 pub mod signature_section;
@@ -353,6 +354,7 @@ pub(crate) mod tests_support {
                 members_scanned: 3,
                 total_unpacked_bytes: 400_000_000,
                 entries: vec![CoverageEntry {
+                    pdb: None,
                     vendor: None,
                     member: "bundle :: app.msix :: App.exe".into(),
                     format: "pe".into(),

@@ -556,6 +556,49 @@ signing are still properties of the shipped file.
 **These participate in `--fail-on`**, which is the breaking change most likely to affect a
 pipeline.
 
+## Compiland provenance
+
+Every PDB in a scan is read for its compiland records: the source tree each object file in the image
+was compiled from. On by default, `--no-pdb` to skip, 512 MB cap per PDB with a stated reason when
+one is skipped.
+
+```bash
+binspector ./app.appxsym ./app.msixbundle
+```
+
+### The one finding here
+
+When two source trees contribute objects for the **same component**, two copies of it were linked
+and the linker resolved each symbol from whichever it saw first. The shipped behaviour is neither
+version, and no version field can describe it:
+
+```
+!! EditorManagerBridge.pdb: zlib objects came from 2 different source trees
+       8 object(s)  .../camera_raw/xmp/toolkit/public/libraries/windows_x64
+       4 object(s)  .../camera_raw/opencv/3rdparty
+```
+
+That is the signature of a static-library update that did not fully apply. The component list will
+still report one version, from the banner, and it will be the version of whichever copy supplied the
+banner rather than whichever supplied the code.
+
+Query it:
+
+```sql
+SELECT image_stem, component, objects, root FROM pdb_source_roots WHERE mixed = 1;
+```
+
+### Coverage limits, stated
+
+Component attribution uses three sources in descending confidence: an archive named for the
+component (`zlib.lib`), an object file name from a curated fingerprint table (`deflate.obj`), and a
+path segment (`3rdparty/zlib`). The middle one is what identifies a component's objects inside
+somebody else's static library, and it exists only for components whose source file names are
+distinctive enough to be safe. A library with generic file names has no entry, so a vendored copy of
+it will not be attributed, and a mixed-source condition in it will not be detected. Names shared
+between components, such as `compress.c`, are refused outright: a wrong attribution is worse than
+none, because the value of this section is trusting that two trees means two copies.
+
 ## Signature verification
 
 Three separate questions, which earlier versions collapsed into one. Since 5.3.0 the report answers

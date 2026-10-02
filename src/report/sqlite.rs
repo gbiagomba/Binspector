@@ -124,6 +124,35 @@ pub fn write(
                 tx.execute("INSERT INTO posture_members VALUES (?,?)", params![p.id, m])?;
             }
         }
+        for e in &r.coverage.entries {
+            let Some(p) = e.pdb.as_ref() else { continue };
+            // Keyed on (root, component), not the root alone. One tree legitimately appears
+            // twice when it contributes both a component's objects and its own: the XMP toolkit
+            // tree supplies 8 zlib objects and 120 of its own, and marking by root flagged all
+            // 128 as part of the mixed-source finding.
+            let mixed: std::collections::BTreeSet<(&str, Option<&str>)> = p
+                .mixed
+                .iter()
+                .flat_map(|m| {
+                    m.roots
+                        .iter()
+                        .map(|x| (x.root.as_str(), x.component.as_deref()))
+                })
+                .collect();
+            for root in &p.roots {
+                tx.execute(
+                    "INSERT INTO pdb_source_roots VALUES (?,?,?,?,?,?)",
+                    params![
+                        e.member,
+                        p.image_stem,
+                        root.root,
+                        root.objects as i64,
+                        root.component,
+                        mixed.contains(&(root.root.as_str(), root.component.as_deref())) as i64
+                    ],
+                )?;
+            }
+        }
         for e in &r.external_imports {
             for m in &e.modules {
                 tx.execute(

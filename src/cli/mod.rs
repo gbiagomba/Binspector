@@ -162,6 +162,14 @@ pub struct Cli {
     #[arg(long = "no-exe", alias = "no-pe", visible_alias = "no-pe")]
     pub no_pe: bool,
 
+    /// Skip compiland provenance on PDB members
+    ///
+    /// Provenance names every source tree linked into an image, which is the only place a
+    /// static-library patch that did not fully apply is visible. Off switch, not an opt-in,
+    /// because a symbol package is usually exactly why someone scanned one.
+    #[arg(long = "no-pdb")]
+    pub no_pdb: bool,
+
     /// Maximum indicators of each kind to collect
     #[arg(long = "ioc-cap", default_value_t = 10_000, value_name = "N")]
     pub ioc_cap: usize,
@@ -518,6 +526,7 @@ impl Cli {
             context_window: self.context,
             include_excluded: self.include_excluded,
             analyze_pe: !self.no_pe,
+            analyze_pdb: !self.no_pdb,
             ioc_cap: self.ioc_cap,
             detect_components: !self.no_components,
         };

@@ -661,14 +661,38 @@ fn json_output_is_machine_readable() {
 #[test]
 fn fail_on_controls_the_exit_code() {
     let f = fixture();
-    // strcpy is critical, so the threshold is met.
+    // `-o -` on both, because `bin()` carries no output path and the default is a timestamped
+    // file written to the process working directory, which for an integration test is the crate
+    // root. Two of these leaked per `make check` run and a user found a pile of them in the repo.
+    // The exit code is what this test is about, so stdout is the right sink.
     bin()
-        .args(["--fail-on", "critical"])
+        .args(["--fail-on", "critical", "-o", "-"])
         .arg(&f.target)
         .assert()
         .code(1);
     // With no threshold, a finding is still a successful run.
-    bin().arg(&f.target).assert().success();
+    bin().args(["-o", "-"]).arg(&f.target).assert().success();
+}
+
+#[test]
+fn no_test_leaves_a_report_in_the_working_directory() {
+    // The tripwire. `bin()` has no default output path, so any test that forgets `-o` writes
+    // `binspector_output-<timestamp>.txt` into the crate root. They are gitignored, which is why
+    // this went unnoticed through several releases until the pile was spotted by hand.
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let strays: Vec<String> = std::fs::read_dir(root)
+        .expect("crate root is readable")
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .filter(|n| n.starts_with("binspector_output-"))
+        .collect();
+    assert!(
+        strays.is_empty(),
+        "tests left {} report(s) in the crate root: {:?}. A test running the binary without `-o` \
+         writes the default timestamped name into the working directory.",
+        strays.len(),
+        strays
+    );
 }
 
 #[test]

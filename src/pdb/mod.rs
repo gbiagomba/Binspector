@@ -147,7 +147,10 @@ pub fn read(data: &[u8], member_name: &str) -> Result<Option<Provenance>, String
     // The one walk. Streaming, no allocation inside the iterator, and the type and symbol streams
     // are never opened.
     let mut modules = dbi.modules().map_err(|e| e.to_string())?;
-    let mut by_root: BTreeMap<String, usize> = BTreeMap::new();
+    // Keyed by (root, component): the component is a property of the compiland, from its archive
+    // or object name, and cannot be re-derived from the trimmed root. The XMP tree carrying zlib
+    // objects names zlib nowhere in its path.
+    let mut by_root: BTreeMap<(String, Option<String>), usize> = BTreeMap::new();
     let mut compilands = 0usize;
     loop {
         let next = pdb2::FallibleIterator::next(&mut modules).map_err(|e| e.to_string());
@@ -160,7 +163,14 @@ pub fn read(data: &[u8], member_name: &str) -> Result<Option<Provenance>, String
                 let object = m.object_file_name();
                 let module = m.module_name();
                 if let Some(root) = provenance::source_root(&object, &module) {
-                    *by_root.entry(root).or_insert(0) += 1;
+                    let component = provenance::component_of_compiland(&object, &module);
+                    // A tree naming its own component collapses to that directory, so two
+                    // libraries inside one checkout are one tree rather than a false mixed source.
+                    let root = match component.as_deref() {
+                        Some(c) => provenance::narrow_to_component(&root, c),
+                        None => root,
+                    };
+                    *by_root.entry((root, component)).or_insert(0) += 1;
                 }
             }
             Ok(None) => break,
@@ -188,11 +198,15 @@ pub fn read(data: &[u8], member_name: &str) -> Result<Option<Provenance>, String
 }
 
 /// Assemble the roots and detect the mixed-source condition.
-fn finish(image_stem: String, compilands: usize, by_root: BTreeMap<String, usize>) -> Provenance {
+fn finish(
+    image_stem: String,
+    compilands: usize,
+    by_root: BTreeMap<(String, Option<String>), usize>,
+) -> Provenance {
     let mut roots: Vec<SourceRoot> = by_root
         .into_iter()
-        .map(|(root, objects)| SourceRoot {
-            component: provenance::component_of(&root),
+        .map(|((root, component), objects)| SourceRoot {
+            component,
             root,
             objects,
         })
@@ -209,7 +223,17 @@ fn finish(image_stem: String, compilands: usize, by_root: BTreeMap<String, usize
     }
     let mut mixed: Vec<MixedSource> = per_component
         .into_iter()
-        .filter(|(_, rs)| rs.len() > 1)
+        // More than one *distinct* tree. Two rows under one tree are not a mixed source, and
+        // without this an `opencv/lib` and an `opencv/3rdparty` row inside one OpenCV checkout
+        // reported as two zlib versions. Verified against the real package, where it produced
+        // three false findings before the component moved off the path segment.
+        .filter(|(_, rs)| {
+            rs.iter()
+                .map(|r| r.root.as_str())
+                .collect::<std::collections::BTreeSet<_>>()
+                .len()
+                > 1
+        })
         .map(|(component, rs)| MixedSource {
             component: component.to_string(),
             roots: rs.into_iter().cloned().collect(),
@@ -298,12 +322,20 @@ mod tests {
         let mut by_root = BTreeMap::new();
         // The real shape: a zlib core from the XMP toolkit tree and a gz* layer from an OpenCV
         // tree, in one image.
-        by_root.insert("c:/adobe/xmp/toolkit/third-party/zlib".to_string(), 8);
+        // The real shape: the component travels with the compiland, because the XMP tree names
+        // zlib nowhere in its path and is only identifiable by its object file names.
         by_root.insert(
-            "c:/users/awsingh/desktop/opencv/opencv-4.10-build/build/3rdparty/zlib".to_string(),
+            (
+                "c:/adobe/xmp/toolkit/public/libraries".into(),
+                Some("zlib".into()),
+            ),
+            8,
+        );
+        by_root.insert(
+            ("c:/camera_raw/opencv/3rdparty".into(), Some("zlib".into())),
             4,
         );
-        by_root.insert("c:/adobe/ace/src".to_string(), 40);
+        by_root.insert(("c:/adobe/ace/src".into(), None), 40);
         let p = finish("EditorManagerBridge".into(), 52, by_root);
         assert_eq!(p.mixed.len(), 1, "{:?}", p.mixed);
         assert_eq!(p.mixed[0].component, "zlib");
@@ -316,8 +348,8 @@ mod tests {
     #[test]
     fn one_tree_per_component_is_not_a_mixed_source() {
         let mut by_root = BTreeMap::new();
-        by_root.insert("c:/build/zlib-1.3.1".to_string(), 12);
-        by_root.insert("c:/build/libpng-1.6.40".to_string(), 20);
+        by_root.insert(("c:/build/zlib-1.3.1".into(), Some("zlib".into())), 12);
+        by_root.insert(("c:/build/libpng-1.6.40".into(), Some("libpng".into())), 20);
         let p = finish("app".into(), 32, by_root);
         assert!(p.mixed.is_empty(), "{:?}", p.mixed);
         assert_eq!(p.roots.len(), 2);

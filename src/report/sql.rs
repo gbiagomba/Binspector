@@ -40,6 +40,9 @@ CREATE TABLE IF NOT EXISTS posture (
   id TEXT, title TEXT, severity TEXT, affected INTEGER, members_listed INTEGER,
   members_truncated INTEGER, evidence TEXT, remediation TEXT);
 CREATE TABLE IF NOT EXISTS posture_members (id TEXT, member TEXT);
+CREATE TABLE IF NOT EXISTS pdb_source_roots (
+  member TEXT, image_stem TEXT, root TEXT, objects INTEGER, component TEXT, mixed INTEGER);
+CREATE INDEX IF NOT EXISTS idx_pdb_roots_component ON pdb_source_roots(component);
 CREATE TABLE IF NOT EXISTS external_imports (
   member TEXT, library TEXT, imports INTEGER, severity TEXT,
   signed INTEGER, restricts_search_path INTEGER);
@@ -182,6 +185,40 @@ pub fn write(
                     "INSERT INTO posture_members VALUES ({},{});",
                     sql_literal(&p.id),
                     sql_literal(m)
+                )?;
+            }
+        }
+
+        // One row per (image, source tree). `mixed` marks the rows that make up a mixed-source
+        // finding, so `SELECT * FROM pdb_source_roots WHERE mixed = 1` is the whole question.
+        for e in &r.coverage.entries {
+            let Some(p) = e.pdb.as_ref() else { continue };
+            // Keyed on (root, component), not the root alone. One tree legitimately appears
+            // twice when it contributes both a component's objects and its own: the XMP toolkit
+            // tree supplies 8 zlib objects and 120 of its own, and marking by root flagged all
+            // 128 as part of the mixed-source finding.
+            let mixed: std::collections::BTreeSet<(&str, Option<&str>)> = p
+                .mixed
+                .iter()
+                .flat_map(|m| {
+                    m.roots
+                        .iter()
+                        .map(|x| (x.root.as_str(), x.component.as_deref()))
+                })
+                .collect();
+            for root in &p.roots {
+                writeln!(
+                    w,
+                    "INSERT INTO pdb_source_roots VALUES ({},{},{},{},{},{});",
+                    sql_literal(&e.member),
+                    sql_literal(&p.image_stem),
+                    sql_literal(&root.root),
+                    root.objects,
+                    root.component
+                        .as_deref()
+                        .map(sql_literal)
+                        .unwrap_or_else(|| "NULL".into()),
+                    mixed.contains(&(root.root.as_str(), root.component.as_deref())) as u8
                 )?;
             }
         }

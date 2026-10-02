@@ -2,6 +2,90 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.9.0] - 2026-10-02
+
+Compiland provenance: which source trees were linked into each image, read from its PDB. The
+capability behind the single most consequential finding of the engagement that drove 5.7.0 and
+5.8.0, and the one thing on that field report's priority list no amount of version reporting could
+have replaced.
+
+### Added
+
+- **Build provenance from debug symbols.** For each PDB, the set of source trees that contributed
+  object files, with a count per tree. Compiland records are structured and complete where string
+  extraction is capped and heuristic, so this supersedes indicator-derived build paths wherever a
+  PDB is present. On the reference symbol package: 17 PDBs, 14 parsed, 4,834 translation units.
+
+- **A mixed-source warning, which is the point.** When two trees contribute objects for the same
+  component, two copies were linked and the linker resolved each symbol from whichever it saw
+  first, so the shipped code is neither version and no version field can describe it. The tool now
+  reports, unprompted:
+
+  ```
+  !! EditorManagerBridge.pdb: zlib objects came from 2 different source trees
+         8 object(s)  .../camera_raw/xmp/toolkit/public/libraries/windows_x64
+         4 object(s)  .../camera_raw/opencv/3rdparty
+  ```
+
+  That is the 8 core objects and 4 `gz*` objects an adversarial review recovered by hand, derived
+  independently and matching exactly. The tool still reports the component as `zlib 1.2.11`, which
+  is what the banner says and half the truth; this section is where the other half lives.
+
+- **`Format::Pdb`**, detected on the MSF 7.0 and 2.0 signatures, so a `.pdb` is reported as what it
+  is rather than as `unknown`. Deliberately not `is_executable`, so string hits inside one keep the
+  Low cap: a PDB holds no code.
+
+- **`pdb_source_roots` in the SQL and SQLite exports**, one row per image and tree, with a `mixed`
+  column so `WHERE mixed = 1` is the whole query.
+
+- **`fuzz_pdb`**, a harness and a `--target pdb` differential mode. This is the price of the
+  dependency rather than an optional extra: see below.
+
+- **`--no-pdb`** and a 512 MB per-PDB cap. A skipped PDB states why.
+
+### Changed
+
+- **A new dependency, `pdb2`, and the audit that justified it.** The project's rule is that a
+  parser exposed to hostile input gets reimplemented locally, written after goblin was found to
+  panic on a raw index and allocate on an attacker-chosen count. That rule was applied per code
+  path rather than per crate, and this path differs: `PDB::open`, `debug_information()`,
+  `modules()` takes a bounded slice of the DBI stream and streams it with no allocation, while
+  every `Vec::with_capacity(n)` driven by a file-supplied `n` lives in the type, symbol and omap
+  streams this code never opens. Non-test panic sites on the path: two `unreachable!()` on internal
+  invariants and one already behind `cfg!(debug_assertions)`.
+
+  Cost measured rather than assumed: `fallible-iterator` and `uuid` were already in the lockfile, so
+  the tree grows by `pdb2` and one duplicate `scroll`. `pdb` 0.8.0 would have added two duplicates
+  and is unmaintained. Two of the three crates originally proposed, `pdbtbx` and `pdbrust`, are
+  Protein Data Bank crystallography libraries rather than Program Database parsers.
+
+- **Parallelism was measured and then not built.** `--threads` parallelises the target loop, and a
+  symbol package is one target holding every PDB, so it gets no benefit today. Provenance is also
+  the one per-member analysis that escapes the blocker 5.5.0 documented, since it touches no
+  indicator collector, component detector, hit cap or spool. The measurement says not to: 7.14s with
+  provenance against 7.07s without, on 483 MB of PDBs, because the cost is proportional to the DBI
+  substream rather than to the file. The design is recorded in the plan; building it would have been
+  complexity bought for nothing.
+
+### Fixed
+
+- **MD5 and SHA1 were missing from every multi-target report**, reported twice. A digest over a set
+  of files is a manifest digest, and the first fix named it as one and then cleared the other two
+  algorithms. That was wrong twice over: the label already said "manifest", and two absent
+  algorithms read as a tool that failed to hash. The deeper problem was that a multi-target report
+  carried no usable file hash at all, so the per-target MD5, SHA1 and SHA256 now print as their own
+  section. A manifest digest cannot be looked up anywhere.
+
+- **`--credentials <FILE>`** joins the environment variables, with the environment still taking
+  precedence. A named file that does not exist is an error rather than a silent miss. There is still
+  no flag that takes a key directly and a test asserts none is added: an argument is visible through
+  `ps` and recorded in shell history. usage.md gains a table of which key each flag needs.
+
+- **Tests no longer leave reports in the repository root.** `fail_on_controls_the_exit_code` ran the
+  binary twice with no `-o`, so every `make check` dropped two timestamped files into the crate
+  root. They were gitignored, which is why it went unnoticed across several releases until the pile
+  was spotted by hand. A test now fails if any reappear.
+
 ## [5.8.0] - 2026-10-02
 
 Closes the three items a field report left open after 5.7.0, adds the planting check the same

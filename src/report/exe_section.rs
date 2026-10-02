@@ -130,6 +130,7 @@ mod tests {
 
     fn entry(member: &str, m: UnixMitigations, source: &str) -> CoverageEntry {
         CoverageEntry {
+            pdb: None,
             vendor: None,
             member: member.to_string(),
             format: "macho".to_string(),

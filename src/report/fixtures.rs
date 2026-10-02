@@ -623,6 +623,7 @@ fn entry(m: &str, size: u64, strings: usize, pe: Option<PeAnalysis>) -> Coverage
         None => (Vec::new(), String::new()),
     };
     CoverageEntry {
+        pdb: None,
         vendor: None,
         member: m.to_string(),
         format: "pe".to_string(),

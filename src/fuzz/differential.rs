@@ -29,6 +29,9 @@ pub enum Target {
     /// ELF and Mach-O imports and mitigation posture, including the chained-fixups blob, whose
     /// header is seven attacker-controlled offsets into itself.
     Exe,
+    /// PDB compiland records. The only third-party parser this tool trusts on hostile input, and
+    /// the reason that trust is bounded to the DBI module list rather than to the whole crate.
+    Pdb,
     /// Every parser in sequence, as a real scan would.
     All,
 }
@@ -40,6 +43,7 @@ impl Target {
             Target::Container => "container",
             Target::Pe => "pe",
             Target::Exe => "exe",
+            Target::Pdb => "pdb",
             Target::All => "all",
         }
     }
@@ -201,6 +205,9 @@ fn exercise(input: &[u8], target: Target) -> std::result::Result<(), String> {
         Target::Exe => {
             exercise_exe(input);
         }
+        Target::Pdb => {
+            exercise_pdb(input);
+        }
         Target::Container => {
             let limits = tight_limits();
             let _ = container::walk_bytes(
@@ -216,6 +223,7 @@ fn exercise(input: &[u8], target: Target) -> std::result::Result<(), String> {
             PeAnalysis::parse(input);
             exercise_signature(input);
             exercise_exe(input);
+            exercise_pdb(input);
             let limits = tight_limits();
             let _ = container::walk_bytes(
                 input,
@@ -226,12 +234,19 @@ fn exercise(input: &[u8], target: Target) -> std::result::Result<(), String> {
                     strings::extract(m.data, 4, true, true);
                     PeAnalysis::parse(m.data);
                     exercise_exe(m.data);
+                    exercise_pdb(m.data);
                     Ok(())
                 },
             );
         }
     }));
     result.map_err(|e| panic_message(&e))
+}
+
+/// The PDB compiland reader, which is the only third-party parser this tool trusts on hostile
+/// input. Reached directly so the fuzzer need not build a valid archive around a PDB first.
+fn exercise_pdb(input: &[u8]) {
+    let _ = crate::pdb::read(input, "fuzz.pdb");
 }
 
 /// The Authenticode and chain decoders, reached directly so the fuzzer does not have to produce a
@@ -339,7 +354,14 @@ mod tests {
 
     #[test]
     fn each_target_can_be_selected() {
-        for t in [Target::Strings, Target::Container, Target::Pe, Target::All] {
+        for t in [
+            Target::Strings,
+            Target::Container,
+            Target::Pe,
+            Target::Exe,
+            Target::Pdb,
+            Target::All,
+        ] {
             let opts = Options {
                 target: t,
                 iterations: 50,
@@ -389,5 +411,26 @@ mod tests {
             ..Default::default()
         };
         assert!(run(b"", &opts).unwrap().is_clean());
+    }
+
+    #[test]
+    fn a_mutated_pdb_header_does_not_panic_the_compiland_reader() {
+        // The dependency-safety claim in `src/pdb` is an argument about one code path, so it is
+        // worth what the path boundary is worth. This is the cheap in-process half of holding it;
+        // `fuzz_pdb` under a coverage-guided engine is the other half.
+        let mut seed = b"Microsoft C/C++ MSF 7.00\r\n\x1aDS\0\0\0".to_vec();
+        seed.extend_from_slice(&[0x41u8; 512]);
+        let opts = Options {
+            target: Target::Pdb,
+            iterations: 400,
+            ..Default::default()
+        };
+        let c = run(&seed, &opts).unwrap();
+        assert_eq!(c.target, Target::Pdb);
+        assert!(
+            c.findings.is_empty(),
+            "the compiland reader panicked on a mutated PDB: {:?}",
+            c.findings
+        );
     }
 }

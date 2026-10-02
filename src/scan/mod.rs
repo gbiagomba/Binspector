@@ -66,6 +66,8 @@ pub struct ScanConfig {
     pub include_excluded: bool,
     /// Parse PE members for headers, sections, imports, and mitigations.
     pub analyze_pe: bool,
+    /// Read compiland records from PDB members.
+    pub analyze_pdb: bool,
     /// Maximum indicators of each kind to collect.
     pub ioc_cap: usize,
     /// Detect third-party components and versions from strings. Offline.
@@ -93,6 +95,7 @@ impl Default for ScanConfig {
             context_window: 120,
             include_excluded: false,
             analyze_pe: true,
+            analyze_pdb: true,
             // Per kind, not overall. 500 made the field unusable on a real 553 MB target: 618
             // URLs and 1,902 paths were kept while 45,273 indicators were discarded, so the
             // list was a 5% sample of scan order presenting itself as a result. Collection and
@@ -208,6 +211,26 @@ pub fn run_labeled(
             // actually ships, and cheap because the set is bounded by the member count.
             member_leaves
                 .insert(crate::report::fmt_util::short_name(&member_name).to_ascii_lowercase());
+            // Compiland provenance. A pure function of the member's bytes: it touches no
+            // indicator collector, no component detector, no hit cap and no spool, which is what
+            // makes it the one per-member analysis that could be parallelised without solving the
+            // general problem 5.5.0 deferred. Measured first: see the release notes.
+            let pdb_provenance =
+                if cfg.analyze_pdb && member.format == crate::container::Format::Pdb {
+                    let leaf = crate::report::fmt_util::short_name(&member_name);
+                    match crate::pdb::read(member.data, leaf) {
+                        Ok(found) => found,
+                        // A PDB that cannot be read is a different fact from one that is absent, and
+                        // saying so is the habit the coverage warnings already follow.
+                        Err(e) => Some(crate::pdb::Provenance::skipped(
+                            leaf.trim_end_matches(".pdb").to_string(),
+                            format!("could not be read: {}", e),
+                        )),
+                    }
+                } else {
+                    None
+                };
+
             let mut pe = if cfg.analyze_pe && member.format == crate::container::Format::Pe {
                 PeAnalysis::parse(member.data)
             } else {
@@ -563,6 +586,7 @@ pub fn run_labeled(
             });
             coverage_entries.push(CoverageEntry {
                 vendor: vendor.clone(),
+                pdb: pdb_provenance,
                 member: member_name,
                 format: member.format.as_str().to_string(),
                 size: member.data.len() as u64,

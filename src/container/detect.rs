@@ -15,6 +15,14 @@ pub enum Format {
     Pe,
     Elf,
     MachO,
+    /// A Microsoft Program Database: debug information for a PE, not an executable itself.
+    ///
+    /// Recognised since 5.9.0 so a `.pdb` is reported as what it is rather than as `unknown`. It
+    /// is deliberately **not** `is_executable`, so string hits inside one keep their Low cap: a
+    /// PDB holds no code. What it does hold is the compiland records that name every source tree
+    /// linked into the image, which is the only place a partially applied static-library patch is
+    /// visible.
+    Pdb,
     Unknown,
 }
 
@@ -31,6 +39,7 @@ impl Format {
             Format::Pe => "pe",
             Format::Elf => "elf",
             Format::MachO => "macho",
+            Format::Pdb => "pdb",
             Format::Unknown => "unknown",
         }
     }
@@ -101,6 +110,11 @@ pub fn detect(data: &[u8]) -> Format {
     }
     if is_pe(data) {
         return Format::Pe;
+    }
+    // Before the fallthrough, and after the archive magics, because a PDB is none of those. The
+    // signature is 32 bytes of fixed text, so there is no collision risk.
+    if crate::pdb::is_pdb(data) {
+        return Format::Pdb;
     }
     Format::Unknown
 }
@@ -269,5 +283,19 @@ mod tests {
     fn short_input_is_unknown() {
         assert_eq!(detect(b""), Format::Unknown);
         assert_eq!(detect(b"MZ"), Format::Unknown);
+    }
+
+    #[test]
+    fn a_pdb_is_detected_and_is_not_an_executable() {
+        let mut v = b"Microsoft C/C++ MSF 7.00\r\n\x1aDS\0\0\0".to_vec();
+        v.extend_from_slice(&[0u8; 128]);
+        assert_eq!(detect(&v), Format::Pdb);
+        assert_eq!(Format::Pdb.as_str(), "pdb");
+        // A PDB holds debug records, not code, so a string match inside one must keep the Low cap
+        // the non-executable-member rule applies. Flipping this would promote 2,714 members of one
+        // real package from context to findings.
+        assert!(!Format::Pdb.is_executable());
+        assert!(!Format::Pdb.is_walkable_archive());
+        assert!(!Format::Pdb.is_single_stream());
     }
 }

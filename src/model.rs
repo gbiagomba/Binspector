@@ -227,6 +227,12 @@ pub struct CoverageEntry {
     #[serde(default)]
     #[serde(skip_serializing_if = "is_false")]
     pub unix_executable: bool,
+    /// Compiland provenance, when this member is a PDB.
+    ///
+    /// Filled during the walk like `pe`, because it is a pure function of the member's bytes.
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pdb: Option<crate::pdb::Provenance>,
     /// Who signed this member, collapsed to one key per organisation.
     ///
     /// **Who signed it, not who wrote the code in it.** See `pe::vendor` for why that distinction
