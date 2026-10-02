@@ -24,7 +24,7 @@ Matching: case insensitive, min string length 4, 197 banned names
 
 Coverage
   Container format: zip
-  Members scanned:  6
+  Members scanned:  7
   Bytes unpacked:   2.2 MiB
   Strings found:    11,200
     [pe] Microsoft.VCLibs.ARM.14.00.Desktop.appx :: App.exe (1.0 MiB, 4,000 strings)
@@ -33,6 +33,7 @@ Coverage
     [elf] Payload.msix :: usr :: lib :: libthing.so (192.0 KiB, 1,200 strings)
     [pe] Microsoft.VCLibs.ARM64.14.00.Desktop.appx :: Bridge.dll (128.0 KiB, 900 strings)
     [macho] Payload.msix :: Contents :: MacOS :: Helper (96.0 KiB, 800 strings)
+    [pe] bundle :: '); DROP TABLE hits;-- :: 'quoted' OR 1=1 --.dll (4.0 KiB, 12 strings)
 
 Targets (3, 9 occurrence(s), 6 member(s) scanned, 3 of 3 reached an executable image)
   a target is a file named on the command line or found by walking a directory; a member is anything unpacked out of one, nested archives included

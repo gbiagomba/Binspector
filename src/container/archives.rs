@@ -8,7 +8,7 @@
 use anyhow::{Context, Result};
 use std::io::{Cursor, Read};
 
-use super::limits::{is_safe_member_name, Budget};
+use super::limits::{is_safe_member_name, sanitize_member_name, Budget};
 
 /// Enumerate 7z members.
 pub fn for_each_7z_entry<F>(data: &[u8], budget: &mut Budget, at: &str, f: &mut F) -> Result<()>
@@ -38,6 +38,7 @@ where
             ));
             continue;
         }
+        let name = sanitize_member_name(&name);
         let member_at = format!("{} :: {}", at, name);
         if budget.check_member(size, &member_at).is_some() {
             continue;
@@ -80,6 +81,7 @@ where
             ));
             continue;
         }
+        let name = sanitize_member_name(&name);
         let member_at = format!("{} :: {}", at, name);
         if budget.check_member(size as u64, &member_at).is_some() {
             continue;

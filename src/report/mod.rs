@@ -137,9 +137,49 @@ pub fn csv_field(s: &str) -> String {
 }
 
 /// Escape a value for a single-quoted SQL string literal.
+///
+/// **This is the only place in the tool where attacker-controlled text is concatenated into SQL,
+/// and it is unavoidable.** The `sqlite` writer binds every value through `params!`, which is immune
+/// by construction; the `sql` writer emits a portable text dump that another tool loads, so there is
+/// no statement to bind to and the escape is the whole defence. Member names come from archive entry
+/// names, source roots from PDB records and library names from import tables, all controlled by
+/// whoever built the scanned file.
+///
+/// Doubling the quote is the correct and complete escape for a SQLite string literal: a backslash
+/// has no special meaning inside one, so there is no second escape to get wrong, and escaping it
+/// would corrupt every Windows path in the report.
+///
+/// What doubling alone does not handle is a NUL or a control byte. A raw NUL truncates the string in
+/// some clients, so the same dump means different things to different readers, which is a
+/// parsing-differential bug rather than an injection but no less real. Those are replaced rather
+/// than dropped, so the value keeps its length and a reader can see something was there.
 pub fn sql_literal(s: &str) -> String {
-    format!("'{}'", s.replace('\'', "''"))
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push(QUOTE);
+    for ch in s.chars() {
+        match ch {
+            QUOTE => {
+                out.push(QUOTE);
+                out.push(QUOTE);
+            }
+            // Cannot survive a round trip through every client that might read this dump.
+            NUL => out.push(REPLACEMENT),
+            // Tab, newline and carriage return are legitimate inside a quoted literal and occur in
+            // real extracted strings. Everything else in Cc becomes visible instead of invisible.
+            c if c.is_control() && c != NL && c != TAB && c != CR => out.push(REPLACEMENT),
+            c => out.push(c),
+        }
+    }
+    out.push(QUOTE);
+    out
 }
+
+const QUOTE: char = '\'';
+const NUL: char = '\0';
+const NL: char = '\n';
+const TAB: char = '\t';
+const CR: char = '\r';
+const REPLACEMENT: char = '\u{FFFD}';
 
 /// Escape text for HTML body content and attribute values.
 pub fn html_escape(s: &str) -> String {
@@ -402,6 +442,25 @@ mod tests {
         assert_eq!(csv_field("plain"), "plain");
         assert_eq!(csv_field("a,b"), "\"a,b\"");
         assert_eq!(csv_field("say \"hi\""), "\"say \"\"hi\"\"\"");
+    }
+
+    #[test]
+    fn sql_literal_neutralises_a_nul_and_the_control_bytes() {
+        // A NUL does not survive a round trip through every client that might read a `.sql` dump,
+        // so it is replaced rather than emitted raw. Replaced, not dropped, so the value keeps its
+        // length and a reader can see something was removed.
+        assert_eq!(sql_literal("a\0b"), "'a\u{FFFD}b'");
+        assert_eq!(sql_literal("a\u{1b}[31mb"), "'a\u{FFFD}[31mb'");
+        // Tab, newline and carriage return are legitimate inside a quoted literal.
+        assert_eq!(sql_literal("a\tb\nc\rd"), "'a\tb\nc\rd'");
+    }
+
+    #[test]
+    fn sql_literal_leaves_a_backslash_alone() {
+        // A backslash has no special meaning in a SQLite string literal, so escaping it would
+        // corrupt every Windows path in the report. The other way to get an escape wrong.
+        let p = "C:\\Users\\Eric\\opencv";
+        assert_eq!(sql_literal(p), format!("'{}'", p));
     }
 
     #[test]

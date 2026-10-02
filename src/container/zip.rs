@@ -6,7 +6,7 @@
 use anyhow::{Context, Result};
 use std::io::{Cursor, Read};
 
-use super::limits::{is_safe_member_name, Budget};
+use super::limits::{is_safe_member_name, sanitize_member_name, Budget};
 
 /// Call `f` once per readable file member, with its sanitized name and bytes.
 ///
@@ -56,6 +56,10 @@ where
             ));
             continue;
         }
+        // The name is reported, rendered to a terminal and written into SQL, so control characters
+        // in it are neutralised here rather than at each of those. Sanitised rather than skipped:
+        // refusing the entry would let an attacker hide a member from analysis by naming it badly.
+        let name = sanitize_member_name(&name);
 
         let declared = entry.size();
         let member_at = format!("{} :: {}", at, name);

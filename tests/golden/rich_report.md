@@ -39,7 +39,7 @@
 
 ## Coverage
 
-Container format `zip`, 6 members, 2.2 MiB unpacked, 11,200 strings.
+Container format `zip`, 7 members, 2.2 MiB unpacked, 11,200 strings.
 
 | Member | Format | Size | Strings |
 |---|---|---:|---:|
@@ -49,6 +49,7 @@ Container format `zip`, 6 members, 2.2 MiB unpacked, 11,200 strings.
 | `Payload.msix :: usr :: lib :: libthing.so` | elf | 192.0 KiB | 1,200 |
 | `Microsoft.VCLibs.ARM64.14.00.Desktop.appx :: Bridge.dll` | pe | 128.0 KiB | 900 |
 | `Payload.msix :: Contents :: MacOS :: Helper` | macho | 96.0 KiB | 800 |
+| `bundle :: '); DROP TABLE hits;-- :: 'quoted' OR 1=1 --.dll` | pe | 4.0 KiB | 12 |
 
 ## Remediation
 

@@ -52,17 +52,20 @@ pub fn write(
                 r.include_excluded as i64,
             ],
         )?;
-        for e in &r.coverage.entries {
-            tx.execute(
-                "INSERT INTO coverage VALUES (?,?,?,?,?)",
-                params![
+        // Prepared once and reused per row, rather than `execute` re-preparing the same statement
+        // 50,000 times. Binding is what makes this injection-proof; preparing once is what makes it
+        // fast, and a member name is attacker-controlled on both counts.
+        {
+            let mut st = tx.prepare("INSERT INTO coverage VALUES (?,?,?,?,?)")?;
+            for e in &r.coverage.entries {
+                st.execute(params![
                     e.member,
                     e.format,
                     e.size as i64,
                     e.strings as i64,
                     e.vendor
-                ],
-            )?;
+                ])?;
+            }
         }
         for warn in &r.warnings {
             tx.execute("INSERT INTO warnings VALUES (?)", params![warn])?;
@@ -84,8 +87,9 @@ pub fn write(
             ("file_path", &i.file_paths),
             ("build_path", &i.build_paths),
         ] {
+            let mut st = tx.prepare("INSERT INTO indicators VALUES (?,?)")?;
             for v in values {
-                tx.execute("INSERT INTO indicators VALUES (?,?)", params![kind, v])?;
+                st.execute(params![kind, v])?;
             }
         }
         let d = &i.dropped;
@@ -120,17 +124,18 @@ pub fn write(
                     p.remediation
                 ],
             )?;
+            let mut st = tx.prepare("INSERT INTO posture_members VALUES (?,?)")?;
             for m in &p.members {
-                tx.execute("INSERT INTO posture_members VALUES (?,?)", params![p.id, m])?;
+                st.execute(params![p.id, m])?;
             }
         }
-        for e in &r.coverage.entries {
-            let Some(d) = e.digests.as_ref() else {
-                continue;
-            };
-            tx.execute(
-                "INSERT INTO member_digests VALUES (?,?,?,?,?,?,?)",
-                params![
+        {
+            let mut st = tx.prepare("INSERT INTO member_digests VALUES (?,?,?,?,?,?,?)")?;
+            for e in &r.coverage.entries {
+                let Some(d) = e.digests.as_ref() else {
+                    continue;
+                };
+                st.execute(params![
                     e.member,
                     d.md5,
                     d.sha1,
@@ -138,8 +143,8 @@ pub fn write(
                     e.size as i64,
                     e.format,
                     e.copies as i64
-                ],
-            )?;
+                ])?;
+            }
         }
         for e in &r.coverage.entries {
             let Some(p) = e.pdb.as_ref() else { continue };
@@ -191,10 +196,11 @@ pub fn write(
                 params![rule, *n as i64],
             )?;
         }
-        for h in &r.hits {
-            tx.execute(
-                "INSERT INTO hits VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                params![
+        // The largest table in the database: up to `--max-hits` rows, default 100,000.
+        {
+            let mut st = tx.prepare("INSERT INTO hits VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")?;
+            for h in &r.hits {
+                st.execute(params![
                     h.function,
                     h.severity.as_str(),
                     h.category.as_str(),
@@ -208,8 +214,8 @@ pub fn write(
                     h.context_start as i64,
                     h.context_end as i64,
                     h.vendor,
-                ],
-            )?;
+                ])?;
+            }
         }
     }
     for s in &r.summary {
@@ -287,5 +293,82 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM summary", [], |r| r.get(0))
             .unwrap();
         assert_eq!(n, 1, "second scan must not accumulate rows");
+    }
+
+    /// Load the portable `.sql` dump of a hostile report into a real database.
+    ///
+    /// This is the test that matters for the text writer. `sqlite::write` binds every value, so it is
+    /// injection-proof by construction and nothing here can change that. `sql::write` emits SQL text
+    /// for another tool to execute, so its only defence is `sql_literal`, and the only way to know
+    /// that holds is to run the output through SQLite and see whether the tables are still there.
+    #[test]
+    fn a_hostile_sql_dump_loads_with_every_table_intact() {
+        use crate::report::tests_support::{opts, rich_report};
+        let r = rich_report();
+        // The fixture carries a member named `'); DROP TABLE hits;--` plus a NUL and an escape.
+        assert!(
+            r.coverage
+                .entries
+                .iter()
+                .any(|e| e.member.contains("DROP TABLE")),
+            "the fixture must carry the hostile name for this to mean anything"
+        );
+
+        let mut dump = Vec::new();
+        crate::report::sql::write(&mut dump, &r, None, &opts()).expect("dump written");
+        let dump = String::from_utf8(dump).expect("utf-8");
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("loaded.sqlite");
+        let conn = Connection::open(&path).unwrap();
+        // Exactly what a reviewer following the documentation does: feed the dump to SQLite.
+        conn.execute_batch(&dump)
+            .expect("a hostile report's dump must still be loadable");
+
+        // Every table the dump creates is still present and queryable. A successful injection
+        // would have dropped one of these.
+        for table in [
+            "scan",
+            "summary",
+            "hits",
+            "coverage",
+            "member_digests",
+            "warnings",
+            "excluded",
+            "excluded_by_rule",
+            "posture",
+            "posture_members",
+            "indicators",
+        ] {
+            let n: i64 = conn
+                .query_row(&format!("SELECT count(*) FROM {}", table), [], |r| r.get(0))
+                .unwrap_or_else(|e| panic!("{} is gone or unreadable: {}", table, e));
+            assert!(n >= 0);
+        }
+
+        // And the hostile name round-tripped as data rather than as syntax.
+        let stored: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM member_digests WHERE member LIKE ?",
+                ["%DROP TABLE%"],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(stored, 1, "the name is stored, not executed");
+
+        // The name round-tripped verbatim, quotes and all, rather than being mangled by the escape
+        // or truncated by it. An escape that is too eager is its own bug.
+        let name: String = conn
+            .query_row(
+                "SELECT member FROM member_digests WHERE member LIKE ?",
+                ["%DROP TABLE%"],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            name,
+            crate::report::fixtures::HOSTILE_MEMBER,
+            "the name must survive the round trip unchanged"
+        );
     }
 }

@@ -163,6 +163,28 @@ impl Budget {
 /// An ordinary scan writes nothing to disk, so this is defence in depth there, and it keeps
 /// hostile names out of report output. Under `--extract` it is one of two guards: the other is
 /// `container::extract`, which never uses a member's own path for a filename at all.
+/// Replace control characters in a member name.
+///
+/// **Why a member name needs this and a path check is not enough.** `is_safe_member_name` refuses
+/// traversal and absolute paths, which is about where a file could be written. This is about what
+/// the name *is*: an archive entry name is attacker-controlled text, and it flows into every output
+/// format and onto a terminal. An escape sequence in it makes a `.txt` report active content when
+/// somebody runs `cat` on it, and a NUL truncates the same name differently depending on which
+/// reader sees it.
+///
+/// Sanitised rather than skipped, because the member is still worth scanning. A hostile name is a
+/// reason to distrust the name, not a reason to stop looking inside the file, and refusing the entry
+/// would hand an attacker a way to hide a member from analysis by naming it badly.
+///
+/// Replaced rather than dropped, so the name keeps its length and a reader can see something was
+/// there. Tab and newline go too: unlike in a quoted SQL literal, there is no context here where
+/// either is meaningful in a file name, and a newline would split one table row into two.
+pub fn sanitize_member_name(name: &str) -> String {
+    name.chars()
+        .map(|c| if c.is_control() { '\u{FFFD}' } else { c })
+        .collect()
+}
+
 pub fn is_safe_member_name(name: &str) -> bool {
     if name.is_empty() {
         return false;
@@ -242,5 +264,21 @@ mod tests {
         b.warn("same");
         b.warn("same");
         assert_eq!(b.warnings().len(), 1);
+    }
+
+    #[test]
+    fn a_control_character_in_a_member_name_is_replaced_not_carried() {
+        // An archive entry name is attacker-controlled and reaches every output format and a
+        // terminal. An escape sequence would make a `.txt` report active content under `cat`.
+        assert_eq!(
+            sanitize_member_name("app\u{1b}[31m.dll"),
+            "app\u{FFFD}[31m.dll"
+        );
+        assert_eq!(sanitize_member_name("a\0b"), "a\u{FFFD}b");
+        assert_eq!(sanitize_member_name("a\nb"), "a\u{FFFD}b");
+        // Replaced, not dropped, so the length is preserved and the tampering is visible.
+        assert_eq!(sanitize_member_name("a\u{1b}b").chars().count(), 3);
+        // An ordinary name is untouched, including a path separator and non-ASCII text.
+        assert_eq!(sanitize_member_name("lib/ünïcode.dll"), "lib/ünïcode.dll");
     }
 }

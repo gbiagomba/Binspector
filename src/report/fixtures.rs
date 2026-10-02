@@ -55,6 +55,21 @@ const HOSTILE: &str = "<script>alert(1)</script>|x";
 /// bidirectional-control case and not only a markup case.
 const HOSTILE_CN: &str = "Evil Corp <script>alert(1)</script>|CN\u{202e}gpj.exe";
 
+/// A member name shaped to break out of a SQL string literal.
+///
+/// Member names come from archive entry names, so this is attacker-controlled text reaching the only
+/// place in the tool that concatenates into SQL: the portable `.sql` dump, which has no statement to
+/// bind to. `a_hostile_sql_dump_loads_with_every_table_intact` loads the dump into a real database
+/// and checks the tables survived.
+///
+/// Deliberately free of control characters, because `container::limits::sanitize_member_name` now
+/// replaces those before a name can reach a report, so a member name carrying an escape sequence is
+/// no longer a state the report can be in. `sql_literal` still neutralises control characters, and
+/// that is not redundant: a PDB source root and an imported library name are equally
+/// attacker-controlled and reach SQL without passing through the member-name sanitiser.
+pub(crate) const HOSTILE_MEMBER: &str =
+    "bundle :: '); DROP TABLE hits;-- :: 'quoted' OR 1=1 --.dll";
+
 /// Pipe-server and ACL import names, shared by the import list and the IPC surface built from it.
 const PIPE: &[&str] = &["ConnectNamedPipe", "CreateNamedPipeW"];
 const ACL: &[&str] = &["SetEntriesInAclW", "SetSecurityDescriptorDacl"];
@@ -396,6 +411,18 @@ fn entries() -> Vec<CoverageEntry> {
         entry(BRIDGE, 131_072, 900, Some(bridge)),
         elf,
         macho,
+        // A member whose name tries to break out of a SQL string literal, with a NUL and an ANSI
+        // escape for good measure. Carries digests so it reaches `member_digests` too, which is the
+        // newest table and the one most likely to be written without thinking about escaping.
+        {
+            let mut e = entry(HOSTILE_MEMBER, 4_096, 12, None);
+            e.digests = Some(crate::hashing::Digests {
+                md5: digest(0xcc, 32),
+                sha1: digest(0xcc, 40),
+                sha256: digest(0xcc, 64),
+            });
+            e
+        },
     ]
 }
 
