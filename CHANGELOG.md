@@ -2,6 +2,76 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.8.0] - 2026-10-02
+
+Closes the three items a field report left open after 5.7.0, adds the planting check the same
+engagement's third adjudication session turned up, and corrects two numbers found while verifying
+the work rather than reported.
+
+### Added
+
+- **Imported modules the package does not carry are a reported surface.** A statically imported
+  DLL that ships nowhere in the package and is not a Windows component is satisfied at load time
+  by whatever the search order finds first, so the dependency is decided by the filesystem rather
+  than by the build. On the reference package that is `AdobePDFL.dll`, which imports 25 functions
+  from `libcrypto-3-x64.dll`, 24 from `AIDE.dll` and 4 from `icucnv74.dll`, none present among
+  the 4,281 members, while the image is unsigned and only 9 of 1,567 images import any
+  search-path hardening API.
+
+  The allowlist was measured, not assumed: raw, 169 of 202 imported libraries are absent from the
+  package and almost all are ordinary Windows surface, so the run reports exactly three modules on
+  one image and prints how many resolved as Windows components. The section claims only that the
+  search order decides what satisfies the import, because absence from a package is not absence at
+  runtime. Severity is a property of the importer, not of the missing module.
+
+- **Hardened string primitives are credited against the unbounded ones.** 678 hardened slots
+  across 197 images against 293 unbounded across 197, 2.3 to 1, with 163 images importing both
+  forms, 34 only hardened and 34 only unbounded. Three states rather than one count, because an
+  image part-way through a migration, one that finished and one that never started are different
+  facts. An image with no import table is charged with nothing.
+
+- **A `vendor` field on occurrences and members**, with a column in both SQL exports, so
+  `SELECT vendor, severity, count(*) FROM hits GROUP BY 1,2` answers "how many of these criticals
+  are ours". It returns Microsoft 20 on the reference package, matching a hand-derived count
+  exactly. It is who signed the file, not who wrote the code in it, and the report says so.
+
+- **A note in usage.md** that BSD `strings` on macOS has no `-e` flag, so `strings -e l` fails
+  with `unknown flag: -e` rather than returning nothing. A reviewer missed a UTF-16LE-only literal
+  for exactly that reason.
+
+### Fixed
+
+- **The headline severity counts disagreed with the report's own occurrence table.** A field
+  report counted 33 criticals where a local run of the same corpus counted 39: same version, same
+  1,300 occurrences, same flags. The headline was wrong. `severity_counts()` read from `summary`,
+  and a summary row carries one severity for a whole function while the evidence rules judge each
+  occurrence separately, so every occurrence was attributed to its function's worst severity.
+  Three `strcpy` and three `strcat` occurrences were the difference. 5.7.0 fixed exactly this for
+  the `targets[]` rollup and missed this caller, leaving the two disagreeing with each other.
+
+- **Posture member lists are recorded in full.** The cap truncated at collection, so 5.7.0's new
+  `posture_members` table inherited it and reproduced the trap it was added to remove: the stored
+  50 of 179 were in scan order, all from one vendor, and a reviewer who read them as
+  representative had to retract publicly. `authenticode` now returns 179 rows rather than 50. It
+  is still bounded, at 4,096, against a pathological input.
+
+- **The UCRT backends say the import is linkage, not a call site.** Each takes a `_BufferCount`
+  the front end supplies, so `sprintf` and `snprintf` both route through them and the import
+  cannot distinguish the two. Without the note, 231 occurrences at `high` read as 231 defects.
+
+- **A third false component.** `dotnet 3.0` came from the error string "only supported for .NET
+  Core 3.0 or a higher version", which is the `icu 36` defect in a new place: a sentence naming a
+  version is not evidence the version ships. The signature now requires a structured identifier,
+  so every component in the report traces to a framework moniker or a copyright banner rather
+  than to prose.
+
+- **The ninth signer was dropped silently** from the origin section, so a reader could not tell a
+  complete list from a truncated one. Collapsing subjects to vendors makes the cap bite far less
+  often, and the remainder is stated when it does.
+
+- **"Findings by origin" counted a different set from the occurrence list below it**, because the
+  bounded memory primitives are rolled up and omitted from the list while that block counted them.
+
 ## [5.7.0] - 2026-10-02
 
 Prompted by a field report comparing four versions against one 553 MB Windows
