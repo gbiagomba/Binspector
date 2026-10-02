@@ -128,6 +128,64 @@ pub fn write_intel_text(w: &mut dyn Write, r: &Report) -> Result<()> {
         writeln!(w)?;
     }
 
+    if let Some(sw) = &r.intel.sweep {
+        if !sw.is_empty() {
+            writeln!(
+                w,
+                "Member reputation ({} of {} distinct hash(es) answered, hash only)",
+                thousands((sw.queried + sw.from_cache) as u64),
+                thousands(sw.candidates as u64)
+            )?;
+            writeln!(
+                w,
+                "  {} asked of a service, {} from the local cache",
+                thousands(sw.queried as u64),
+                thousands(sw.from_cache as u64)
+            )?;
+            // The flagged ones first and loudest, because they are the only rows anybody acts on.
+            let flagged: Vec<&crate::intel::Reputation> = sw
+                .results
+                .iter()
+                .filter(|x| x.virustotal.is_actionable() || x.metadefender.is_actionable())
+                .collect();
+            for f in flagged.iter().take(20) {
+                writeln!(w, "  !!! {}", super::fmt_util::short_name(&f.label))?;
+                writeln!(w, "      {}", f.sha256)?;
+                writeln!(w, "      VirusTotal:   {}", f.virustotal.summary())?;
+                writeln!(w, "      MetaDefender: {}", f.metadefender.summary())?;
+            }
+            if flagged.len() > 20 {
+                writeln!(
+                    w,
+                    "  ... and {} more flagged member(s)",
+                    thousands((flagged.len() - 20) as u64)
+                )?;
+            }
+            if flagged.is_empty() {
+                writeln!(
+                    w,
+                    "  No member was flagged by a service. A hash nobody has submitted comes back \
+                     unknown, which is not the same as clean."
+                )?;
+            }
+            // The whole reason this section states a denominator. An unchecked member must never be
+            // mistaken for one that came back clean.
+            if sw.unchecked > 0 {
+                writeln!(
+                    w,
+                    "  !! {} distinct hash(es) went unchecked because the request budget ran out. \
+                     They are not clean results; they are absent ones. Raise --request-budget, or \
+                     rerun: answers already received are cached.",
+                    thousands(sw.unchecked as u64)
+                )?;
+            }
+            if let Some(note) = &sw.tier_note {
+                writeln!(w, "  note: {}", note)?;
+            }
+            writeln!(w)?;
+        }
+    }
+
     if let Some(cves) = &r.intel.cves {
         writeln!(
             w,

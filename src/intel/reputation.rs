@@ -123,6 +123,222 @@ pub fn lookup_targets(
     Ok(out)
 }
 
+/// One member worth asking about, and why it ranked where it did.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Candidate {
+    pub member: String,
+    pub sha256: String,
+    /// Lower sorts first. See [`candidates`] for what each tier means.
+    pub tier: u8,
+    pub reason: &'static str,
+}
+
+/// What a member sweep did, and what it did not do.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct Sweep {
+    pub results: Vec<Reputation>,
+    /// Distinct hashes worth asking about.
+    pub candidates: usize,
+    /// Answered by the service.
+    pub queried: usize,
+    /// Answered from the local cache, which is still an answer.
+    pub from_cache: usize,
+    /// Distinct hashes that went unasked because the budget ran out.
+    ///
+    /// Reported rather than dropped. An unchecked member is never rendered as clean, which is the
+    /// habit `excluded_by_rule` and the indicator drop counters already follow.
+    pub unchecked: usize,
+    /// The terms warning, when the configured rate implies a free tier.
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tier_note: Option<String>,
+}
+
+impl Sweep {
+    pub fn is_empty(&self) -> bool {
+        self.results.is_empty() && self.unchecked == 0
+    }
+
+    /// Whether any member came back flagged.
+    pub fn flagged(&self) -> usize {
+        self.results
+            .iter()
+            .filter(|r| r.virustotal.is_actionable() || r.metadefender.is_actionable())
+            .count()
+    }
+}
+
+/// Smallest unknown-format member worth a lookup.
+///
+/// A handful of bytes of padding is not a sample anybody has an opinion about, and on the reference
+/// package the unknown-format members are 2,714 of 4,281, so an unbounded sweep over them would
+/// spend the whole budget on the least interesting tier.
+const UNKNOWN_SIZE_FLOOR: u64 = 4096;
+
+/// Which members to ask about, worst first, one entry per distinct hash.
+///
+/// **Deduplicated by content, which is the point.** On the reference package 4,281 members hold 3,799
+/// distinct hashes, and among PE images 1,567 rows are 1,012 distinct files. Asking per row would
+/// spend a third of the budget re-asking about bytes already answered for.
+///
+/// The ordering is the whole strategy, because the budget runs out long before the list does. A free
+/// tier answers 500 a day and the reference package has 3,799 distinct hashes, roughly seven days.
+/// Its 179 unsigned executables fit inside one day, and they are the tier worth having.
+pub fn candidates(r: &crate::model::Report) -> Vec<Candidate> {
+    let mut out: Vec<Candidate> = Vec::new();
+    let mut seen: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+
+    for e in &r.coverage.entries {
+        let Some(d) = e.digests.as_ref() else {
+            continue;
+        };
+        if d.sha256.is_empty() || !seen.insert(d.sha256.as_str()) {
+            continue;
+        }
+        let executable = e.pe.is_some() || e.unix_executable;
+        let signed = e.pe.as_ref().is_some_and(|a| a.signature.is_some());
+        let first_party = e.pe.as_ref().is_some_and(|a| a.first_party);
+
+        let (tier, reason) = if executable && !signed {
+            // The tier the whole feature exists for. An unsigned executable inside a signed package
+            // is the one thing a hash lookup can speak to that nothing else here can.
+            (0, "unsigned executable")
+        } else if executable && !first_party {
+            (1, "executable signed by a third party")
+        } else if executable {
+            (2, "first-party executable")
+        } else if e.size >= UNKNOWN_SIZE_FLOOR {
+            (3, "non-executable member")
+        } else {
+            // Too small to be a sample anybody has an opinion about.
+            continue;
+        };
+        out.push(Candidate {
+            member: e.member.clone(),
+            sha256: d.sha256.clone(),
+            tier,
+            reason,
+        });
+    }
+
+    // Tier first, then largest, then by name so the order is total and a rerun asks in the same
+    // sequence. Largest within a tier because a bigger file is more likely to be a real payload than
+    // a stub, and the budget may not reach the end of the tier.
+    let size_of: std::collections::BTreeMap<&str, u64> = r
+        .coverage
+        .entries
+        .iter()
+        .map(|e| (e.member.as_str(), e.size))
+        .collect();
+    out.sort_by(|a, b| {
+        a.tier
+            .cmp(&b.tier)
+            .then_with(|| {
+                let sb = size_of.get(b.member.as_str()).copied().unwrap_or(0);
+                let sa = size_of.get(a.member.as_str()).copied().unwrap_or(0);
+                sb.cmp(&sa)
+            })
+            .then_with(|| a.member.cmp(&b.member))
+    });
+    out
+}
+
+/// Ask about as many members as the budget allows, worst first.
+///
+/// `cache` is consulted before every request and written after every answer. A cache hit costs
+/// nothing against the budget, which is what makes a second scan of the same package nearly free.
+pub fn sweep_members(
+    r: &crate::model::Report,
+    creds: &Credentials,
+    budget: &mut super::budget::Budget,
+    cache: Option<&dyn VerdictStore>,
+) -> Result<Sweep> {
+    let wanted = candidates(r);
+    let mut out = Sweep {
+        candidates: wanted.len(),
+        tier_note: budget.tier_note().map(str::to_string),
+        ..Default::default()
+    };
+    if wanted.is_empty() {
+        return Ok(out);
+    }
+    // Checked once, not per candidate: a sweep of 3,799 hashes should not discover on the last one
+    // that curl was never on PATH.
+    http::ensure_available()?;
+    let now = super::cache::now_unix();
+
+    for c in &wanted {
+        let mut rep = Reputation {
+            label: c.member.clone(),
+            sha256: c.sha256.clone(),
+            virustotal: Verdict::NotConfigured,
+            metadefender: Verdict::NotConfigured,
+            content_transmitted: false,
+        };
+        let mut answered = false;
+        let mut cached = false;
+        let mut exhausted = false;
+
+        for (service, key) in [
+            ("virustotal", creds.virustotal.as_deref()),
+            ("metadefender", creds.metadefender.as_deref()),
+        ] {
+            let Some(key) = key else { continue };
+            // The cache first, always. A hit is an answer and must not cost a request.
+            if let Some(hit) = cache.and_then(|c2| c2.lookup(&c.sha256, service, now)) {
+                set(&mut rep, service, hit);
+                answered = true;
+                cached = true;
+                continue;
+            }
+            if !budget.claim() {
+                exhausted = true;
+                continue;
+            }
+            let v = match service {
+                "virustotal" => virustotal(&c.sha256, key),
+                _ => metadefender(&c.sha256, key),
+            };
+            if let Some(store) = cache {
+                // A failure to write the cache must not fail the scan: the answer is still good.
+                store.remember(&c.sha256, service, &v, now);
+            }
+            set(&mut rep, service, v);
+            answered = true;
+        }
+
+        if answered {
+            if cached {
+                out.from_cache += 1;
+            } else {
+                out.queried += 1;
+            }
+            out.results.push(rep);
+        } else if exhausted {
+            out.unchecked += 1;
+        }
+        // Neither answered nor exhausted means no key was configured for either service, which is
+        // reported once by the caller rather than 3,799 times here.
+    }
+    Ok(out)
+}
+
+fn set(rep: &mut Reputation, service: &str, v: Verdict) {
+    match service {
+        "virustotal" => rep.virustotal = v,
+        _ => rep.metadefender = v,
+    }
+}
+
+/// The cache, behind a trait so the sweep does not depend on the `sqlite` feature.
+///
+/// Without that feature there is no store and every lookup is a miss, which is correct behaviour
+/// rather than a stub: a build with no SQLite has nowhere to persist anything.
+pub trait VerdictStore {
+    fn lookup(&self, sha256: &str, service: &str, now: i64) -> Option<Verdict>;
+    fn remember(&self, sha256: &str, service: &str, v: &Verdict, now: i64);
+}
+
 fn virustotal(sha256: &str, key: &str) -> Verdict {
     let url = format!("https://www.virustotal.com/api/v3/files/{}", sha256);
     let resp = match http::get(&url, &[("x-apikey", key)], TIMEOUT) {
@@ -317,5 +533,156 @@ mod tests {
         let r = crate::report::tests_support::rich_report();
         let got = lookup_targets(&r.targets, &Credentials::default()).expect("offline");
         assert!(got.iter().all(|x| !x.label.is_empty()));
+    }
+
+    /// A store that answers from a map and records what it was asked to remember.
+    struct StubStore {
+        answers: std::collections::BTreeMap<(String, String), Verdict>,
+        written: std::cell::RefCell<Vec<(String, String)>>,
+    }
+
+    impl VerdictStore for StubStore {
+        fn lookup(&self, sha256: &str, service: &str, _now: i64) -> Option<Verdict> {
+            self.answers
+                .get(&(sha256.to_string(), service.to_string()))
+                .cloned()
+        }
+        fn remember(&self, sha256: &str, service: &str, _v: &Verdict, _now: i64) {
+            self.written
+                .borrow_mut()
+                .push((sha256.to_string(), service.to_string()));
+        }
+    }
+
+    #[test]
+    fn candidates_are_deduplicated_by_content_and_ordered_worst_first() {
+        let r = crate::report::tests_support::rich_report();
+        let c = candidates(&r);
+
+        // One entry per distinct hash. Asking per row would re-ask about bytes already answered for:
+        // on the reference package 4,281 rows are 3,799 distinct hashes.
+        let hashes: std::collections::BTreeSet<&str> =
+            c.iter().map(|x| x.sha256.as_str()).collect();
+        assert_eq!(hashes.len(), c.len(), "a hash must appear once");
+
+        // Tiers are non-decreasing, so the budget is spent on the worst first.
+        assert!(
+            c.windows(2).all(|w| w[0].tier <= w[1].tier),
+            "{:?}",
+            c.iter().map(|x| (x.tier, x.reason)).collect::<Vec<_>>()
+        );
+        // And an unsigned executable leads, which is the tier the feature exists for.
+        if let Some(first) = c.first() {
+            assert_eq!(first.tier, 0);
+            assert_eq!(first.reason, "unsigned executable");
+        }
+    }
+
+    #[test]
+    fn a_member_too_small_to_have_an_opinion_about_is_not_a_candidate() {
+        let mut r = crate::report::tests_support::rich_report();
+        for e in r.coverage.entries.iter_mut() {
+            e.pe = None;
+            e.unix_executable = false;
+            e.size = 16;
+            e.digests = Some(crate::hashing::Digests {
+                md5: "m".repeat(32),
+                sha1: "s".repeat(40),
+                sha256: format!("{:0>64}", e.member.len()),
+            });
+        }
+        assert!(
+            candidates(&r).is_empty(),
+            "a handful of bytes of padding is not a sample"
+        );
+    }
+
+    #[test]
+    fn a_cache_hit_answers_without_spending_the_budget() {
+        let mut r = crate::report::tests_support::rich_report();
+        // One candidate, so the accounting is unambiguous.
+        r.coverage.entries.truncate(1);
+        let e = &mut r.coverage.entries[0];
+        e.unix_executable = true;
+        e.pe = None;
+        e.size = 1 << 20;
+        let sha = "a".repeat(64);
+        e.digests = Some(crate::hashing::Digests {
+            md5: "m".repeat(32),
+            sha1: "s".repeat(40),
+            sha256: sha.clone(),
+        });
+
+        let store = StubStore {
+            answers: [(
+                (sha.clone(), "virustotal".to_string()),
+                Verdict::Clean { total: 70 },
+            )]
+            .into_iter()
+            .collect(),
+            written: Default::default(),
+        };
+        let creds = Credentials {
+            virustotal: Some("key".into()),
+            ..Default::default()
+        };
+        let mut budget = crate::intel::budget::Budget::dry(0, 10);
+        let sw = sweep_members(&r, &creds, &mut budget, Some(&store)).expect("offline");
+
+        assert_eq!(sw.from_cache, 1, "answered from the cache");
+        assert_eq!(sw.queried, 0, "and no service was asked");
+        assert_eq!(budget.spent(), 0, "so the budget is untouched");
+        assert_eq!(sw.unchecked, 0);
+        assert!(
+            store.written.borrow().is_empty(),
+            "a hit writes nothing back"
+        );
+    }
+
+    #[test]
+    fn a_budget_of_zero_asks_nothing_and_reports_everything_as_unchecked() {
+        // The property the whole section rests on: an unchecked member must never read as clean.
+        let mut r = crate::report::tests_support::rich_report();
+        for (i, e) in r.coverage.entries.iter_mut().enumerate() {
+            e.unix_executable = true;
+            e.pe = None;
+            e.size = 1 << 20;
+            e.digests = Some(crate::hashing::Digests {
+                md5: "m".repeat(32),
+                sha1: "s".repeat(40),
+                sha256: format!("{:0>64}", i),
+            });
+        }
+        let creds = Credentials {
+            virustotal: Some("key".into()),
+            ..Default::default()
+        };
+        let mut budget = crate::intel::budget::Budget::dry(0, 0);
+        let sw = sweep_members(&r, &creds, &mut budget, None).expect("offline");
+        assert!(sw.results.is_empty(), "nothing was answered");
+        assert_eq!(sw.unchecked, sw.candidates, "and all of it is declared");
+        assert!(sw.candidates > 0);
+    }
+
+    #[test]
+    fn with_no_key_configured_nothing_is_asked_and_nothing_is_called_unchecked() {
+        // No key is not the same as no budget. Reporting these as unchecked would overstate what a
+        // larger budget could have achieved.
+        let mut r = crate::report::tests_support::rich_report();
+        for (i, e) in r.coverage.entries.iter_mut().enumerate() {
+            e.unix_executable = true;
+            e.pe = None;
+            e.size = 1 << 20;
+            e.digests = Some(crate::hashing::Digests {
+                md5: "m".repeat(32),
+                sha1: "s".repeat(40),
+                sha256: format!("{:0>64}", i),
+            });
+        }
+        let mut budget = crate::intel::budget::Budget::dry(0, 100);
+        let sw = sweep_members(&r, &Credentials::default(), &mut budget, None).expect("offline");
+        assert!(sw.results.is_empty());
+        assert_eq!(sw.unchecked, 0);
+        assert_eq!(budget.spent(), 0);
     }
 }

@@ -414,15 +414,7 @@ fn entries() -> Vec<CoverageEntry> {
         // A member whose name tries to break out of a SQL string literal, with a NUL and an ANSI
         // escape for good measure. Carries digests so it reaches `member_digests` too, which is the
         // newest table and the one most likely to be written without thinking about escaping.
-        {
-            let mut e = entry(HOSTILE_MEMBER, 4_096, 12, None);
-            e.digests = Some(crate::hashing::Digests {
-                md5: digest(0xcc, 32),
-                sha1: digest(0xcc, 40),
-                sha256: digest(0xcc, 64),
-            });
-            e
-        },
+        { entry(HOSTILE_MEMBER, 4_096, 12, None) },
     ]
 }
 
@@ -521,6 +513,26 @@ fn intel() -> Intel {
                 content_transmitted: false,
             },
         ],
+        // A sweep that found one flagged member and ran out of budget, so the golden exercises both
+        // the flagged branch and the unchecked disclosure. A sweep that reported only clean results
+        // would leave the line that matters most untested.
+        sweep: Some(crate::intel::reputation::Sweep {
+            results: vec![Reputation {
+                label: "bundle :: inner.msix :: Suspect.dll".into(),
+                sha256: digest(0x5a, 64),
+                virustotal: RepVerdict::Malicious {
+                    detections: 11,
+                    total: 70,
+                },
+                metadefender: RepVerdict::NotFound,
+                content_transmitted: false,
+            }],
+            candidates: 1_012,
+            queried: 1,
+            from_cache: 3,
+            unchecked: 1_008,
+            tier_note: None,
+        }),
         cves: Some(CveReport {
             components: vec![
                 ComponentCves {
@@ -661,13 +673,37 @@ pub(crate) fn pe_entry(m: &str) -> CoverageEntry {
 }
 
 /// One coverage entry, defaulting to a PE whose imports are carried up the way the scan does.
+/// A stable 64-hex digest derived from a member name.
+///
+/// Not a real hash, and deliberately not one: a fixture that computed real digests would be
+/// asserting the hashing crate rather than the report. What matters is that identical names give
+/// identical digests and different names do not collide.
+fn name_digest(m: &str) -> String {
+    let mut acc: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in m.as_bytes() {
+        acc ^= u64::from(*b);
+        acc = acc.wrapping_mul(0x100_0000_01b3);
+    }
+    format!("{:016x}", acc).repeat(4)
+}
+
 fn entry(m: &str, size: u64, strings: usize, pe: Option<PeAnalysis>) -> CoverageEntry {
     let (imports, import_source) = match &pe {
         Some(a) => (a.imports.clone(), "pe-directory".to_string()),
         None => (Vec::new(), String::new()),
     };
     CoverageEntry {
-        digests: None,
+        // Every member a real scan reaches carries digests, so the fixture does too. Without them
+        // the member-digest table, the content-deduplication line and the reputation sweep's
+        // candidate list were all vacuously empty in the goldens.
+        //
+        // Seeded from the member name so two entries with the same name are byte-identical, which is
+        // what the `copies` count is about, and distinct names stay distinct.
+        digests: Some(crate::hashing::Digests {
+            md5: digest(m.len() as u8, 32),
+            sha1: digest(m.len() as u8, 40),
+            sha256: name_digest(m),
+        }),
         copies: 1,
         pdb: None,
         vendor: None,

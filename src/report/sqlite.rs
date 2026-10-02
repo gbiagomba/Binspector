@@ -129,6 +129,83 @@ pub fn write(
                 st.execute(params![p.id, m])?;
             }
         }
+        // Intel, which reached neither SQL export until 6.0.0. See sql.rs for why `scope` separates
+        // a target verdict from a member one.
+        {
+            let mut st = tx.prepare("INSERT INTO reputation VALUES (?,?,?,?,?,?,?)")?;
+            let empty = Vec::new();
+            for (scope, reps) in [
+                ("target", &r.intel.reputation),
+                (
+                    "member",
+                    r.intel.sweep.as_ref().map(|s| &s.results).unwrap_or(&empty),
+                ),
+            ] {
+                for rep in reps {
+                    for (service, v) in [
+                        ("virustotal", &rep.virustotal),
+                        ("metadefender", &rep.metadefender),
+                    ] {
+                        let (kind, det, eng) = super::sql::verdict_columns(v);
+                        st.execute(params![
+                            scope,
+                            rep.label,
+                            rep.sha256,
+                            service,
+                            kind,
+                            det.map(i64::from),
+                            eng.map(i64::from)
+                        ])?;
+                    }
+                }
+            }
+        }
+        if let Some(sw) = r.intel.sweep.as_ref() {
+            tx.execute(
+                "INSERT INTO reputation_coverage VALUES (?,?,?,?)",
+                params![
+                    sw.candidates as i64,
+                    sw.queried as i64,
+                    sw.from_cache as i64,
+                    sw.unchecked as i64
+                ],
+            )?;
+        }
+        {
+            let mut st = tx.prepare("INSERT INTO components VALUES (?,?,?)")?;
+            for c in &r.intel.components {
+                st.execute(params![c.name, c.version, c.evidence])?;
+            }
+        }
+        if let Some(cves) = r.intel.cves.as_ref() {
+            let mut st = tx.prepare("INSERT INTO cves VALUES (?,?,?,?,?,?,?)")?;
+            for c in &cves.components {
+                if c.cves.is_empty() {
+                    // One row carrying the error, so a query cannot read an absent row as "no CVEs".
+                    st.execute(params![
+                        c.component.name,
+                        c.component.version,
+                        None::<String>,
+                        None::<f64>,
+                        None::<String>,
+                        None::<String>,
+                        c.error
+                    ])?;
+                    continue;
+                }
+                for v in &c.cves {
+                    st.execute(params![
+                        c.component.name,
+                        c.component.version,
+                        v.id,
+                        v.cvss,
+                        v.severity,
+                        v.url,
+                        None::<String>
+                    ])?;
+                }
+            }
+        }
         {
             let mut st = tx.prepare("INSERT INTO member_digests VALUES (?,?,?,?,?,?,?)")?;
             for e in &r.coverage.entries {
@@ -339,6 +416,12 @@ mod tests {
             "posture",
             "posture_members",
             "indicators",
+            "reputation",
+            "reputation_coverage",
+            "components",
+            "cves",
+            "pdb_source_roots",
+            "external_imports",
         ] {
             let n: i64 = conn
                 .query_row(&format!("SELECT count(*) FROM {}", table), [], |r| r.get(0))
@@ -370,5 +453,37 @@ mod tests {
             crate::report::fixtures::HOSTILE_MEMBER,
             "the name must survive the round trip unchanged"
         );
+    }
+
+    #[test]
+    fn intel_reaches_the_database_at_all() {
+        // It reached neither SQL export before 6.0.0, so a reviewer working from the database the
+        // documentation recommends silently missed every component, CVE and verdict.
+        use crate::report::tests_support::{opts, rich_report};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("intel.sqlite");
+        write(&path, &rich_report(), None, &opts()).unwrap();
+        let conn = Connection::open(&path).unwrap();
+
+        let count = |sql: &str| -> i64 { conn.query_row(sql, [], |r| r.get(0)).unwrap() };
+        assert!(count("SELECT count(*) FROM components") > 0, "components");
+        assert!(count("SELECT count(*) FROM cves") > 0, "cves");
+        // A target verdict and a member verdict are separate scopes: conflating them would report a
+        // package as flagged because one member inside it was.
+        assert!(
+            count("SELECT count(*) FROM reputation WHERE scope = 'target'") > 0,
+            "target verdicts"
+        );
+        assert!(
+            count("SELECT count(*) FROM reputation WHERE scope = 'member'") > 0,
+            "member verdicts"
+        );
+        // The denominator, so a query cannot mistake "not asked" for "came back clean".
+        let unchecked: i64 = conn
+            .query_row("SELECT unchecked FROM reputation_coverage", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert!(unchecked > 0, "the fixture sweep ran out of budget");
     }
 }

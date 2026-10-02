@@ -42,6 +42,7 @@ const SECTIONS: &[&str] = &[
     "Third-party components",
     "Indicators",
     "Build provenance",
+    "Member reputation",
     "Imported modules not in the package",
     "Findings",
     "Coverage",

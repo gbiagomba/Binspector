@@ -40,6 +40,16 @@ CREATE TABLE IF NOT EXISTS posture (
   id TEXT, title TEXT, severity TEXT, affected INTEGER, members_listed INTEGER,
   members_truncated INTEGER, evidence TEXT, remediation TEXT);
 CREATE TABLE IF NOT EXISTS posture_members (id TEXT, member TEXT);
+CREATE TABLE IF NOT EXISTS reputation (
+  scope TEXT, label TEXT, sha256 TEXT, service TEXT, verdict TEXT, detections INTEGER,
+  engines INTEGER);
+CREATE INDEX IF NOT EXISTS idx_reputation_sha256 ON reputation(sha256);
+CREATE TABLE IF NOT EXISTS reputation_coverage (
+  candidates INTEGER, queried INTEGER, from_cache INTEGER, unchecked INTEGER);
+CREATE TABLE IF NOT EXISTS components (name TEXT, version TEXT, evidence TEXT);
+CREATE TABLE IF NOT EXISTS cves (
+  component TEXT, version TEXT, id TEXT, cvss REAL, severity TEXT, url TEXT, error TEXT);
+CREATE INDEX IF NOT EXISTS idx_cves_component ON cves(component);
 CREATE TABLE IF NOT EXISTS member_digests (
   member TEXT, md5 TEXT, sha1 TEXT, sha256 TEXT, size INTEGER, format TEXT, copies INTEGER);
 CREATE INDEX IF NOT EXISTS idx_member_digests_sha256 ON member_digests(sha256);
@@ -55,6 +65,26 @@ CREATE TABLE IF NOT EXISTS indicators (kind TEXT, value TEXT);
 CREATE TABLE IF NOT EXISTS indicators_dropped (kind TEXT, not_collected INTEGER, cap INTEGER);
 CREATE INDEX IF NOT EXISTS idx_indicators_kind ON indicators(kind);
 ";
+
+/// Empty stand-in so the target and member reputation loops share one shape.
+static EMPTY_REPUTATION: Vec<crate::intel::Reputation> = Vec::new();
+
+/// Flatten a verdict into the three columns both SQL writers store.
+///
+/// Shared so the text dump and the SQLite database cannot disagree about what a verdict means, which
+/// they would eventually if each mapped the enum itself.
+pub(super) fn verdict_columns(
+    v: &crate::intel::reputation::Verdict,
+) -> (&'static str, Option<u32>, Option<u32>) {
+    use crate::intel::reputation::Verdict;
+    match v {
+        Verdict::Malicious { detections, total } => ("malicious", Some(*detections), Some(*total)),
+        Verdict::Clean { total } => ("clean", None, Some(*total)),
+        Verdict::NotFound => ("not-found", None, None),
+        Verdict::Error(_) => ("error", None, None),
+        Verdict::NotConfigured => ("not-configured", None, None),
+    }
+}
 
 pub fn write(
     w: &mut dyn Write,
@@ -189,6 +219,94 @@ pub fn write(
                     sql_literal(&p.id),
                     sql_literal(m)
                 )?;
+            }
+        }
+
+        // Intel reached neither SQL export until 6.0.0, so a reviewer working from the database the
+        // documentation recommends silently missed every component, CVE and reputation verdict. The
+        // same gap 5.8.0 closed for posture, one release later for the rest.
+        //
+        // `scope` separates a target verdict from a member one: they answer different questions and a
+        // consumer that conflated them would report a package as flagged because one member was.
+        for (scope, reps) in [
+            ("target", &r.intel.reputation),
+            (
+                "member",
+                r.intel
+                    .sweep
+                    .as_ref()
+                    .map(|s| &s.results)
+                    .unwrap_or(&EMPTY_REPUTATION),
+            ),
+        ] {
+            for rep in reps {
+                for (service, v) in [
+                    ("virustotal", &rep.virustotal),
+                    ("metadefender", &rep.metadefender),
+                ] {
+                    let (kind, det, eng) = verdict_columns(v);
+                    writeln!(
+                        w,
+                        "INSERT INTO reputation VALUES ({},{},{},{},{},{},{});",
+                        sql_literal(scope),
+                        sql_literal(&rep.label),
+                        sql_literal(&rep.sha256),
+                        sql_literal(service),
+                        sql_literal(kind),
+                        det.map(|n| n.to_string()).unwrap_or_else(|| "NULL".into()),
+                        eng.map(|n| n.to_string()).unwrap_or_else(|| "NULL".into())
+                    )?;
+                }
+            }
+        }
+        if let Some(sw) = r.intel.sweep.as_ref() {
+            // The denominator, so a query cannot mistake "not asked" for "came back clean".
+            writeln!(
+                w,
+                "INSERT INTO reputation_coverage VALUES ({},{},{},{});",
+                sw.candidates, sw.queried, sw.from_cache, sw.unchecked
+            )?;
+        }
+        for c in &r.intel.components {
+            writeln!(
+                w,
+                "INSERT INTO components VALUES ({},{},{});",
+                sql_literal(&c.name),
+                sql_literal(&c.version),
+                sql_literal(&c.evidence)
+            )?;
+        }
+        if let Some(cves) = r.intel.cves.as_ref() {
+            for c in &cves.components {
+                // A component whose lookup failed gets one row carrying the error, so a query cannot
+                // read an absent row as "no CVEs".
+                if c.cves.is_empty() {
+                    writeln!(
+                        w,
+                        "INSERT INTO cves VALUES ({},{},NULL,NULL,NULL,NULL,{});",
+                        sql_literal(&c.component.name),
+                        sql_literal(&c.component.version),
+                        c.error
+                            .as_deref()
+                            .map(sql_literal)
+                            .unwrap_or_else(|| "NULL".into())
+                    )?;
+                    continue;
+                }
+                for v in &c.cves {
+                    writeln!(
+                        w,
+                        "INSERT INTO cves VALUES ({},{},{},{},{},{},NULL);",
+                        sql_literal(&c.component.name),
+                        sql_literal(&c.component.version),
+                        sql_literal(&v.id),
+                        v.cvss
+                            .map(|x| x.to_string())
+                            .unwrap_or_else(|| "NULL".into()),
+                        sql_literal(&v.severity),
+                        sql_literal(&v.url)
+                    )?;
+                }
             }
         }
 

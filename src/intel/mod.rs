@@ -30,6 +30,10 @@ pub struct Intel {
     #[serde(default)]
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub reputation: Vec<Reputation>,
+    /// What a `--reputation-members` sweep asked, answered and skipped.
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sweep: Option<reputation::Sweep>,
     #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cves: Option<CveReport>,
@@ -39,6 +43,9 @@ pub struct Intel {
 
 impl Intel {
     pub fn is_empty(&self) -> bool {
-        self.reputation.is_empty() && self.cves.is_none() && self.components.is_empty()
+        self.reputation.is_empty()
+            && self.sweep.is_none()
+            && self.cves.is_none()
+            && self.components.is_empty()
     }
 }

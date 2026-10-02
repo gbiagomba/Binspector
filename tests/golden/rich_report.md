@@ -290,6 +290,17 @@ Container format `zip`, 7 members, 2.2 MiB unpacked, 11,200 strings.
     MetaDefender: no API key configured
 ```
 
+## Member reputation (4 of 1,012 distinct hash(es) answered, hash only)
+
+```text
+  1 asked of a service, 3 from the local cache
+  !!! Suspect.dll
+      5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a
+      VirusTotal:   11 of 70 engines flagged this hash
+      MetaDefender: hash not known to the service, which is not evidence that it is safe
+  !! 1,008 distinct hash(es) went unchecked because the request budget ran out. They are not clean results; they are absent ones. Raise --request-budget, or rerun: answers already received are cached.
+```
+
 ## Known CVEs (2 across 2 component(s))
 
 ```text

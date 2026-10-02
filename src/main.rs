@@ -26,9 +26,72 @@ fn main() -> ExitCode {
 fn run() -> Result<ExitCode> {
     match Cli::parse().resolve()? {
         Action::Fuzz(args) => run_fuzz(&args),
+        Action::Cache(args) => run_cache(&args),
         Action::Repl(path) => run_repl(&path),
         Action::Scan(resolved) => run_scan(&resolved),
     }
+}
+
+/// `binspector cache --show | --prune | --purge`.
+///
+/// Paired on the feature the same way `run_repl` is, because the store is SQLite and a build without
+/// it has nowhere to keep anything.
+#[cfg(feature = "sqlite")]
+fn run_cache(args: &binspector::cli::CacheArgs) -> Result<ExitCode> {
+    use binspector::intel::cache;
+    let Some(path) = cache::cache_path() else {
+        anyhow::bail!(
+            "no cache location: HOME is unset and BINSPECTOR_CACHE was not given, so there is \
+             nowhere a cache could be"
+        )
+    };
+
+    if args.purge {
+        if cache::purge(&path)? {
+            println!("binspector: removed {}", path.display());
+        } else {
+            println!("binspector: no cache at {}", path.display());
+        }
+        return Ok(ExitCode::SUCCESS);
+    }
+
+    if !path.exists() {
+        println!("binspector: no cache at {}", path.display());
+        return Ok(ExitCode::SUCCESS);
+    }
+    let c = cache::Cache::open(&path)?;
+    let now = cache::now_unix();
+
+    if args.prune {
+        let n = c.prune(now)?;
+        println!("binspector: dropped {} expired verdict(s)", n);
+        return Ok(ExitCode::SUCCESS);
+    }
+
+    let st = c.stats(now)?;
+    println!("Reputation cache: {}", path.display());
+    println!("  verdicts:        {}", st.total);
+    println!("  still usable:    {}", st.fresh);
+    println!("  expired:         {}", st.expired);
+    println!("  distinct hashes: {}", st.hashes);
+    println!(
+        "  size:            {}",
+        binspector::report::human_bytes(st.bytes)
+    );
+    // Said plainly, because the file is more revealing than its size suggests.
+    println!(
+        "  This file records every binary hash looked up on this machine, across every scan and \
+         every engagement. `--purge` deletes it."
+    );
+    Ok(ExitCode::SUCCESS)
+}
+
+#[cfg(not(feature = "sqlite"))]
+fn run_cache(_args: &binspector::cli::CacheArgs) -> Result<ExitCode> {
+    anyhow::bail!(
+        "this build has no reputation cache. The store is SQLite, so rebuild with \
+         --features sqlite."
+    )
 }
 
 #[cfg(feature = "repl")]
@@ -302,6 +365,63 @@ fn run_scan(resolved: &binspector::cli::Resolved) -> Result<ExitCode> {
 }
 
 /// Rewind the spool so each format streams it from the start.
+/// The member sweep, with the cache opened for the duration if one is available.
+///
+/// Separate from `enrich` because opening the cache is feature-gated and the borrow of it has to
+/// outlive the sweep, which reads awkwardly inline.
+fn sweep_members(
+    report: &mut binspector::model::Report,
+    resolved: &binspector::cli::Resolved,
+    creds: &intel::Credentials,
+) {
+    let mut budget = intel::budget::Budget::new(resolved.rate_limit, resolved.request_budget);
+    if let Some(note) = budget.tier_note() {
+        // Once per run, and it continues rather than refusing: whether a given use is within a
+        // service's terms is the operator's judgement, not something a scanner can determine.
+        eprintln!("binspector: {}", note);
+    }
+
+    #[cfg(feature = "sqlite")]
+    let cache = if resolved.no_cache {
+        None
+    } else {
+        match intel::cache::cache_path() {
+            Some(p) => match intel::cache::Cache::open(&p) {
+                Ok(c) => Some(c),
+                Err(e) => {
+                    // A cache that cannot be opened is a slower scan, not a failed one.
+                    eprintln!("binspector: reputation cache unavailable: {:#}", e);
+                    None
+                }
+            },
+            None => None,
+        }
+    };
+    #[cfg(feature = "sqlite")]
+    let store = cache
+        .as_ref()
+        .map(|c| c as &dyn intel::reputation::VerdictStore);
+    // Without the feature there is nowhere to persist anything, so every lookup is a miss. That is
+    // correct behaviour rather than a stub.
+    #[cfg(not(feature = "sqlite"))]
+    let store: Option<&dyn intel::reputation::VerdictStore> = None;
+
+    match intel::reputation::sweep_members(report, creds, &mut budget, store) {
+        Ok(s) => {
+            if s.unchecked > 0 {
+                eprintln!(
+                    "binspector: {} of {} distinct member hash(es) went unchecked: the request \
+                     budget of {} was reached. Raise --request-budget or rerun to continue from \
+                     the cache.",
+                    s.unchecked, s.candidates, resolved.request_budget
+                );
+            }
+            report.intel.sweep = Some(s);
+        }
+        Err(e) => eprintln!("binspector: member sweep unavailable: {:#}", e),
+    }
+}
+
 /// Network enrichment, shared by the combined and split paths.
 ///
 /// Runs after the scan and never blocks the report: a failed lookup is recorded in the output
@@ -328,6 +448,9 @@ fn enrich(
                 Ok(r) => report.intel.reputation = r,
                 Err(e) => eprintln!("binspector: reputation lookup unavailable: {:#}", e),
             }
+        }
+        if resolved.reputation_members {
+            sweep_members(report, resolved, &creds);
         }
         if resolved.cve {
             if creds.nvd.is_none() {

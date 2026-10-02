@@ -292,6 +292,20 @@ CREATE TABLE IF NOT EXISTS verdicts (
         }
     }
 
+    /// The sweep talks to the cache through this, so it compiles without the `sqlite` feature.
+    ///
+    /// A write failure is swallowed rather than propagated: the answer it failed to store is still a
+    /// good answer, and losing a scan over a cache hiccup would be the wrong trade.
+    impl super::super::reputation::VerdictStore for Cache {
+        fn lookup(&self, sha256: &str, service: &str, now: i64) -> Option<Verdict> {
+            self.get(sha256, service, now)
+        }
+
+        fn remember(&self, sha256: &str, service: &str, v: &Verdict, now: i64) {
+            let _ = self.put(sha256, service, v, now);
+        }
+    }
+
     /// Delete the cache file. Not a method, because there is nothing to open first.
     pub fn purge(path: &Path) -> Result<bool> {
         if !path.exists() {

@@ -190,6 +190,26 @@ pub struct Cli {
     #[arg(long)]
     pub cve: bool,
 
+    /// Look every distinct member hash up, worst first, within a request budget
+    ///
+    /// Asks about unsigned executables before anything else, deduplicated by content. A free API
+    /// tier answers a few hundred a day and a large package holds thousands of distinct hashes, so
+    /// the report states how many went unchecked rather than implying they were clean.
+    #[arg(long = "reputation-members", requires = "reputation")]
+    pub reputation_members: bool,
+
+    /// Requests per minute for the reputation sweep, 0 for no pacing
+    #[arg(long = "rate-limit", default_value_t = 4, value_name = "N")]
+    pub rate_limit: u32,
+
+    /// Most requests one sweep may make
+    #[arg(long = "request-budget", default_value_t = 500, value_name = "N")]
+    pub request_budget: usize,
+
+    /// Do not read or write the persistent reputation cache
+    #[arg(long = "no-cache")]
+    pub no_cache: bool,
+
     /// Read API keys from this file instead of ~/.config/binspector/credentials
     ///
     /// The file must not be group or world readable. There is deliberately no flag that takes a
@@ -244,6 +264,8 @@ pub enum Commands {
     /// Boxed because `FuzzArgs` is far larger than the other variant, and an enum sized for
     /// its biggest member would be copied around the scan path for no reason.
     Fuzz(Box<FuzzArgs>),
+    /// Inspect, prune or delete the persistent reputation cache
+    Cache(CacheArgs),
     /// Browse a saved report interactively (needs --features repl)
     Repl {
         /// A JSON or SQLite report produced by an earlier scan
@@ -256,7 +278,33 @@ pub enum Commands {
 pub enum Action {
     Scan(Box<Resolved>),
     Fuzz(Box<FuzzArgs>),
+    Cache(CacheArgs),
     Repl(PathBuf),
+}
+
+/// What to do with the reputation cache.
+///
+/// Exactly one action, because "show and then purge" would print statistics about a file that no
+/// longer exists by the time anybody read them.
+#[derive(clap::Args, Debug, Clone)]
+#[command(group(
+    clap::ArgGroup::new("cache_action").required(true).args(["show", "prune", "purge"])
+))]
+pub struct CacheArgs {
+    /// Report how many verdicts are stored, how many are still fresh, and how large the file is
+    #[arg(long)]
+    pub show: bool,
+
+    /// Drop expired verdicts, keeping the rest
+    #[arg(long)]
+    pub prune: bool,
+
+    /// Delete the cache file
+    ///
+    /// The file is an index of every binary hash inspected on this machine and it crosses
+    /// engagements, so there is a deliberate way to remove it.
+    #[arg(long)]
+    pub purge: bool,
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, clap::ValueEnum)]
@@ -315,6 +363,11 @@ pub struct Resolved {
     pub cve_limit: usize,
     /// An explicit credentials file, replacing the default path.
     pub credentials: Option<PathBuf>,
+    /// Sweep every distinct member hash, not just the targets.
+    pub reputation_members: bool,
+    pub rate_limit: u32,
+    pub request_budget: usize,
+    pub no_cache: bool,
     pub scan: ScanConfig,
     pub formats: Vec<format::OutputFormat>,
     pub output: Option<PathBuf>,
@@ -355,6 +408,7 @@ impl Cli {
                 args.validate()?;
                 return Ok(Action::Fuzz(args));
             }
+            Some(Commands::Cache(a)) => return Ok(Action::Cache(a)),
             Some(Commands::Repl { report }) => return Ok(Action::Repl(report)),
             None => {}
         }
@@ -572,6 +626,10 @@ impl Cli {
             cve: self.cve,
             cve_limit: self.cve_limit,
             credentials: self.credentials,
+            reputation_members: self.reputation_members,
+            rate_limit: self.rate_limit,
+            request_budget: self.request_budget,
+            no_cache: self.no_cache,
             scan,
             formats,
             output,
@@ -596,6 +654,7 @@ mod tests {
         match Cli::try_parse_from(full)?.resolve()? {
             Action::Scan(r) => Ok(*r),
             Action::Fuzz(_) => anyhow::bail!("expected a scan, got the fuzz subcommand"),
+            Action::Cache(_) => anyhow::bail!("expected a scan, got the cache subcommand"),
             Action::Repl(_) => anyhow::bail!("expected a scan, got the repl subcommand"),
         }
     }
