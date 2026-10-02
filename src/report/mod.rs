@@ -354,6 +354,8 @@ pub(crate) mod tests_support {
                 members_scanned: 3,
                 total_unpacked_bytes: 400_000_000,
                 entries: vec![CoverageEntry {
+                    digests: None,
+                    copies: 1,
                     pdb: None,
                     vendor: None,
                     member: "bundle :: app.msix :: App.exe".into(),

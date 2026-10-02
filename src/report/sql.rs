@@ -40,6 +40,9 @@ CREATE TABLE IF NOT EXISTS posture (
   id TEXT, title TEXT, severity TEXT, affected INTEGER, members_listed INTEGER,
   members_truncated INTEGER, evidence TEXT, remediation TEXT);
 CREATE TABLE IF NOT EXISTS posture_members (id TEXT, member TEXT);
+CREATE TABLE IF NOT EXISTS member_digests (
+  member TEXT, md5 TEXT, sha1 TEXT, sha256 TEXT, size INTEGER, format TEXT, copies INTEGER);
+CREATE INDEX IF NOT EXISTS idx_member_digests_sha256 ON member_digests(sha256);
 CREATE TABLE IF NOT EXISTS pdb_source_roots (
   member TEXT, image_stem TEXT, root TEXT, objects INTEGER, component TEXT, mixed INTEGER);
 CREATE INDEX IF NOT EXISTS idx_pdb_roots_component ON pdb_source_roots(component);
@@ -187,6 +190,26 @@ pub fn write(
                     sql_literal(m)
                 )?;
             }
+        }
+
+        // One row per member, so a reviewer can look a hash up by hand and so two builds can be
+        // diffed by content. `copies` makes the redundancy visible: on one real package 482 of
+        // 4,281 members are byte-identical to another member, and nothing before 6.0.0 could say so.
+        for e in &r.coverage.entries {
+            let Some(d) = e.digests.as_ref() else {
+                continue;
+            };
+            writeln!(
+                w,
+                "INSERT INTO member_digests VALUES ({},{},{},{},{},{},{});",
+                sql_literal(&e.member),
+                sql_literal(&d.md5),
+                sql_literal(&d.sha1),
+                sql_literal(&d.sha256),
+                e.size,
+                sql_literal(&e.format),
+                e.copies
+            )?;
         }
 
         // One row per (image, source tree). `mixed` marks the rows that make up a mixed-source

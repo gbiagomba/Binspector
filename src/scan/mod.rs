@@ -68,6 +68,8 @@ pub struct ScanConfig {
     pub analyze_pe: bool,
     /// Read compiland records from PDB members.
     pub analyze_pdb: bool,
+    /// Digest every member, for the hash table and for content deduplication.
+    pub digest_members: bool,
     /// Maximum indicators of each kind to collect.
     pub ioc_cap: usize,
     /// Detect third-party components and versions from strings. Offline.
@@ -96,6 +98,7 @@ impl Default for ScanConfig {
             include_excluded: false,
             analyze_pe: true,
             analyze_pdb: true,
+            digest_members: true,
             // Per kind, not overall. 500 made the field unusable on a real 553 MB target: 618
             // URLs and 1,902 paths were kept while 45,273 indicators were discarded, so the
             // list was a 5% sample of scan order presenting itself as a result. Collection and
@@ -211,6 +214,15 @@ pub fn run_labeled(
             // actually ships, and cheap because the set is bounded by the member count.
             member_leaves
                 .insert(crate::report::fmt_util::short_name(&member_name).to_ascii_lowercase());
+            // The member's digests, from the same borrow everything else reads. `--extract`
+            // already hashed every member it wrote and kept only the sha256; this computes it
+            // once for both and for the digest table.
+            let member_digests = if cfg.digest_members {
+                Some(crate::hashing::digests(member.data))
+            } else {
+                None
+            };
+
             // Compiland provenance. A pure function of the member's bytes: it touches no
             // indicator collector, no component detector, no hit cap and no spool, which is what
             // makes it the one per-member analysis that could be parallelised without solving the
@@ -586,6 +598,10 @@ pub fn run_labeled(
             });
             coverage_entries.push(CoverageEntry {
                 vendor: vendor.clone(),
+                digests: member_digests,
+                // Filled after the walk, once every member is known. One member cannot know how
+                // many copies of itself exist.
+                copies: 1,
                 pdb: pdb_provenance,
                 member: member_name,
                 format: member.format.as_str().to_string(),
@@ -726,6 +742,8 @@ pub fn run_labeled(
         );
         (c, h, m, l)
     };
+    count_copies(&mut coverage_entries);
+
     let timestamp = time::OffsetDateTime::now_utc()
         .format(&time::format_description::well_known::Rfc3339)
         .unwrap_or_default();
@@ -838,6 +856,35 @@ pub fn run_labeled(
 /// vendor-signed one that calls `SetDefaultDllDirectories`, even for the same absent dependency,
 /// because what satisfies the import is decided by the search order in the first case and
 /// constrained by the build in the second.
+/// Count byte-identical members, after the walk.
+///
+/// Keyed on the SHA-256, so this is content identity rather than a name or size heuristic. Nothing
+/// in the tool could express this before 6.0.0: `merge` concatenates coverage entries and the
+/// closest approximation was `(leaf name, function, severity)` in `logical_findings`.
+///
+/// On a real 4,281-member package 648 members are copies, 555 of them PE images, which is what lets
+/// a reputation sweep ask about 1,012 distinct images rather than 1,567 rows.
+pub fn count_copies(entries: &mut [CoverageEntry]) {
+    let mut seen: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
+    for e in entries.iter() {
+        if let Some(d) = e.digests.as_ref() {
+            *seen.entry(d.sha256.as_str()).or_insert(0) += 1;
+        }
+    }
+    // Collected first because the counting borrow and the writing borrow cannot overlap.
+    let counts: std::collections::BTreeMap<String, usize> =
+        seen.into_iter().map(|(k, v)| (k.to_string(), v)).collect();
+    for e in entries.iter_mut() {
+        if let Some(n) = e
+            .digests
+            .as_ref()
+            .and_then(|d| counts.get(d.sha256.as_str()))
+        {
+            e.copies = *n;
+        }
+    }
+}
+
 pub fn all_external_imports(
     entries: &[CoverageEntry],
     package_leaves: &std::collections::BTreeSet<String>,

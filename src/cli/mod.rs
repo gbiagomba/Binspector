@@ -170,6 +170,14 @@ pub struct Cli {
     #[arg(long = "no-pdb")]
     pub no_pdb: bool,
 
+    /// Skip per-member digests, and with them content deduplication
+    ///
+    /// Digesting costs one pass per algorithm over every unpacked byte. Worth declining on a very
+    /// large target when the hash table is not wanted; the report then cannot say which members are
+    /// copies of each other.
+    #[arg(long = "no-digests")]
+    pub no_digests: bool,
+
     /// Maximum indicators of each kind to collect
     #[arg(long = "ioc-cap", default_value_t = 10_000, value_name = "N")]
     pub ioc_cap: usize,
@@ -527,6 +535,7 @@ impl Cli {
             include_excluded: self.include_excluded,
             analyze_pe: !self.no_pe,
             analyze_pdb: !self.no_pdb,
+            digest_members: !self.no_digests,
             ioc_cap: self.ioc_cap,
             detect_components: !self.no_components,
         };

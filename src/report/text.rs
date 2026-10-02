@@ -104,6 +104,27 @@ fn write_coverage(w: &mut dyn Write, r: &Report) -> Result<()> {
         "  Members scanned:  {}",
         thousands(c.members_scanned as u64)
     )?;
+    // Content identity, which the tool could not express before 6.0.0. A package ships the same
+    // module for several instruction sets, and sometimes the same file twice, so a member count
+    // reads as more work than it is. Stated only when it differs from the member count.
+    let digested = c.entries.iter().filter(|e| e.digests.is_some()).count();
+    if digested > 0 {
+        let distinct = c
+            .entries
+            .iter()
+            .filter_map(|e| e.digests.as_ref().map(|d| d.sha256.as_str()))
+            .collect::<std::collections::BTreeSet<_>>()
+            .len();
+        if distinct < digested {
+            writeln!(
+                w,
+                "  Distinct by content: {} of {} ({} are byte-identical to another member)",
+                thousands(distinct as u64),
+                thousands(digested as u64),
+                thousands((digested - distinct) as u64)
+            )?;
+        }
+    }
     writeln!(
         w,
         "  Bytes unpacked:   {}",
@@ -526,6 +547,8 @@ mod tests {
                 members_scanned: 3,
                 total_unpacked_bytes: 400_000_000,
                 entries: vec![CoverageEntry {
+                    digests: None,
+                    copies: 1,
                     pdb: None,
                     vendor: None,
                     member: "b :: app.msix :: App.exe".into(),

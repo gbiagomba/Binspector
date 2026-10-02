@@ -10,6 +10,20 @@ use std::io::{Cursor, Write};
 use tempfile::NamedTempFile;
 use zip::write::SimpleFileOptions;
 
+/// A zip containing the given entries, for tests that need several members in one target.
+fn zip_with(entries: &[(&str, &[u8])]) -> Vec<u8> {
+    let mut buf = Vec::new();
+    {
+        let mut w = zip::ZipWriter::new(Cursor::new(&mut buf));
+        for (name, data) in entries {
+            w.start_file(*name, SimpleFileOptions::default()).unwrap();
+            std::io::Write::write_all(&mut w, data).unwrap();
+        }
+        w.finish().unwrap();
+    }
+    buf
+}
+
 fn temp_with(data: &[u8]) -> NamedTempFile {
     let mut f = NamedTempFile::new().unwrap();
     f.write_all(data).unwrap();
@@ -251,4 +265,70 @@ fn window_returns_whole_short_string() {
     let (w, s, e) = strings::window("xx gets yy", 3, 7, 120);
     assert_eq!(w, "xx gets yy");
     assert_eq!(&w[s..e], "gets");
+}
+
+#[test]
+fn byte_identical_members_are_counted_as_copies() {
+    // A package shipping the same module for several architectures is the normal case, and until
+    // 6.0.0 nothing in the tool could say so: `merge` concatenates coverage entries and the closest
+    // approximation keyed on a leaf name.
+    let lf = temp_with(b"strcpy\n");
+    let cfg = ScanConfig {
+        banned_list: Some(lf.path().to_path_buf()),
+        ..Default::default()
+    };
+    let same = fake_pe(b"\x00strcpy\x00");
+    let other = fake_pe(b"\x00gets\x00");
+    let inner = zip_with(&[
+        ("arm64/App.dll", &same),
+        ("x64/App.dll", &same),
+        ("x86/App.dll", &same),
+        ("Other.dll", &other),
+    ]);
+    let target = temp_with(&inner);
+    let out = run(target.path(), &cfg, &crate::observe::Null).unwrap();
+
+    let by_name = |n: &str| {
+        out.report
+            .coverage
+            .entries
+            .iter()
+            .find(|e| e.member.ends_with(n))
+            .unwrap_or_else(|| panic!("{} missing", n))
+    };
+    assert_eq!(by_name("arm64/App.dll").copies, 3, "three identical copies");
+    assert_eq!(by_name("x64/App.dll").copies, 3);
+    assert_eq!(
+        by_name("Other.dll").copies,
+        1,
+        "a unique member stands alone"
+    );
+    // The digests are real and the identical ones agree.
+    let a = by_name("arm64/App.dll").digests.clone().expect("digested");
+    let b = by_name("x64/App.dll").digests.clone().expect("digested");
+    assert_eq!(a.sha256, b.sha256);
+    assert_eq!(a.md5.len(), 32);
+    assert_eq!(a.sha1.len(), 40);
+    assert_eq!(a.sha256.len(), 64);
+    assert_ne!(
+        a.sha256,
+        by_name("Other.dll").digests.clone().unwrap().sha256
+    );
+}
+
+#[test]
+fn no_digests_skips_them_and_copies_falls_back_to_one() {
+    let lf = temp_with(b"strcpy\n");
+    let cfg = ScanConfig {
+        banned_list: Some(lf.path().to_path_buf()),
+        digest_members: false,
+        ..Default::default()
+    };
+    let target = temp_with(&fake_pe(b"\x00strcpy\x00"));
+    let out = run(target.path(), &cfg, &crate::observe::Null).unwrap();
+    for e in &out.report.coverage.entries {
+        assert!(e.digests.is_none());
+        // Not zero: a member with no digest is one member, not nought copies of itself.
+        assert_eq!(e.copies, 1);
+    }
 }

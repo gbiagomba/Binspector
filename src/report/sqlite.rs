@@ -125,6 +125,23 @@ pub fn write(
             }
         }
         for e in &r.coverage.entries {
+            let Some(d) = e.digests.as_ref() else {
+                continue;
+            };
+            tx.execute(
+                "INSERT INTO member_digests VALUES (?,?,?,?,?,?,?)",
+                params![
+                    e.member,
+                    d.md5,
+                    d.sha1,
+                    d.sha256,
+                    e.size as i64,
+                    e.format,
+                    e.copies as i64
+                ],
+            )?;
+        }
+        for e in &r.coverage.entries {
             let Some(p) = e.pdb.as_ref() else { continue };
             // Keyed on (root, component), not the root alone. One tree legitimately appears
             // twice when it contributes both a component's objects and its own: the XMP toolkit

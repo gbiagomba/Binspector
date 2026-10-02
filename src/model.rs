@@ -227,6 +227,22 @@ pub struct CoverageEntry {
     #[serde(default)]
     #[serde(skip_serializing_if = "is_false")]
     pub unix_executable: bool,
+    /// MD5, SHA-1 and SHA-256 of this member's bytes.
+    ///
+    /// `None` when `--no-digests` was passed. The sha256 is what identifies content, so it is what
+    /// deduplication and a reputation lookup both key on; MD5 and SHA-1 are here because they are
+    /// what a reviewer pastes into another tool.
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub digests: Option<crate::hashing::Digests>,
+    /// Members in this report with byte-identical content, including this one.
+    ///
+    /// 1 for a unique member. A package ships the same module for several instruction sets and
+    /// sometimes the same file twice, and until 6.0.0 nothing in the tool could tell: `merge`
+    /// concatenates coverage entries with no content comparison. 648 of one real package's 4,281
+    /// members are copies.
+    #[serde(default = "one")]
+    pub copies: usize,
     /// Compiland provenance, when this member is a PDB.
     ///
     /// Filled during the walk like `pe`, because it is a pure function of the member's bytes.
@@ -244,6 +260,12 @@ pub struct CoverageEntry {
 }
 
 /// Serde skip predicate for a `bool` that is false in the overwhelming majority of entries.
+/// `serde` default for `copies`, so a report written before 6.0.0 reads back as unique members
+/// rather than as zero copies of everything.
+fn one() -> usize {
+    1
+}
+
 fn is_false(b: &bool) -> bool {
     !*b
 }

@@ -353,6 +353,11 @@ fn finish_aggregate(r: &mut Report) {
             .then(a.member.cmp(&b.member))
             .then(a.offset.cmp(&b.offset))
     });
+    // Recounted over the merged set, not merged from the per-target counts. A member unique within
+    // its own target can have a byte-identical twin in a sibling target, and on the reference
+    // package that is most of the 648 copies: the same module shipped in four architecture
+    // sub-packages.
+    super::count_copies(&mut r.coverage.entries);
     r.posture = super::all_posture(&r.coverage.entries);
     // Recomputed over the merged member list, not merged from the per-target results. "Absent
     // from the package" is a question about the whole run: a DLL missing from one target may ship

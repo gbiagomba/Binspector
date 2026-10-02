@@ -112,6 +112,7 @@ binspector --banned-filter '^str' ./app.exe
 | `--no-exe` | Skip executable parsing for all three formats (headers, sections, imports, mitigations) |
 | `--no-pe` | Alias for `--no-exe`, kept because it was the name before 5.2.0 |
 | `--no-pdb` | Skip compiland provenance on PDB members |
+| `--no-digests` | Skip per-member digests, and with them content deduplication |
 | `--carve` | Scan every member for embedded file signatures. Opt-in at runtime, not a build gate |
 | `--extract <DIR>` | Write every unpacked member into `DIR`. The only thing that makes a scan write bytes from the target |
 | `--threads <N>` | Targets to scan at once. Defaults to the number of CPU cores |
@@ -556,6 +557,42 @@ signing are still properties of the shipped file.
 
 **These participate in `--fail-on`**, which is the breaking change most likely to affect a
 pipeline.
+
+## Member digests
+
+Every member a scan unpacks is hashed with MD5, SHA-1 and SHA-256. On by default, `--no-digests` to
+decline.
+
+```sql
+-- Look a member up by hand, or paste the hash into another tool
+SELECT member, md5, sha1, sha256, size FROM member_digests WHERE member LIKE '%AdobePDFL.dll';
+
+-- Which members are byte-identical to another member
+SELECT sha256, copies, count(*) FROM member_digests WHERE copies > 1 GROUP BY 1, 2;
+
+-- Diff two builds by content rather than by name
+ATTACH 'previous.sqlite' AS prev;
+SELECT member FROM member_digests
+EXCEPT SELECT member FROM prev.member_digests;
+```
+
+### Content identity, and why the member count overstates the work
+
+A package ships the same module for several instruction sets, and sometimes the same file twice. On
+one real 4,281-member package, **482 members are byte-identical to another member** and 3,799 are
+distinct. The coverage block states that whenever the two numbers differ, because a member count
+reads as more work than it is.
+
+This is content identity, keyed on the SHA-256, not a name or size heuristic. A `(name, size)` proxy
+over-counts: it put the same figure at 648 because two files can share a name and a byte count
+without sharing their contents.
+
+### What it costs
+
+Three algorithms is three passes over every unpacked byte. Measured on a 249 MB bundle that unpacks
+to 1.6 GiB: **1.1 seconds of an 8.0 second scan**, about 15%. MD5 and SHA-1 are kept in the default
+because they are what a reviewer pastes into another tool, and `--no-digests` is there for a target
+large enough that the trade stops being worth it.
 
 ## Compiland provenance
 
