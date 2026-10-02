@@ -250,8 +250,10 @@ binspector --format sarif -o scan.sarif --fail-on critical ./app.exe
 binspector --dump --palette colorblind ./app.exe | less -R
 
 # Executable analysis is automatic. Add reputation and CVE lookups (opt-in, hash only)
+# Keys come from the environment or a file, never from an argument: `ps` shows arguments
 export VT_API_KEY=... NVD_API_KEY=...
 binspector --reputation --cve ./app.exe
+binspector --reputation --cve --credentials ./ci-keys ./app.exe
 
 # Fuzz Binspector's own parsers against a sample. Never executes the sample
 binspector fuzz --differential ./app.exe --iterations 20000

@@ -263,13 +263,22 @@ fn several_targets_aggregate_into_one_report() {
         "{:?}",
         members
     );
-    // md5 and sha1 are cleared for a set rather than carrying a fake file hash.
-    assert_eq!(v["md5"], "");
-    assert_eq!(v["sha1"], "");
-    assert!(
-        v["sha256"].as_str().unwrap().len() == 64,
-        "a manifest digest is still a digest"
-    );
+    // All three manifest digests are present, each over the same newline-joined
+    // "<sha256>  <label>" manifest. They used to be cleared for a set, which read as a tool that
+    // failed to hash and was reported as broken twice.
+    for (key, len) in [("md5", 32), ("sha1", 40), ("sha256", 64)] {
+        let got = v[key].as_str().unwrap_or_default();
+        assert_eq!(got.len(), len, "{} digest: {:?}", key, got);
+        assert!(got.chars().all(|c| c.is_ascii_hexdigit()), "{}", key);
+    }
+    // And every target carries its own real file digests, which is what a reputation lookup or a
+    // hand check needs. A manifest digest cannot be looked up anywhere.
+    for t in v["targets"].as_array().expect("targets") {
+        for (key, len) in [("md5", 32), ("sha1", 40), ("sha256", 64)] {
+            let got = t[key].as_str().unwrap_or_default();
+            assert_eq!(got.len(), len, "target {} digest: {:?}", key, got);
+        }
+    }
 }
 
 #[test]
@@ -333,10 +342,12 @@ fn all_files_takes_what_the_filter_skipped() {
 
 #[test]
 fn a_multi_target_report_names_its_digest_instead_of_printing_empty_fields() {
-    // Reported as "MD5/SHA1 isn't working but SHA2 is". A digest over a set of files is a manifest
-    // digest, so `finish_aggregate` leaves md5 and sha1 empty on purpose rather than inventing
-    // something that looks like a file hash. The writers were still printing the labels, so the
-    // report showed two blank fields and read as broken.
+    // Reported as "MD5/SHA1 isn't working but SHA2 is", twice. A digest over a set of files is a
+    // manifest digest rather than a file digest, and the first fix named it as one and dropped the
+    // other two algorithms. That was still wrong: two missing algorithms read as a tool that
+    // failed to hash, and the label already said "manifest", so there was nothing left to be
+    // ambiguous about. All three manifest digests are printed now, and the per-target file digests
+    // beside them, which are what a reputation lookup or a hand check actually needs.
     let dir = TempDir::new().unwrap();
     let a = dir.path().join("a.exe");
     let b = dir.path().join("b.exe");
@@ -346,18 +357,33 @@ fn a_multi_target_report_names_its_digest_instead_of_printing_empty_fields() {
     let out = bin_stdout().arg(&a).arg(&b).output().unwrap();
     let body = String::from_utf8_lossy(&out.stdout);
     assert!(
-        body.contains("Manifest SHA256:"),
-        "a multi-target run must name the digest for what it is:\n{}",
+        body.contains("Manifest digests"),
+        "a multi-target run must name the digests for what they are:\n{}",
         body
     );
     assert!(
-        body.contains("not a file hash"),
-        "and say it is not a file hash:\n{}",
+        body.contains("not file hashes"),
+        "and say they are not file hashes:\n{}",
         body
     );
+    // All three, because two of them missing is what was reported as broken.
+    for label in ["MD5:", "SHA1:", "SHA256:"] {
+        let line = body
+            .lines()
+            .find(|l| l.trim_start().starts_with(label))
+            .unwrap_or_else(|| panic!("{} missing:\n{}", label, body));
+        let value = line.trim_start().trim_start_matches(label).trim();
+        assert!(
+            value.chars().all(|c| c.is_ascii_hexdigit()) && !value.is_empty(),
+            "{} must carry a digest, got {:?}",
+            label,
+            value
+        );
+    }
+    // And the per-file digests, so a multi-target report carries a hash somebody can look up.
     assert!(
-        !body.contains("MD5:     \n") && !body.contains("SHA1:    \n"),
-        "no empty digest field may be printed:\n{}",
+        body.contains("Target digests"),
+        "per-target file digests missing:\n{}",
         body
     );
 

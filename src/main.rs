@@ -313,7 +313,7 @@ fn enrich(
     // Network enrichment runs after the scan and never blocks the report: a failed
     // lookup is recorded in the output rather than aborting a completed analysis.
     if resolved.reputation || resolved.cve {
-        let creds = intel::Credentials::load()?;
+        let creds = intel::Credentials::load_from(resolved.credentials.as_deref())?;
         if resolved.reputation {
             if creds.virustotal.is_none() && creds.metadefender.is_none() {
                 eprintln!(

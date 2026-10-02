@@ -32,6 +32,11 @@ cab = "0.6.0"
 binwalk-ng = { version = "4.0.0", default-features = false, optional = true }
 arbitrary = { version = "1.4.2", features = ["derive"] }
 rustyline = { version = "18.0.1", optional = true }
+# PDB compiland records: which source tree each object in an image was compiled from. The
+# maintained fork of `pdb`, by the author of Mozilla's crash-reporting symbol tooling. Only the
+# MSF container and the DBI module list are used, never the type or symbol streams, which is the
+# audited reason a dependency is acceptable here at all: see `src/pdb/mod.rs`.
+pdb2 = { version = "0.10.2", optional = true }
 # Authenticode signer identity: PKCS#7 / CMS SignedData down to the X.509 subject CN, so a
 # report can say whose code a finding is in. goblin hands over the raw blob and does no ASN.1.
 #
@@ -103,7 +108,7 @@ zip = "8.6"
 # Everything ships in a default build, so a released binary can write every format,
 # browse a report, and carve. Each feature is still separable for a minimal build:
 # `--no-default-features` drops all three, and the gates below still compile.
-default = ["sqlite", "carve", "repl"]
+default = ["sqlite", "carve", "repl", "pdb"]
 # Binary SQLite report output (`--format sqlite`). Costs the bundled SQLite
 # amalgamation, which needs a C compiler and is the bulk of a cold build. The `sql`
 # text format needs no feature and produces an equivalent, loadable dump, so a
@@ -117,6 +122,11 @@ carve = ["dep:binwalk-ng"]
 # Interactive browser over a saved report (`binspector repl scan.json`). Adds a
 # line editor; everything it shows is already in the report.
 repl = ["dep:rustyline"]
+# Compiland provenance from a PDB: the set of source trees whose objects were linked into an
+# image, and a warning when one image takes objects for the same component from two trees. That
+# condition is a static-library patch that did not fully apply, and no version-based output can
+# represent it.
+pdb = ["dep:pdb2"]
 
 [profile.release]
 lto = true

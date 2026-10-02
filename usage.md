@@ -669,20 +669,43 @@ it to a third party permanently. On an unreleased binary that is a disclosure ev
 is deliberately not reproduced. An unknown hash reports that it is unknown, never that it
 is clean.
 
+### Which key each flag needs
+
+| Flag | Key | Without it |
+| --- | --- | --- |
+| `--carve` | none | Works fully. Nothing leaves the machine |
+| `--reputation` | `VT_API_KEY` and/or `MD_API_KEY` | Scan completes, exit 0, and the report says `no API key configured` per service rather than `clean` |
+| `--cve` | `NVD_API_KEY`, optional | Works, with a warning that the unauthenticated NVD rate limit is very low. Free keys: <https://nvd.nist.gov/developers/request-an-api-key> |
+
+Either reputation service is enough on its own; whichever key is absent is reported as absent.
+
 ### Credentials
 
 API keys are never accepted as command line arguments, because arguments are visible
-through `ps` and recorded in shell history. They come from, in order:
+through `ps` and recorded in shell history. **There is deliberately no `--vt-key` or
+`--api-key` flag, and a test asserts none is ever added.** Pass a file or set a variable.
+
+Sources, in order of precedence:
 
 1. Environment: `VT_API_KEY` (or `VIRUSTOTAL_API_KEY`), `MD_API_KEY` (or
    `METADEFENDER_API_KEY`), `NVD_API_KEY`
-2. `~/.config/binspector/credentials`, or the path in `BINSPECTOR_CREDENTIALS`
+2. `--credentials <FILE>`
+3. `~/.config/binspector/credentials`, or the path in `BINSPECTOR_CREDENTIALS`
+
+The environment wins over a file, so exporting a key for one command is not overridden by a
+stale file. A file named with `--credentials` that does not exist is an error rather than a
+silent miss: a scan that quietly ran without the enrichment you asked for looks the same as a
+service with no answer.
 
 ```
 # ~/.config/binspector/credentials  (chmod 600)
 virustotal = ...
 metadefender = ...
 nvd = ...
+```
+
+```bash
+binspector --reputation --cve --credentials ./ci-keys ./app.exe
 ```
 
 A credentials file that group or others can read is refused with a `chmod` hint. Keys also
@@ -695,7 +718,7 @@ gigabyte of build output for a feature that issues a handful of requests.
 
 ### Component detection coverage
 
-Detection uses 20 curated signatures anchored on library banner text, not bare version
+Detection uses curated signatures anchored on library banner text or a structured build identifier, not bare version
 numbers, so `1.2.3` alone is never a detection. It is not cve-bin-tool's roughly 380
 checkers, and the report says so: a component with no detector produces no CVEs, which is
 not the same as having none.

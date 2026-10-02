@@ -13,6 +13,7 @@ pub mod hashing;
 pub mod intel;
 pub mod model;
 pub mod observe;
+pub mod pdb;
 pub mod pe;
 #[cfg(feature = "repl")]
 pub mod repl;

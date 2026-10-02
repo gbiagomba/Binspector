@@ -18,12 +18,27 @@ pub struct Credentials {
 impl Credentials {
     /// Environment first, then the config file for anything still missing.
     pub fn load() -> Result<Self> {
+        Self::load_from(None)
+    }
+
+    /// As [`load`], with an explicit credentials file taking the place of the default path.
+    ///
+    /// The precedence is deliberate and documented in `--help`: environment first, then the file.
+    /// An operator who exports a key for one command should not have a stale file override it.
+    pub fn load_from(explicit: Option<&Path>) -> Result<Self> {
         let mut c = Self {
             virustotal: env_key("VT_API_KEY").or_else(|| env_key("VIRUSTOTAL_API_KEY")),
             metadefender: env_key("MD_API_KEY").or_else(|| env_key("METADEFENDER_API_KEY")),
             nvd: env_key("NVD_API_KEY"),
         };
-        if let Some(path) = config_path() {
+        if let Some(path) = explicit.map(PathBuf::from).or_else(config_path) {
+            if !path.exists() && explicit.is_some() {
+                anyhow::bail!(
+                    "credentials file {} does not exist. Nothing was read from it, so a key you \
+                     expected to be present is absent",
+                    path.display()
+                );
+            }
             if path.exists() {
                 let file = load_file(&path)?;
                 if c.virustotal.is_none() {
@@ -177,5 +192,76 @@ mod tests {
         let m = Credentials::missing_message("VirusTotal", "VT_API_KEY");
         assert!(m.contains("VT_API_KEY"));
         assert!(m.contains("never accepted as command line arguments"));
+    }
+
+    #[test]
+    fn an_explicit_credentials_file_is_read_and_the_environment_still_wins() {
+        // Written to tolerate a developer machine that really has NVD_API_KEY exported, which is
+        // not incidental: the precedence is the contract, so the test asserts whichever half of
+        // it applies rather than mutating the process environment under other tests.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("creds");
+        std::fs::write(&path, "nvd = from-the-file\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        }
+        let c = Credentials::load_from(Some(&path)).expect("read");
+        match env_key("NVD_API_KEY") {
+            Some(from_env) => assert_eq!(
+                c.nvd.as_deref(),
+                Some(from_env.as_str()),
+                "the environment takes precedence over the file"
+            ),
+            None => assert_eq!(c.nvd.as_deref(), Some("from-the-file")),
+        }
+    }
+
+    #[test]
+    fn the_file_parser_reads_every_service() {
+        // The file half of the contract, independent of the environment entirely.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("creds");
+        std::fs::write(
+            &path,
+            "# a comment\nvirustotal = vt-key\nmetadefender = md-key\nnvd = nvd-key\n",
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        }
+        let m = load_file(&path).expect("read");
+        assert_eq!(m.get("virustotal").map(String::as_str), Some("vt-key"));
+        assert_eq!(m.get("metadefender").map(String::as_str), Some("md-key"));
+        assert_eq!(m.get("nvd").map(String::as_str), Some("nvd-key"));
+    }
+
+    #[test]
+    fn a_named_credentials_file_that_is_absent_is_an_error_not_a_silent_miss() {
+        // The default path is allowed to be absent, because most runs have no keys. A path the
+        // operator typed is different: silently finding nothing there means a scan runs without
+        // the enrichment they asked for and the report looks like the service had no answer.
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("nope");
+        let err = Credentials::load_from(Some(&missing))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("does not exist"), "{}", err);
+    }
+
+    #[test]
+    fn no_flag_accepts_a_key_directly() {
+        // A guard against a future convenience flag. An argument is visible to every process on
+        // the machine through `ps` and is written to shell history, so a `--vt-key` would turn a
+        // secret into a disclosure. The only inputs are the environment and a file.
+        let help = <crate::cli::Cli as clap::CommandFactory>::command()
+            .render_help()
+            .to_string();
+        for forbidden in ["--vt-key", "--api-key", "--nvd-key", "--token"] {
+            assert!(!help.contains(forbidden), "{} must not exist", forbidden);
+        }
     }
 }

@@ -174,6 +174,15 @@ pub struct Cli {
     #[arg(long)]
     pub cve: bool,
 
+    /// Read API keys from this file instead of ~/.config/binspector/credentials
+    ///
+    /// The file must not be group or world readable. There is deliberately no flag that takes a
+    /// key directly: a command line argument is visible to every process on the machine through
+    /// `ps` and is written to shell history, so a `--vt-key` flag would turn a secret into a
+    /// disclosure. Pass a file, or set the environment variable.
+    #[arg(long = "credentials", value_name = "FILE")]
+    pub credentials: Option<PathBuf>,
+
     /// Write one report per target instead of one combined report
     #[arg(long = "split")]
     pub split: bool,
@@ -288,6 +297,8 @@ pub struct Resolved {
     pub reputation: bool,
     pub cve: bool,
     pub cve_limit: usize,
+    /// An explicit credentials file, replacing the default path.
+    pub credentials: Option<PathBuf>,
     pub scan: ScanConfig,
     pub formats: Vec<format::OutputFormat>,
     pub output: Option<PathBuf>,
@@ -542,6 +553,7 @@ impl Cli {
             reputation: self.reputation,
             cve: self.cve,
             cve_limit: self.cve_limit,
+            credentials: self.credentials,
             scan,
             formats,
             output,

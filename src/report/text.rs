@@ -32,15 +32,29 @@ pub fn write(
         thousands(r.file_size)
     )?;
     if r.is_manifest_digest() {
-        // Named for what it is. The value is the SHA-256 of the newline-joined
+        // Named for what it is. Each value is the digest of the newline-joined
         // "<sha256>  <label>" lines in target order, which is exactly what `sha256sum` emits, so a
-        // reader can reproduce it by hand from the Targets table.
+        // reader can reproduce it by hand from the per-target digests below.
+        //
+        // All three are printed. Two of them used to be blank, which read as a tool that failed
+        // to hash rather than as a deliberate omission, and was reported as broken twice.
         writeln!(
             w,
-            "Manifest SHA256:  {}  (over {} target digests, not a file hash)",
-            r.sha256,
+            "Manifest digests over {} target digest(s), not file hashes:",
             r.targets.len()
         )?;
+        writeln!(w, "  MD5:     {}", r.md5)?;
+        writeln!(w, "  SHA1:    {}", r.sha1)?;
+        writeln!(w, "  SHA256:  {}", r.sha256)?;
+        // The per-file digests, which are what a reputation lookup or a hand check actually needs.
+        // Without these a multi-target report carried no usable file hash at all.
+        writeln!(w, "Target digests")?;
+        for t in &r.targets {
+            writeln!(w, "  {}", t.label)?;
+            writeln!(w, "    MD5     {}", t.md5)?;
+            writeln!(w, "    SHA1    {}", t.sha1)?;
+            writeln!(w, "    SHA256  {}", t.sha256)?;
+        }
     } else {
         writeln!(w, "MD5:     {}", r.md5)?;
         writeln!(w, "SHA1:    {}", r.sha1)?;

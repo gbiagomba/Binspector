@@ -311,16 +311,24 @@ fn finish_aggregate(r: &mut Report) {
 
     // A digest over a set of files is a manifest digest, not a file digest: the newline-joined
     // "<sha256>  <label>" lines in target order, which is exactly what `sha256sum` produces and
-    // so is reproducible and checkable by hand. md5 and sha1 are cleared rather than filled with
-    // something that looks like a file hash and is not.
+    // so is reproducible and checkable by hand.
+    //
+    // All three algorithms are computed over that manifest, not just SHA256. They used to be
+    // cleared, on the reasoning that an empty field is better than something that looks like a
+    // file hash and is not. That was the wrong call twice over: the report labels the value a
+    // manifest digest in the same breath, so the ambiguity it guarded against does not exist, and
+    // two blank fields read as a tool that failed to hash rather than as a deliberate omission.
+    // A user reported them as broken twice. `hashing::digests` computes all three in one pass, so
+    // the two that were discarded cost nothing to keep.
     let manifest: String = r
         .targets
         .iter()
         .map(|t| format!("{}  {}\n", t.sha256, t.label))
         .collect();
-    r.sha256 = hashing::digests(manifest.as_bytes()).sha256;
-    r.md5 = String::new();
-    r.sha1 = String::new();
+    let d = hashing::digests(manifest.as_bytes());
+    r.sha256 = d.sha256;
+    r.md5 = d.md5;
+    r.sha1 = d.sha1;
 
     // One shared format, or "mixed".
     let first = r.targets.first().map(|t| t.root_format.clone());
