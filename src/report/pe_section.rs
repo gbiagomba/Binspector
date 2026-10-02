@@ -190,25 +190,7 @@ pub fn write_text(w: &mut dyn Write, r: &Report) -> Result<()> {
     write_crt_surface_text(w, r)?;
     write_ipc_text(w, r)?;
 
-    // String hygiene, which the banned-function list alone reports upside down: an image can
-    // import 23 hardened variants beside 5 unsafe ones, and naming only the five misleads.
-    let hardened: usize = pes
-        .iter()
-        .filter(|e| !e.pe.as_ref().unwrap().safe_variants.is_empty())
-        .count();
-    if hardened > 0 {
-        let total: usize = pes
-            .iter()
-            .map(|e| e.pe.as_ref().unwrap().safe_variants.len())
-            .sum();
-        writeln!(
-            w,
-            "  String hygiene: {} hardened CRT import(s) across {} of {} image(s)",
-            thousands(total as u64),
-            hardened,
-            pes.len()
-        )?;
-    }
+    write_hygiene_text(w, r)?;
 
     let total_imports: usize = pes
         .iter()
@@ -293,6 +275,78 @@ fn write_capabilities(w: &mut dyn Write, r: &Report) -> Result<()> {
          not a finding about the target."
     )?;
     writeln!(w)?;
+    Ok(())
+}
+
+/// Hardened against unbounded string primitives, as a ratio and three migration states.
+///
+/// Until 5.8.0 this was one line giving a sum of hardened import names with no denominator, so a
+/// reader could not tell whether 838 hardened imports was good or bad, and a product team could
+/// not see its own migration at all. An adversarial review named that the highest-value gap left
+/// after the severity model was fixed, and the reason is commercial rather than technical: the
+/// team knows it has been migrating, and a report that says nothing about it reads as a report
+/// that did not look.
+fn write_hygiene_text(w: &mut dyn Write, r: &Report) -> Result<()> {
+    let s = crate::scan::hygiene::summarise(r, 6);
+    if s.is_empty() {
+        return Ok(());
+    }
+    match s.ratio() {
+        Some(ratio) => writeln!(
+            w,
+            "  String hygiene: {} hardened slot(s) across {} image(s) against {} unbounded \
+             across {}, {:.1} to 1",
+            thousands(s.credited_slots as u64),
+            thousands(s.credited_members as u64),
+            thousands(s.unbounded_slots as u64),
+            thousands(s.unbounded_members as u64),
+            ratio
+        )?,
+        None => writeln!(
+            w,
+            "  String hygiene: {} hardened slot(s) across {} image(s) and no unbounded string \
+             primitive imported anywhere",
+            thousands(s.credited_slots as u64),
+            thousands(s.credited_members as u64)
+        )?,
+    }
+    // The three states are the migration signal, and they are different facts. An image
+    // importing both forms is part-way through; one importing only hardened forms is done; one
+    // importing only unbounded forms has not begun. A single count cannot say which.
+    writeln!(
+        w,
+        "    {} image(s) import both forms, {} only hardened, {} only unbounded",
+        thousands(s.mid_migration as u64),
+        thousands(s.fully_migrated as u64),
+        thousands(s.not_started as u64)
+    )?;
+    for row in &s.worst {
+        let copies = if row.copies > 1 {
+            format!(" (x{})", row.copies)
+        } else {
+            String::new()
+        };
+        writeln!(
+            w,
+            "    {:<40} {} unbounded, {} hardened{}",
+            truncate(&row.member, 40),
+            row.unbounded,
+            row.credited,
+            copies
+        )?;
+    }
+    if s.distinct_offenders > s.worst.len() {
+        writeln!(
+            w,
+            "    ... and {} more module(s) importing an unbounded primitive",
+            thousands((s.distinct_offenders - s.worst.len()) as u64)
+        )?;
+    }
+    writeln!(
+        w,
+        "    Slots are distinct import names per image, not call sites, so the same module built \
+         for four instruction sets counts four times: that is four files to change."
+    )?;
     Ok(())
 }
 

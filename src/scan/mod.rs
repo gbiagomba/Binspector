@@ -5,6 +5,7 @@ pub mod banned;
 pub mod confidence;
 pub mod crt_surface;
 pub mod evidence;
+pub mod hygiene;
 pub mod matcher;
 pub mod remediation;
 pub mod strings;

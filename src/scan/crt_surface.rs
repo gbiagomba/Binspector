@@ -81,7 +81,10 @@ pub fn summarise(r: &Report) -> CrtSurface {
     let hardened_images = r
         .pe_members()
         .into_iter()
-        .filter(|e| e.pe.as_ref().is_some_and(|a| !a.safe_variants.is_empty()))
+        .filter(|e| {
+            e.pe.as_ref()
+                .is_some_and(|a| !a.hygiene.credited.is_empty())
+        })
         .count();
 
     CrtSurface {

@@ -7,6 +7,7 @@
 
 pub mod authenticode;
 pub mod chain;
+pub mod credited;
 pub mod ioc;
 pub mod ipc;
 pub mod loader;
@@ -85,14 +86,16 @@ pub struct PeAnalysis {
     /// vendor's, and an unsigned internal binary has no signer at all, so the caller says.
     #[serde(default)]
     pub first_party: bool,
-    /// Hardened CRT variants the image imports, such as `strcpy_s`.
+    /// Hardened string and memory primitives the image imports, and the unbounded ones beside
+    /// them, so the two can be compared.
     ///
     /// Reported because the absence of this was a real complaint about the tool: an image can
-    /// import 23 `strcpy_s` beside 5 `strcpy`, and a report that mentions only the five
-    /// inverts the hygiene signal. This changes no severity. It is context a reviewer needs
-    /// in order not to misread a finding.
+    /// import 23 `strcpy_s` beside 5 `strcpy`, and a report that mentions only the five inverts
+    /// the hygiene signal. This changes no severity. It is context a reviewer needs in order not
+    /// to misread a finding. See `credited` for why a bare `_s` suffix test was both too wide
+    /// and too narrow to carry it.
     #[serde(default)]
-    pub safe_variants: Vec<String>,
+    pub hygiene: credited::Hygiene,
     pub packer_hints: Vec<String>,
     /// Bytes appended after the last section, a common payload hiding place.
     pub overlay_size: u64,
@@ -163,7 +166,7 @@ impl PeAnalysis {
         let is_managed = pe.clr_data.is_some();
         let packer_hints = packer::hints(&sections, imports.len(), is_managed);
         let loader = LoaderSurface::from_imports(&imports);
-        let safe_variants = collect_safe_variants(&imports);
+        let hygiene = credited::Hygiene::from_imports(&imports);
         let exports: Vec<String> = pe
             .exports
             .iter()
@@ -224,7 +227,7 @@ impl PeAnalysis {
             signature,
             // Set by the scan, which knows the member path and the --first-party pattern.
             first_party: false,
-            safe_variants,
+            hygiene,
             packer_hints,
             overlay_size,
         })
@@ -336,24 +339,6 @@ pub fn importing_library<'a>(imports: &'a [ImportRef], function: &str) -> Option
         .map(|i| i.library.as_str())
 }
 
-/// Hardened CRT variants an image imports, sorted and deduplicated.
-///
-/// The `_s` suffix is Microsoft's secure-CRT convention (`strcpy_s`, `sprintf_s`). The
-/// `__stdio_common_*_s` entries are the UCRT's internal targets for the `printf_s` family and
-/// count as the same signal. `rand_s` and `gets_s` are included: they are the hardened
-/// replacements for names the banned list flags.
-fn collect_safe_variants(imports: &[ImportRef]) -> Vec<String> {
-    let mut out: Vec<String> = imports
-        .iter()
-        .map(|i| i.name.as_str())
-        .filter(|n| n.ends_with("_s") || n.ends_with("_s_l"))
-        .map(|n| n.to_string())
-        .collect();
-    out.sort();
-    out.dedup();
-    out
-}
-
 /// Shared fixtures for tests in sibling modules, which cannot reach a private test module.
 #[cfg(test)]
 #[path = "pe_fixture.rs"]
@@ -401,7 +386,7 @@ pub(crate) mod tests_support {
             ipc: IpcSurface::default(),
             signature: None,
             first_party: false,
-            safe_variants: vec![],
+            hygiene: credited::Hygiene::default(),
             packer_hints: vec![],
             overlay_size: 0,
         }
@@ -479,7 +464,7 @@ mod tests {
             ipc: IpcSurface::default(),
             signature: None,
             first_party: false,
-            safe_variants: vec![],
+            hygiene: credited::Hygiene::default(),
             packer_hints: vec![],
             overlay_size: 0,
         }

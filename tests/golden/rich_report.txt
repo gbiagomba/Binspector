@@ -121,8 +121,11 @@ Executable analysis (4 PE images)
        builds its own security descriptor: SetEntriesInAclW, SetSecurityDescriptorDacl
        imports none of ImpersonateNamedPipeClient, OpenThreadToken, GetTokenInformation, CheckTokenMembership, AccessCheck
     Narrowing, not reachability: an unauthorized verdict means no authorization primitive is linked, not that a finding here is reachable. Absence is only evidence where the import table was readable.
-  String hygiene: 3 hardened CRT import(s) across 1 of 4 image(s)
-  Imports parsed: 14
+  String hygiene: 3 hardened slot(s) across 1 image(s) against 1 unbounded across 1, 3.0 to 1
+    1 image(s) import both forms, 0 only hardened, 0 only unbounded
+    App.exe                                  1 unbounded, 3 hardened
+    Slots are distinct import names per image, not call sites, so the same module built for four instruction sets counts four times: that is four files to change.
+  Imports parsed: 18
   5 occurrence(s) confirmed by the import table rather than inferred from text
 
 Indicators (11 total)

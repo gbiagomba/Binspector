@@ -297,7 +297,7 @@ pub(crate) mod tests_support {
         }
     }
 
-    pub(crate) use super::fixtures::rich_report;
+    pub(crate) use super::fixtures::{pe_entry, rich_report};
 
     pub fn sample_report() -> Report {
         Report {

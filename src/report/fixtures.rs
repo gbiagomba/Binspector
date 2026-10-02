@@ -273,8 +273,13 @@ fn entries() -> Vec<CoverageEntry> {
     app.subsystem = "windows-cui".into();
     app.imports = from_lib("mscoree.dll", &["_CorExeMain"]);
     app.libraries = vec!["mscoree.dll".into()];
-    // The one image with hardened variants, the counterweight the CRT roll-up prints.
-    app.safe_variants = vec!["sprintf_s".into(), "strcpy_s".into(), "wcscpy_s".into()];
+    // The one image mid-migration: hardened forms beside an unbounded one, which is the
+    // counterweight the hygiene roll-up exists to print.
+    app.imports.extend(from_lib(
+        "ucrtbase.dll",
+        &["sprintf_s", "strcpy_s", "wcscpy_s", "strcpy"],
+    ));
+    app.hygiene = crate::pe::credited::Hygiene::from_imports(&app.imports);
     // The CLR controls code generation, so these are not properties of the shipped file.
     app.mitigations.cfg = State::Unknown;
     app.mitigations.gs = State::Unknown;
@@ -524,7 +529,7 @@ fn pe() -> PeAnalysis {
         ipc: IpcSurface::default(),
         signature: None,
         first_party: false,
-        safe_variants: Vec::new(),
+        hygiene: Default::default(),
         exports: Vec::new(),
         packer_hints: Vec::new(),
         overlay_size: 0,
@@ -592,6 +597,11 @@ fn from_lib(library: &str, names: &[&str]) -> Vec<ImportRef> {
             name: (*name).to_string(),
         })
         .collect()
+}
+
+/// A PE coverage entry named `m`, for a sibling module's tests to populate.
+pub(crate) fn pe_entry(m: &str) -> CoverageEntry {
+    entry(m, 64 * 1024, 100, Some(pe()))
 }
 
 /// One coverage entry, defaulting to a PE whose imports are carried up the way the scan does.
