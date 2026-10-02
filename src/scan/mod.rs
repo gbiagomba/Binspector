@@ -80,7 +80,9 @@ impl Default for ScanConfig {
             min_len: 4,
             ascii: true,
             utf16: true,
-            case_sensitive: false,
+            // Case-exact by default. Win32 and the CRT have one spelling per entry point, so
+            // an insensitive match reports a camelCase local as an API call.
+            case_sensitive: true,
             banned_list: None,
             banned_filter: None,
             first_party: None,
@@ -263,6 +265,11 @@ pub fn run_labeled(
                         member_format: member.format,
                         is_managed: pe.as_ref().is_some_and(|a| a.is_managed),
                         imports_known: true,
+                        has_code: pe.as_ref().map(|a| a.has_code()),
+                        // An import of the name is proof it is called from here, whatever the
+                        // export table also says, and both rules that read these fields are
+                        // guarded on the match being inferred.
+                        exported_here: false,
                     });
                     let (imp_severity, imp_adjustments) = match &ruling {
                         evidence::Ruling::Keep {
@@ -394,6 +401,8 @@ pub fn run_labeled(
                             // A usable table, not merely a parsed PE: an image with no
                             // import directory offers no evidence of absence.
                             imports_known: pe.as_ref().is_some_and(|a| !a.imports.is_empty()),
+                            has_code: pe.as_ref().map(|a| a.has_code()),
+                            exported_here: pe.as_ref().is_some_and(|a| a.exports_name(&be.name)),
                         });
                         let entry = agg.entry(h.pattern_id).or_default();
 

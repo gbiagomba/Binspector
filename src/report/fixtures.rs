@@ -525,6 +525,7 @@ fn pe() -> PeAnalysis {
         signature: None,
         first_party: false,
         safe_variants: Vec::new(),
+        exports: Vec::new(),
         packer_hints: Vec::new(),
         overlay_size: 0,
     }

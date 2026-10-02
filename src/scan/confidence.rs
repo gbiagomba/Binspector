@@ -122,14 +122,25 @@ fn is_whole_symbol(text: &str, start: usize, end: usize) -> bool {
 /// True when the match is the *name component* of an MSVC mangled symbol, which makes it
 /// the definition of a method with that name rather than a reference to the CRT function.
 ///
-/// The shape is `?<name>@<scope>@@<signature>`: the string opens with `?`, the token
-/// starts at index 1, and an `@` terminates the name. So
-/// `?sprintf@WRStrSafe@@SAHPEAD_KPEBDZZ` is `WRStrSafe::sprintf`, a safe wrapper that
-/// takes an explicit destination capacity. Reporting it as `sprintf` flags the
-/// countermeasure as the defect.
+/// The shape is `<sigil><name>@<scope>@@<signature>`, where the sigil is `?` for a plain
+/// function, `??` for a special name, and `??$` for a template instantiation. So
+/// `?sprintf@WRStrSafe@@SAHPEAD_KPEBDZZ` is `WRStrSafe::sprintf`, a safe wrapper that takes
+/// an explicit destination capacity. Reporting it as `sprintf` flags the countermeasure as
+/// the defect.
+///
+/// The sigil is matched as a run rather than as a single `?` at index 0. Requiring the token
+/// to start at index 1 handled `?name@` and let every template instantiation through, so
+/// `??$sprintf@...@StringUtils@internal@ngl@adobe@@...`, an allocating wrapper returning
+/// `std::basic_string`, survived as three findings in a real report. The sigil is at most
+/// three bytes, which is what bounds the scan.
 pub fn is_mangled_definition(text: &str, start: usize, end: usize) -> bool {
     let bytes = text.as_bytes();
-    start == 1 && bytes.first() == Some(&b'?') && bytes.get(end) == Some(&b'@')
+    if bytes.first() != Some(&b'?') || bytes.get(end) != Some(&b'@') {
+        return false;
+    }
+    // `?`, `??`, `??$`. Anything longer is not an MSVC sigil, so the token is somewhere else
+    // in the string and this is not its name component.
+    matches!(&bytes[..start.min(bytes.len())], b"?" | b"??" | b"??$")
 }
 
 /// True when the match is the final component of a qualified C++ name, that is, it is
@@ -357,5 +368,43 @@ mod tests {
         assert!(!is_mangled_definition("?a@", 1, 99));
         assert!(!is_qualified_name("ab", 0));
         assert!(!is_qualified_name("ab", 1));
+    }
+
+    #[test]
+    fn a_template_instantiation_is_recognised_as_a_definition() {
+        // `??$` is the sigil for a template instantiation. Requiring the token at index 1
+        // handled `?name@` and let every template through, so an allocating safe wrapper
+        // returning std::basic_string survived as three findings in a real report.
+        let t = "??$sprintf@V?$basic_string@D@std@@@StringUtils@internal@ngl@adobe@@YAXXZ";
+        let start = t.find("sprintf").unwrap();
+        assert!(is_mangled_definition(t, start, start + "sprintf".len()));
+    }
+
+    #[test]
+    fn the_plain_and_special_mangling_sigils_still_match() {
+        for t in [
+            "?sprintf@WRStrSafe@@SAHPEAD_KPEBDZZ",
+            "??sprintf@WRStrSafe@@SAHPEAD_KPEBDZZ",
+        ] {
+            let start = t.find("sprintf").unwrap();
+            assert!(is_mangled_definition(t, start, start + 7), "{}", t);
+        }
+    }
+
+    #[test]
+    fn a_question_mark_further_from_the_token_is_not_a_sigil() {
+        // Only `?`, `??` and `??$` are MSVC sigils. A longer run means the token sits
+        // elsewhere in the string, so this is not its name component.
+        let t = "????sprintf@Foo@@";
+        let start = t.find("sprintf").unwrap();
+        assert!(!is_mangled_definition(t, start, start + 7));
+    }
+
+    #[test]
+    fn an_ordinary_string_opening_with_a_question_mark_is_not_a_definition() {
+        let t = "?sprintf is unsafe";
+        let start = t.find("sprintf").unwrap();
+        // No `@` terminating the name, so this is prose rather than a mangled symbol.
+        assert!(!is_mangled_definition(t, start, start + 7));
     }
 }

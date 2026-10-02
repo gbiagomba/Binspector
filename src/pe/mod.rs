@@ -96,6 +96,41 @@ pub struct PeAnalysis {
     pub packer_hints: Vec<String>,
     /// Bytes appended after the last section, a common payload hiding place.
     pub overlay_size: u64,
+    /// Names in the export directory, lowercased.
+    ///
+    /// Not serialized: `icudt74.dll` and the CRT export thousands of names and none of them
+    /// belongs in a report. This exists so adjudication can tell a definition site from a call
+    /// site, which is a question only answerable with the export table in hand.
+    #[serde(skip)]
+    pub exports: Vec<String>,
+}
+
+impl PeAnalysis {
+    /// Whether this image contains instructions at all.
+    ///
+    /// A PE is a container format, and a perfectly ordinary use of it is to ship no code:
+    /// ICU's `icudt74.dll` is one 34 MiB `.rdata` section of locale data, and MUI satellites
+    /// are resources only. Such an image received five HIGH `system` findings in a real
+    /// report, which is not a false positive in the usual sense but a physically impossible
+    /// claim, since there is no code in the file to make a call.
+    ///
+    /// An import directory counts as code even with no executable section, because something
+    /// has to call what it imports and the section flags may have been tampered with.
+    pub fn has_code(&self) -> bool {
+        !self.imports.is_empty()
+            || self
+                .sections
+                .iter()
+                .any(|sec| sec.executable || sec.contains_code)
+    }
+
+    /// Whether the export table carries this name, compared the way `importing_library` does.
+    pub fn exports_name(&self, function: &str) -> bool {
+        let want = function.trim_start_matches('_').to_ascii_lowercase();
+        self.exports
+            .iter()
+            .any(|e| e.trim_start_matches('_') == want)
+    }
 }
 
 /// Seconds since the Unix epoch, for certificate validity windows.
@@ -129,6 +164,12 @@ impl PeAnalysis {
         let packer_hints = packer::hints(&sections, imports.len(), is_managed);
         let loader = LoaderSurface::from_imports(&imports);
         let safe_variants = collect_safe_variants(&imports);
+        let exports: Vec<String> = pe
+            .exports
+            .iter()
+            .filter_map(|e| e.name)
+            .map(|n| n.to_ascii_lowercase())
+            .collect();
         // A parsed PE with a non-empty import directory is the case where absence of an
         // authorization primitive is evidence; see `ipc`.
         let ipc = IpcSurface::from_imports(&imports, !imports.is_empty());
@@ -173,6 +214,7 @@ impl PeAnalysis {
             sections,
             libraries: pe.libraries.iter().map(|s| s.to_string()).collect(),
             export_count: pe.exports.len(),
+            exports,
             imports,
             tls_callbacks,
             has_debug_info: pe.debug_data.is_some(),
@@ -272,7 +314,8 @@ fn subsystem_name(s: u16) -> String {
     .to_string()
 }
 
-/// Find the library that supplies a function, comparing case insensitively.
+/// Find the library that supplies a function, comparing case insensitively and tolerating the
+/// MSVC leading underscore.
 ///
 /// A free function over the import slice rather than a method, so the one lookup serves PE, ELF,
 /// and Mach-O. Returns `Some("")` where the format cannot attribute a symbol to a library (ELF's
@@ -280,9 +323,16 @@ fn subsystem_name(s: u16) -> String {
 /// the evidence path needs, and the empty library says attribution was unavailable rather than
 /// that there is no import.
 pub fn importing_library<'a>(imports: &'a [ImportRef], function: &str) -> Option<&'a str> {
+    // The UCRT exports the POSIX-named functions with a leading underscore: the import is
+    // `_mktemp`, never `mktemp`. An exact compare therefore missed an entire family of real
+    // imports and reported them as bare string matches, under-rating a genuine CWE-377 finding
+    // to the tier used for text with no import backing. Stripping the underscore from both
+    // sides is the whole fix, and it cannot create a false match because no two CRT entry
+    // points differ only by a leading underscore.
+    let want = function.trim_start_matches('_');
     imports
         .iter()
-        .find(|i| i.name.eq_ignore_ascii_case(function))
+        .find(|i| i.name.trim_start_matches('_').eq_ignore_ascii_case(want))
         .map(|i| i.library.as_str())
 }
 
@@ -309,6 +359,61 @@ fn collect_safe_variants(imports: &[ImportRef]) -> Vec<String> {
 pub(crate) mod tests_support {
     use super::*;
 
+    /// Bytes of a minimal but structurally real PE32+ image: one `.text` section marked
+    /// executable, with `payload` as that section's raw contents.
+    ///
+    /// The previous fixtures stopped at the `PE\0\0` signature and declared zero sections.
+    /// goblin parses that, so it served for years, but it is not a shape any linker emits and
+    /// since 5.7.0 it is excluded by the `no-code-section` rule, which is correct: an image
+    /// with no executable section and no import directory holds no instructions. A fixture
+    /// that cannot carry a finding cannot test the rules that weigh findings.
+    pub fn pe_with_code(payload: &[u8]) -> Vec<u8> {
+        const LFANEW: usize = 0x80;
+        const COFF: usize = LFANEW + 4;
+        const OPT: usize = COFF + 20;
+        const OPT_SIZE: usize = 0xF0;
+        const SECTIONS: usize = OPT + OPT_SIZE;
+        const HEADERS_END: usize = SECTIONS + 40;
+        // Where the section's bytes start, aligned the way a linker would align them.
+        const RAW: usize = 0x400;
+        const CODE_RVA: u32 = 0x1000;
+
+        let mut pe = vec![0u8; RAW];
+        pe[0..2].copy_from_slice(b"MZ");
+        pe[0x3C..0x40].copy_from_slice(&(LFANEW as u32).to_le_bytes());
+        pe[LFANEW..LFANEW + 4].copy_from_slice(b"PE\0\0");
+
+        // COFF header. One section, and an optional header big enough to be PE32+.
+        pe[COFF..COFF + 2].copy_from_slice(&0x8664u16.to_le_bytes()); // amd64
+        pe[COFF + 2..COFF + 4].copy_from_slice(&1u16.to_le_bytes()); // NumberOfSections
+        pe[COFF + 16..COFF + 18].copy_from_slice(&(OPT_SIZE as u16).to_le_bytes());
+        pe[COFF + 18..COFF + 20].copy_from_slice(&0x2022u16.to_le_bytes()); // dll, executable
+
+        // Optional header, only the fields a parser needs to accept the image.
+        pe[OPT..OPT + 2].copy_from_slice(&0x20Bu16.to_le_bytes()); // PE32+ magic
+        pe[OPT + 16..OPT + 20].copy_from_slice(&CODE_RVA.to_le_bytes()); // entry point
+        pe[OPT + 20..OPT + 24].copy_from_slice(&CODE_RVA.to_le_bytes()); // base of code
+        pe[OPT + 24..OPT + 32].copy_from_slice(&0x1_4000_0000u64.to_le_bytes()); // image base
+        pe[OPT + 32..OPT + 36].copy_from_slice(&0x1000u32.to_le_bytes()); // section alignment
+        pe[OPT + 36..OPT + 40].copy_from_slice(&0x200u32.to_le_bytes()); // file alignment
+        pe[OPT + 56..OPT + 60].copy_from_slice(&0x2000u32.to_le_bytes()); // size of image
+        pe[OPT + 60..OPT + 64].copy_from_slice(&(HEADERS_END as u32).to_le_bytes());
+        pe[OPT + 68..OPT + 70].copy_from_slice(&2u16.to_le_bytes()); // windows-gui
+        pe[OPT + 108..OPT + 112].copy_from_slice(&16u32.to_le_bytes()); // NumberOfRvaAndSizes
+
+        // One section header: `.text`, code, executable, readable.
+        let raw_size = payload.len().max(1) as u32;
+        pe[SECTIONS..SECTIONS + 8].copy_from_slice(b".text\0\0\0");
+        pe[SECTIONS + 8..SECTIONS + 12].copy_from_slice(&raw_size.to_le_bytes()); // virtual size
+        pe[SECTIONS + 12..SECTIONS + 16].copy_from_slice(&CODE_RVA.to_le_bytes());
+        pe[SECTIONS + 16..SECTIONS + 20].copy_from_slice(&raw_size.to_le_bytes());
+        pe[SECTIONS + 20..SECTIONS + 24].copy_from_slice(&(RAW as u32).to_le_bytes());
+        pe[SECTIONS + 36..SECTIONS + 40].copy_from_slice(&0x6000_0020u32.to_le_bytes());
+
+        pe.extend_from_slice(payload);
+        pe
+    }
+
     /// A fully hardened 64-bit native DLL with no imports. Callers mutate what they need.
     pub fn analysis() -> PeAnalysis {
         PeAnalysis {
@@ -324,6 +429,7 @@ pub(crate) mod tests_support {
             imports: vec![],
             libraries: vec![],
             export_count: 0,
+            exports: Vec::new(),
             tls_callbacks: 0,
             has_debug_info: false,
             mitigations: Mitigations {
@@ -401,6 +507,7 @@ mod tests {
                 .collect(),
             libraries: vec![],
             export_count: 0,
+            exports: Vec::new(),
             tls_callbacks: 0,
             has_debug_info: false,
             mitigations: Mitigations {

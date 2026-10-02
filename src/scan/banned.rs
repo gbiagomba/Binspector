@@ -182,6 +182,12 @@ fn classify(name: &str) -> (Severity, Category) {
     ];
     // Format-string primitives that write into a caller buffer without a bound.
     const CRITICAL_FORMAT: &[&str] = &[
+        // The UCRT backends MSVC actually emits. `sprintf` is a macro; the call in the object
+        // file is to one of these, so a list without them cannot support a build gate on an
+        // MSVC target. Named explicitly because the substring fallback below matches
+        // `sprintf` and so cannot see the wide form `vswprintf`.
+        "stdio_common_vsprintf",
+        "stdio_common_vswprintf",
         "sprintf",
         "sprintfa",
         "sprintfw",
@@ -195,6 +201,11 @@ fn classify(name: &str) -> (Severity, Category) {
         "vsprintfw",
     ];
     const HIGH_FORMAT: &[&str] = &[
+        // The counted backends. They terminate, so the weakness is the ignored return value.
+        "stdio_common_vsnprintf",
+        "stdio_common_vsnwprintf",
+        "stdio_common_vfprintf",
+        "stdio_common_vfwprintf",
         "scanf",
         "sscanf",
         "swscanf",
@@ -286,6 +297,16 @@ fn classify(name: &str) -> (Severity, Category) {
         "createprocesswithlogonw",
         "createprocesswithtokenw",
     ];
+
+    // The hardened variants never carry a severity, whatever family their stem belongs to.
+    //
+    // Checked before every family rule because the fallthroughs match on substrings:
+    // `n.contains("sprintf")` would otherwise rate `__stdio_common_vsprintf_s` Critical, which
+    // is the countermeasure reported as the defect. The default list contains no `_s` names, so
+    // this guards a custom `--banned-list` and the UCRT backends added in 5.7.0.
+    if n.ends_with("_s") || n.ends_with("_s_l") {
+        return (Severity::Low, Category::Other);
+    }
 
     if CRITICAL_BUFFER.contains(&n) {
         return (Severity::Critical, Category::BufferOverflow);
@@ -497,6 +518,44 @@ mod tests {
                 !names.iter().any(|n| n == absent),
                 "{} should not be a banned-list finding",
                 absent
+            );
+        }
+    }
+
+    #[test]
+    fn the_ucrt_formatting_backends_are_tiered_by_whether_they_take_a_count() {
+        // Modern MSVC does not emit a call to `sprintf`; it emits `__stdio_common_vsprintf`.
+        // 41 members of one real package imported at least one unbounded backend and the tool
+        // reported none of them, which is why a clean critical count was not evidence of safe
+        // formatting on an MSVC target.
+        assert_eq!(
+            classify("__stdio_common_vsprintf").0,
+            Severity::Critical,
+            "the unbounded backend is the sprintf family"
+        );
+        assert_eq!(classify("__stdio_common_vswprintf").0, Severity::Critical);
+        // The counted backends terminate, so they are the snprintf family.
+        assert_eq!(classify("__stdio_common_vsnprintf").0, Severity::High);
+        assert_eq!(classify("__stdio_common_vsnwprintf").0, Severity::High);
+    }
+
+    #[test]
+    fn a_hardened_variant_is_never_tiered_as_a_defect() {
+        // The family fallbacks match on substrings, so without an explicit guard
+        // `n.contains("sprintf")` rates the countermeasure Critical.
+        for f in [
+            "sprintf_s",
+            "strcpy_s",
+            "wcsncat_s",
+            "__stdio_common_vsprintf_s",
+            "gets_s",
+            "_vsnprintf_s_l",
+        ] {
+            assert_eq!(
+                classify(f).0,
+                Severity::Low,
+                "{} is the hardened form and must not carry a severity",
+                f
             );
         }
     }

@@ -117,7 +117,7 @@ fn rules() -> Vec<Rule> {
             id: "safe-seh",
             title: "No SafeSEH table: an overwritten exception record can redirect execution",
             severity: Severity::Medium,
-            evidence: "32-bit image whose load config registers no exception handlers",
+            evidence: "x86-32 image whose load config registers no exception handlers",
             remediation: "link with /SAFESEH",
         },
         Rule {

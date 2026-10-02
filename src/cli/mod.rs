@@ -94,8 +94,8 @@ pub struct Cli {
     #[arg(long = "no-utf16")]
     pub no_utf16: bool,
 
-    /// Match case sensitively (default is case insensitive)
-    #[arg(long = "case-sensitive")]
+    /// Accepted and ignored. Matching is case-exact since 5.7.0, with no way to turn it off
+    #[arg(long = "case-sensitive", hide = true)]
     pub case_sensitive: bool,
 
     /// Consider only banned function names matching this regex
@@ -488,7 +488,10 @@ impl Cli {
             min_len: self.min_len,
             ascii: !self.no_ascii,
             utf16: !self.no_utf16,
-            case_sensitive: self.case_sensitive,
+            // Always exact. There is deliberately no flag for the other mode: `--ignore-case`
+            // was removed in 4.0.0, and an insensitive mode exists only to reproduce the defect
+            // that made `searchPath` read as a call to `SearchPath`.
+            case_sensitive: true,
             banned_list: self.banned_list,
             banned_filter,
             limits: Limits {
@@ -568,15 +571,20 @@ mod tests {
     }
 
     #[test]
-    fn defaults_are_case_insensitive_and_text() {
+    fn defaults_are_case_sensitive_and_text() {
         let r = parse(&["file.bin"]).unwrap();
-        assert!(!r.scan.case_sensitive);
+        // Win32 and the CRT are case-exact, so the camelCase local `searchPath` is not a call
+        // to `SearchPath`. Matching insensitively made 304 of one real report's 1,355
+        // occurrences restatements of a single variable name. No flag reaches the other mode.
+        assert!(r.scan.case_sensitive);
         assert_eq!(r.formats, vec![format::OutputFormat::Text]);
         assert!(!r.dump);
     }
 
     #[test]
-    fn case_sensitive_flag_flips_the_default() {
+    fn the_old_case_sensitive_flag_is_still_accepted_and_changes_nothing() {
+        // It asked for what is now the default. Rejecting it would break a working command
+        // line for no gain.
         let r = parse(&["file.bin", "--case-sensitive"]).unwrap();
         assert!(r.scan.case_sensitive);
     }
@@ -594,7 +602,7 @@ mod tests {
     #[test]
     fn the_original_command_line_still_works_without_that_flag() {
         let r = parse(&["-p", "PROJ-123", "-o", "out.txt", "file.bin"]).unwrap();
-        assert!(!r.scan.case_sensitive);
+        assert!(r.scan.case_sensitive);
         assert_eq!(r.scan.project.as_deref(), Some("PROJ-123"));
     }
 

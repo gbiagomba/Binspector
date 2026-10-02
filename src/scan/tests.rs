@@ -94,14 +94,31 @@ fn warns_when_no_executable_was_reached() {
 }
 
 #[test]
-fn case_sensitive_mode_is_honored() {
+fn matching_is_case_exact_by_default() {
     // lstrcpyA carries uppercase in the list, so neither spelling is demoted as
     // prose and the only difference is the case-sensitivity setting itself.
     let lf = temp_with(b"lstrcpyA\n");
     let target = temp_with(b"\x00lstrcpyA\x00lstrcpya\x00");
 
+    // The default. `lstrcpya` is not a Win32 entry point and must not be reported as one.
+    let default = ScanConfig {
+        banned_list: Some(lf.path().to_path_buf()),
+        ..Default::default()
+    };
+    assert_eq!(
+        run(target.path(), &default, &crate::observe::Null)
+            .unwrap()
+            .report
+            .banned_hit_count,
+        1
+    );
+
+    // The matcher still supports the other mode, which the report metadata records. No CLI
+    // flag reaches it: an insensitive scan read the camelCase local `searchPath` as a call to
+    // `SearchPath`, which was 304 of one real report's 1,355 occurrences.
     let insensitive = ScanConfig {
         banned_list: Some(lf.path().to_path_buf()),
+        case_sensitive: false,
         ..Default::default()
     };
     assert_eq!(
@@ -111,26 +128,19 @@ fn case_sensitive_mode_is_honored() {
             .banned_hit_count,
         2
     );
-
-    let sensitive = ScanConfig {
-        banned_list: Some(lf.path().to_path_buf()),
-        case_sensitive: true,
-        ..Default::default()
-    };
-    assert_eq!(
-        run(target.path(), &sensitive, &crate::observe::Null)
-            .unwrap()
-            .report
-            .banned_hit_count,
-        1
-    );
 }
 
 #[test]
 fn dotnet_namespaces_and_doc_prose_are_suppressed_by_default() {
-    // The two noise sources measured on the real SampleApp sample.
+    // The two noise sources measured on the real SampleApp sample. Since 5.7.0 the first one
+    // never reaches the evidence rules at all: `System.Windows.Forms.dll` is not a case-exact
+    // match for `system`, and `Gets or sets` is not one for `gets`. Both are kept here with
+    // their case-exact equivalents beside them, so this still tests prose exclusion rather
+    // than silently becoming a test of the matcher.
     let lf = temp_with(b"system\ngets\n");
-    let target = temp_with(b"\x00System.Windows.Forms.dll\x00Gets or sets the BindingContext\x00");
+    let target = temp_with(
+        b"\x00System.Windows.Forms.dll\x00Gets or sets the BindingContext\x00          the system property gets its value from the registry\x00",
+    );
     let cfg = ScanConfig {
         banned_list: Some(lf.path().to_path_buf()),
         ..Default::default()
@@ -152,7 +162,9 @@ fn dotnet_namespaces_and_doc_prose_are_suppressed_by_default() {
 #[test]
 fn include_excluded_reports_the_suppressed_hits() {
     let lf = temp_with(b"system\n");
-    let target = temp_with(b"\x00System.Windows.Forms.dll\x00");
+    // Lowercase, because matching is case-exact: prose is the thing under test here, and a
+    // capitalised `System` would be excluded one layer earlier by the matcher.
+    let target = temp_with(b"\x00the system property is read at startup\x00");
     let cfg = ScanConfig {
         banned_list: Some(lf.path().to_path_buf()),
         include_excluded: true,
@@ -189,13 +201,7 @@ fn dump_spools_every_string() {
 /// Smallest byte sequence `container::detect` accepts as a PE, so a test can exercise the
 /// executable-member path without a real binary.
 fn fake_pe(payload: &[u8]) -> Vec<u8> {
-    let mut pe = vec![0u8; 0x200];
-    pe[0] = b'M';
-    pe[1] = b'Z';
-    pe[0x3C] = 0x80;
-    pe[0x80..0x84].copy_from_slice(b"PE\0\0");
-    pe.extend_from_slice(payload);
-    pe
+    crate::pe::tests_support::pe_with_code(payload)
 }
 
 #[test]

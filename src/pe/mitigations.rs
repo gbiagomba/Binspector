@@ -89,22 +89,32 @@ fn gs_state(cookie: Option<u64>, has_load_config: bool) -> State {
 
 /// SafeSEH from the load config `SEHandlerTable` and `SEHandlerCount`.
 ///
-/// Only 32-bit images carry a SafeSEH table. On 64-bit, exception handling is table-driven
-/// through the exception directory and /SAFESEH does not apply, so neither Enabled nor
-/// Disabled would be true and the state is Unknown. A 32-bit image with no load config
-/// directory is likewise undeterminable.
+/// Only x86-32 images carry a SafeSEH table. Every other architecture uses table-driven unwind,
+/// so neither Enabled nor Disabled would be true and the state is Unknown. An x86-32 image with
+/// no load config directory is likewise undeterminable.
 fn safe_seh_state(
     handler_table: Option<u64>,
     handler_count: Option<u64>,
-    is_64: bool,
+    machine: u16,
     has_load_config: bool,
 ) -> State {
-    if is_64 || !has_load_config {
+    // Architecture, not bitness. /SAFESEH is an x86-32 feature and nothing else: it validates
+    // entries in the linked list of exception records that lives on the x86 stack. ARM, ARM64
+    // and x64 all use table-driven unwind through `.pdata` and `.xdata`, where there is no
+    // overwritable handler chain to protect and therefore nothing for /SAFESEH to do.
+    //
+    // Gating on `!is_64` reported every 32-bit ARM image as missing a mitigation that does not
+    // exist on its architecture. One real report named `concrt140.dll` from the ARM VCLibs
+    // package as a SafeSEH finding, an `armnt` image, which is how the error surfaced.
+    if machine != IMAGE_FILE_MACHINE_I386 || !has_load_config {
         return State::Unknown;
     }
     let registered = handler_table.unwrap_or(0) != 0 && handler_count.unwrap_or(0) != 0;
     State::from_flag(registered)
 }
+
+/// x86-32, the only architecture with a SafeSEH handler chain.
+pub const IMAGE_FILE_MACHINE_I386: u16 = 0x014c;
 
 /// CET shadow stack from the extended DLL characteristics debug entry (type 20).
 ///
@@ -162,7 +172,7 @@ impl Mitigations {
             safe_seh: safe_seh_state(
                 load_config.and_then(|d| d.se_handler_table),
                 load_config.and_then(|d| d.se_handler_count),
-                pe.is_64,
+                pe.header.coff_header.machine,
                 load_config.is_some(),
             ),
             cet: cet_state(cet_compat),
@@ -368,37 +378,48 @@ mod tests {
     }
 
     #[test]
-    fn safe_seh_is_unknown_on_a_64_bit_image() {
-        // 64-bit SEH is table-based in the exception directory, so an absent handler table
-        // is neither Enabled nor Disabled.
-        assert_eq!(safe_seh_state(None, None, true, true), State::Unknown);
-        assert_eq!(safe_seh_state(None, None, true, false), State::Unknown);
-        // And a populated table on a 64-bit image still does not mean /SAFESEH.
+    fn safe_seh_is_unknown_on_every_architecture_but_x86_32() {
+        const AMD64: u16 = 0x8664;
+        const ARMNT: u16 = 0x01c4;
+        const ARM64: u16 = 0xaa64;
+        // x64 SEH is table-based in the exception directory, so an absent handler table is
+        // neither Enabled nor Disabled.
+        assert_eq!(safe_seh_state(None, None, AMD64, true), State::Unknown);
+        assert_eq!(safe_seh_state(None, None, AMD64, false), State::Unknown);
+        // And a populated table on an x64 image still does not mean /SAFESEH.
         assert_eq!(
-            safe_seh_state(Some(0x40_2000), Some(7), true, true),
+            safe_seh_state(Some(0x40_2000), Some(7), AMD64, true),
+            State::Unknown
+        );
+        // ARM is 32-bit and has no SEH chain, which the previous bitness gate got wrong: a
+        // real report named `concrt140.dll` from the ARM VCLibs package as a SafeSEH finding.
+        assert_eq!(safe_seh_state(None, None, ARMNT, true), State::Unknown);
+        assert_eq!(safe_seh_state(None, None, ARM64, true), State::Unknown);
+    }
+
+    #[test]
+    fn safe_seh_is_unknown_on_x86_32_without_a_load_config_directory() {
+        assert_eq!(
+            safe_seh_state(None, None, IMAGE_FILE_MACHINE_I386, false),
             State::Unknown
         );
     }
 
     #[test]
-    fn safe_seh_is_unknown_on_32_bit_without_a_load_config_directory() {
-        assert_eq!(safe_seh_state(None, None, false, false), State::Unknown);
-    }
-
-    #[test]
-    fn safe_seh_reads_the_handler_table_on_32_bit() {
+    fn safe_seh_reads_the_handler_table_on_x86_32() {
+        const I386: u16 = IMAGE_FILE_MACHINE_I386;
         assert_eq!(
-            safe_seh_state(Some(0x40_2000), Some(7), false, true),
+            safe_seh_state(Some(0x40_2000), Some(7), I386, true),
             State::Enabled
         );
-        assert_eq!(safe_seh_state(None, None, false, true), State::Disabled);
+        assert_eq!(safe_seh_state(None, None, I386, true), State::Disabled);
         assert_eq!(
-            safe_seh_state(Some(0), Some(0), false, true),
+            safe_seh_state(Some(0), Some(0), I386, true),
             State::Disabled
         );
         // A table pointer with a zero count registers no handlers.
         assert_eq!(
-            safe_seh_state(Some(0x40_2000), Some(0), false, true),
+            safe_seh_state(Some(0x40_2000), Some(0), I386, true),
             State::Disabled
         );
     }
