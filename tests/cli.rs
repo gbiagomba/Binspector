@@ -34,15 +34,13 @@ fn zip_bytes(entries: &[(&str, &[u8])]) -> Vec<u8> {
     buf
 }
 
-/// A minimal but valid PE, so coverage reports an executable was reached.
+#[path = "../src/pe/pe_fixture.rs"]
+mod pe_fixture;
+
+/// A structurally real PE, so coverage reports an executable was reached and the occurrences
+/// in it survive the `no-code-section` rule.
 fn fake_pe(payload: &[u8]) -> Vec<u8> {
-    let mut pe = vec![0u8; 0x200];
-    pe[0] = b'M';
-    pe[1] = b'Z';
-    pe[0x3C] = 0x80;
-    pe[0x80..0x84].copy_from_slice(b"PE\0\0");
-    pe.extend_from_slice(payload);
-    pe
+    pe_fixture::pe_with_code(payload)
 }
 
 struct Fixture {
@@ -54,8 +52,11 @@ struct Fixture {
 /// A nested bundle shaped like a real one: bundle -> msix -> PE.
 fn fixture() -> Fixture {
     let dir = TempDir::new().unwrap();
-    let payload =
-        b"\x00strcpy\x00gets\x00atoi\x00System.Windows.Forms\x00Gets or sets the value\x00";
+    // The two historical false-positive families are kept, and since 5.7.0 they are refused
+    // one layer earlier by case-exact matching rather than by the prose rule. A lowercase
+    // sentence is added so the prose rule itself still has something to suppress.
+    let payload = b"\x00strcpy\x00gets\x00atoi\x00System.Windows.Forms\x00\
+                    Gets or sets the value\x00the system gets its value at startup\x00";
     let inner = zip_bytes(&[("App.exe", &fake_pe(payload))]);
     let bundle = zip_bytes(&[("app.msix", &inner)]);
     let target = dir.path().join("sample.msixbundle");
