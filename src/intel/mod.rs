@@ -4,6 +4,8 @@
 //! file content: reputation is looked up by the SHA-256 the scan already computed, and
 //! CVE enrichment sends only a detected component name and version.
 
+pub mod budget;
+pub mod cache;
 pub mod components;
 pub mod creds;
 pub mod cve;

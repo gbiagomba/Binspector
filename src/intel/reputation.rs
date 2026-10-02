@@ -15,7 +15,7 @@ use super::http;
 
 const TIMEOUT: Duration = Duration::from_secs(20);
 
-#[derive(Clone, Debug, Serialize, PartialEq, Deserialize)]
+#[derive(Clone, Debug, Serialize, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Verdict {
     /// The service has seen this hash and reported detections.

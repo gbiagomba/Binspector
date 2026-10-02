@@ -109,8 +109,10 @@ pub fn parse(text: &str) -> BTreeMap<String, String> {
 }
 
 /// A credentials file readable by group or others is a finding, not a warning.
+/// Shared with `cache`, which stores the same class of user-level secret-adjacent state and must
+/// refuse a world-readable file by the same rule rather than a looser one of its own.
 #[cfg(unix)]
-fn check_permissions(path: &Path) -> Result<()> {
+pub(super) fn check_permissions(path: &Path) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
     let mode = std::fs::metadata(path)
         .with_context(|| format!("reading metadata for {}", path.display()))?
@@ -129,7 +131,7 @@ fn check_permissions(path: &Path) -> Result<()> {
 }
 
 #[cfg(not(unix))]
-fn check_permissions(_path: &Path) -> Result<()> {
+pub(super) fn check_permissions(_path: &Path) -> Result<()> {
     // Windows ACLs are not comparable to a POSIX mode; the file is trusted there.
     Ok(())
 }
