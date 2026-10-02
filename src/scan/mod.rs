@@ -271,6 +271,15 @@ pub fn run_labeled(
                 });
             }
 
+            // One lookup per member rather than per occurrence: the signer cannot change
+            // between two hits in the same file, and a 1,355-occurrence report would otherwise
+            // normalise the same name a thousand times.
+            let vendor = pe
+                .as_ref()
+                .and_then(|a| a.signature.as_ref())
+                .and_then(|s| s.signer.as_deref())
+                .and_then(crate::pe::vendor::from_signer);
+
             let mut imported: HashSet<String> = HashSet::new();
             if !member_imports.is_empty() {
                 for (id, entry) in list.entries.iter().enumerate() {
@@ -334,6 +343,7 @@ pub fn run_labeled(
                     });
                     if hits.len() < cfg.max_hits {
                         hits.push(HitRecord {
+                            vendor: vendor.clone(),
                             function: entry.name.clone(),
                             severity: imp_severity,
                             base_severity: Some(entry.severity),
@@ -504,6 +514,7 @@ pub fn run_labeled(
                             };
                             let token_len = (h.end - h.start) * stride as usize;
                             hits.push(HitRecord {
+                                vendor: vendor.clone(),
                                 function: be.name.clone(),
                                 severity,
                                 base_severity: Some(be.severity),
@@ -551,6 +562,7 @@ pub fn run_labeled(
                 strings: extracted.len(),
             });
             coverage_entries.push(CoverageEntry {
+                vendor: vendor.clone(),
                 member: member_name,
                 format: member.format.as_str().to_string(),
                 size: member.data.len() as u64,

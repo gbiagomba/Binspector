@@ -511,6 +511,7 @@ mod tests {
                 members_scanned: 3,
                 total_unpacked_bytes: 400_000_000,
                 entries: vec![CoverageEntry {
+                    vendor: None,
                     member: "b :: app.msix :: App.exe".into(),
                     format: "pe".into(),
                     size: 1000,

@@ -232,6 +232,7 @@ fn hit(f: &str, severity: Severity, member: &str, confidence: Confidence, at: u6
     let context = format!("sub_401000: {} call {}", HOSTILE, f);
     let context_start = context.len() - f.len();
     HitRecord {
+        vendor: None,
         function: f.to_string(),
         severity,
         base_severity: Some(base),
@@ -622,6 +623,7 @@ fn entry(m: &str, size: u64, strings: usize, pe: Option<PeAnalysis>) -> Coverage
         None => (Vec::new(), String::new()),
     };
     CoverageEntry {
+        vendor: None,
         member: m.to_string(),
         format: "pe".to_string(),
         size,

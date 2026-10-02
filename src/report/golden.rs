@@ -66,6 +66,25 @@ fn report() -> Report {
         .map(|e| crate::report::fmt_util::short_name(&e.member).to_ascii_lowercase())
         .collect();
     r.external_imports = crate::scan::all_external_imports(&r.coverage.entries, &leaves);
+    // The vendor key is derived by the scan from the signer, so derive it here too rather than
+    // hand-writing one into the fixture: the origin section groups by it and the golden would
+    // otherwise exercise the unsigned path only.
+    for e in r.coverage.entries.iter_mut() {
+        e.vendor =
+            e.pe.as_ref()
+                .and_then(|a| a.signature.as_ref())
+                .and_then(|s| s.signer.as_deref())
+                .and_then(crate::pe::vendor::from_signer);
+    }
+    let by_member: std::collections::BTreeMap<String, Option<String>> = r
+        .coverage
+        .entries
+        .iter()
+        .map(|e| (e.member.clone(), e.vendor.clone()))
+        .collect();
+    for h in r.hits.iter_mut() {
+        h.vendor = by_member.get(&h.member).cloned().flatten();
+    }
     r
 }
 

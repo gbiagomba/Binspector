@@ -325,6 +325,7 @@ pub(crate) mod tests_support {
                 excluded: 24_227,
             }],
             hits: vec![HitRecord {
+                vendor: None,
                 function: "strcpy".into(),
                 severity: Severity::Critical,
                 base_severity: Some(Severity::Critical),
@@ -352,6 +353,7 @@ pub(crate) mod tests_support {
                 members_scanned: 3,
                 total_unpacked_bytes: 400_000_000,
                 entries: vec![CoverageEntry {
+                    vendor: None,
                     member: "bundle :: app.msix :: App.exe".into(),
                     format: "pe".into(),
                     size: 1000,

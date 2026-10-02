@@ -28,25 +28,33 @@ pub(super) fn write_origin(
     use std::collections::BTreeMap;
 
     // Occurrences per origin, not images: the question is where the findings are.
+    //
+    // Counted over `reported_hits` rather than `hits` since 5.8.0, so this section and the
+    // occurrence list below it are about the same set. They were not: the bounded memory
+    // primitives are rolled up into their own counted surface and omitted from the occurrence
+    // list, while this block counted them, so "Findings by origin" summed to a number no other
+    // part of the report showed.
     let mut per_member: BTreeMap<&str, (Option<String>, bool)> = BTreeMap::new();
     for e in pes {
         let a = e.pe.as_ref().expect("filtered");
-        let signer = a.signature.as_ref().and_then(|s| s.signer.clone());
-        per_member.insert(e.member.as_str(), (signer, a.first_party));
+        // The vendor key, not the raw signer. One organisation signs with many subjects:
+        // `Microsoft Corporation`, `Microsoft Windows`, `.NET` and `.NET DAC` were four rows a
+        // reviewer had to merge by hand on every read.
+        per_member.insert(e.member.as_str(), (e.vendor.clone(), a.first_party));
     }
     let mut first_party = 0usize;
     let mut unsigned = 0usize;
-    let mut by_signer: BTreeMap<String, usize> = BTreeMap::new();
+    let mut by_vendor: BTreeMap<String, usize> = BTreeMap::new();
     let mut unattributed = 0usize;
-    for h in &r.hits {
+    for h in r.reported_hits() {
         match per_member.get(h.member.as_str()) {
             Some((_, true)) => first_party += 1,
-            Some((Some(signer), false)) => *by_signer.entry(signer.clone()).or_insert(0) += 1,
+            Some((Some(vendor), false)) => *by_vendor.entry(vendor.clone()).or_insert(0) += 1,
             Some((None, false)) => unsigned += 1,
             None => unattributed += 1,
         }
     }
-    if by_signer.is_empty() && first_party == 0 && unsigned == 0 {
+    if by_vendor.is_empty() && first_party == 0 && unsigned == 0 {
         return Ok(());
     }
     writeln!(w, "  Findings by origin")?;
@@ -56,14 +64,32 @@ pub(super) fn write_origin(
     if unsigned > 0 {
         writeln!(w, "    unsigned                     {:>6}", unsigned)?;
     }
-    let mut signers: Vec<(&String, &usize)> = by_signer.iter().collect();
-    signers.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
-    for (signer, n) in signers.iter().take(8) {
-        writeln!(w, "    signed by {:<18} {:>6}", truncate(signer, 18), n)?;
+    let mut vendors: Vec<(&String, &usize)> = by_vendor.iter().collect();
+    vendors.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
+    const SHOWN: usize = 8;
+    for (vendor, n) in vendors.iter().take(SHOWN) {
+        writeln!(w, "    signed by {:<18} {:>6}", truncate(vendor, 18), n)?;
+    }
+    // Until 5.8.0 the ninth vendor and beyond were dropped with nothing said, so a reader could
+    // not tell a complete list from a truncated one. Collapsing vendor subjects makes the cap
+    // bite far less often, which is not the same as it never biting.
+    if vendors.len() > SHOWN {
+        let rest: usize = vendors.iter().skip(SHOWN).map(|(_, n)| **n).sum();
+        writeln!(
+            w,
+            "    {} more vendor(s)        {:>6}",
+            vendors.len() - SHOWN,
+            rest
+        )?;
     }
     if unattributed > 0 {
         writeln!(w, "    not a parsed image           {:>6}", unattributed)?;
     }
+    writeln!(
+        w,
+        "    Who signed each file, not who wrote the code in it: a third-party library compiled \
+         into a vendor-signed image is attributed to that vendor."
+    )?;
     Ok(())
 }
 

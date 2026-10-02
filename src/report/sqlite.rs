@@ -54,8 +54,14 @@ pub fn write(
         )?;
         for e in &r.coverage.entries {
             tx.execute(
-                "INSERT INTO coverage VALUES (?,?,?,?)",
-                params![e.member, e.format, e.size as i64, e.strings as i64],
+                "INSERT INTO coverage VALUES (?,?,?,?,?)",
+                params![
+                    e.member,
+                    e.format,
+                    e.size as i64,
+                    e.strings as i64,
+                    e.vendor
+                ],
             )?;
         }
         for warn in &r.warnings {
@@ -141,7 +147,7 @@ pub fn write(
         }
         for h in &r.hits {
             tx.execute(
-                "INSERT INTO hits VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO hits VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 params![
                     h.function,
                     h.severity.as_str(),
@@ -155,6 +161,7 @@ pub fn write(
                     h.context,
                     h.context_start as i64,
                     h.context_end as i64,
+                    h.vendor,
                 ],
             )?;
         }

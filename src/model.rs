@@ -84,6 +84,11 @@ pub struct HitRecord {
     #[serde(default)]
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub adjustments: Vec<Adjustment>,
+    /// Who signed the member this occurrence is in, so `GROUP BY vendor` answers "how many of
+    /// these criticals are ours" without a consumer re-deriving the signer mapping.
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vendor: Option<String>,
 }
 
 impl MatchSummary {
@@ -222,6 +227,14 @@ pub struct CoverageEntry {
     #[serde(default)]
     #[serde(skip_serializing_if = "is_false")]
     pub unix_executable: bool,
+    /// Who signed this member, collapsed to one key per organisation.
+    ///
+    /// **Who signed it, not who wrote the code in it.** See `pe::vendor` for why that distinction
+    /// matters and what it costs: a third-party library compiled into a vendor-signed DLL is
+    /// attributed to the vendor, because a PE carries nothing else to go on.
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vendor: Option<String>,
 }
 
 /// Serde skip predicate for a `bool` that is false in the overwhelming majority of entries.

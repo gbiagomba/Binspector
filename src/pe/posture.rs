@@ -225,6 +225,7 @@ mod tests {
         pe.mitigations = m;
         pe.is_managed = managed;
         CoverageEntry {
+            vendor: None,
             member: member.to_string(),
             format: "pe".to_string(),
             size: 1024,

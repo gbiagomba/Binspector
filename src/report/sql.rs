@@ -24,9 +24,10 @@ CREATE TABLE IF NOT EXISTS summary (
 CREATE TABLE IF NOT EXISTS hits (
   function TEXT, severity TEXT, category TEXT, member TEXT, offset INTEGER,
   token_len INTEGER, string_offset INTEGER, encoding TEXT, confidence TEXT,
-  context TEXT, context_start INTEGER, context_end INTEGER);
+  context TEXT, context_start INTEGER, context_end INTEGER, vendor TEXT);
+CREATE INDEX IF NOT EXISTS idx_hits_vendor ON hits(vendor);
 CREATE TABLE IF NOT EXISTS coverage (
-  member TEXT, format TEXT, size INTEGER, strings INTEGER);
+  member TEXT, format TEXT, size INTEGER, strings INTEGER, vendor TEXT);
 CREATE TABLE IF NOT EXISTS warnings (message TEXT);
 CREATE TABLE IF NOT EXISTS strings (
   member TEXT, offset INTEGER, encoding TEXT, hit_count INTEGER, text TEXT);
@@ -89,11 +90,15 @@ pub fn write(
         for e in &r.coverage.entries {
             writeln!(
                 w,
-                "INSERT INTO coverage VALUES ({},{},{},{});",
+                "INSERT INTO coverage VALUES ({},{},{},{},{});",
                 sql_literal(&e.member),
                 sql_literal(&e.format),
                 e.size,
-                e.strings
+                e.strings,
+                e.vendor
+                    .as_deref()
+                    .map(sql_literal)
+                    .unwrap_or_else(|| "NULL".into())
             )?;
         }
         for warn in &r.warnings {
@@ -228,7 +233,7 @@ pub fn write(
         for h in &r.hits {
             writeln!(
                 w,
-                "INSERT INTO hits VALUES ({},{},{},{},{},{},{},{},{},{},{},{});",
+                "INSERT INTO hits VALUES ({},{},{},{},{},{},{},{},{},{},{},{},{});",
                 sql_literal(&h.function),
                 sql_literal(h.severity.as_str()),
                 sql_literal(h.category.as_str()),
@@ -240,7 +245,11 @@ pub fn write(
                 sql_literal(h.confidence.as_str()),
                 sql_literal(&h.context),
                 h.context_start,
-                h.context_end
+                h.context_end,
+                h.vendor
+                    .as_deref()
+                    .map(sql_literal)
+                    .unwrap_or_else(|| "NULL".into())
             )?;
         }
     }

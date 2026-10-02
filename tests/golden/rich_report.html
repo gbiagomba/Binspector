@@ -196,10 +196,11 @@ pre.analysis { white-space: pre; line-height: 1.35; }
      7.93     7.5 KiB  Packed.dll `.pack`
   Findings by origin
     first-party (--first-party)        2
-    unsigned                          2
-    signed by Plugin Vendor           2
+    unsigned                          1
     signed by Evil Corp &lt;script~      1
+    signed by Plugin Vendor           1
     not a parsed image                2
+    Who signed each file, not who wrote the code in it: a third-party library compiled into a vendor-signed image is attributed to that vendor.
     Authenticode digest: 2 verified, 1 mismatched, 0 not compared.
     !! A mismatch means the shipped bytes are not the bytes that were signed, so the signer name on those images is worth nothing.
     Certificate chain: 1 broken, 1 partial, 1 self-signed.
