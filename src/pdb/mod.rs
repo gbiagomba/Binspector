@@ -35,6 +35,7 @@
 //! **Bounded.** A PDB is parsed from memory through a `Cursor`, so nothing is written to disk, and
 //! an image over `MAX_PDB_BYTES` is skipped with a stated reason rather than silently.
 
+#[cfg(feature = "pdb")]
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
@@ -198,6 +199,12 @@ pub fn read(data: &[u8], member_name: &str) -> Result<Option<Provenance>, String
 }
 
 /// Assemble the roots and detect the mixed-source condition.
+///
+/// Feature-gated because its only caller is the `pdb` build of `read`. Without the gate, a
+/// `--no-default-features` clippy run fails on dead code while every test still passes, which is
+/// the same trap a cfg-gated test helper set once before: the configuration CI checks is not the
+/// configuration a local `cargo test` builds.
+#[cfg(feature = "pdb")]
 fn finish(
     image_stem: String,
     compilands: usize,
@@ -318,6 +325,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "pdb")]
     fn the_mixed_source_condition_is_detected_per_component() {
         let mut by_root = BTreeMap::new();
         // The real shape: a zlib core from the XMP toolkit tree and a gz* layer from an OpenCV
@@ -346,6 +354,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "pdb")]
     fn one_tree_per_component_is_not_a_mixed_source() {
         let mut by_root = BTreeMap::new();
         by_root.insert(("c:/build/zlib-1.3.1".into(), Some("zlib".into())), 12);
